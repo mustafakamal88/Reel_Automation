@@ -1,0 +1,57 @@
+import type { IntegrationServiceResult, PublishingAccount } from './types';
+
+function delay(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+const MOCK_HANDLES: Record<string, string> = {
+  'pub-youtube': '@jordand_creates',
+  'pub-tiktok': '@jordand.ai',
+  'pub-instagram': '@jordand_studio',
+  'pub-facebook': 'Jordan D. — Page',
+  'pub-twitter': '@jordandcreates',
+  'pub-threads': '@jordand_studio',
+};
+
+export const mockPublishingService = {
+  async connect(accountId: string): Promise<Partial<PublishingAccount> & IntegrationServiceResult> {
+    await delay(1800);
+    // Production: POST /api/publish/connect/:platform
+    // Backend initiates platform OAuth 2.0 flow (upload + publish scopes).
+    // Stores encrypted refresh token server-side. Frontend only receives connection status.
+    // Refresh token is NEVER returned to the browser.
+    return {
+      success: true,
+      status: 'connected',
+      handle: MOCK_HANDLES[accountId] ?? '@demo_account',
+      uploadPermission: true,
+      publishPermission: true,
+      tokenExpiry: 'Jun 28 2027',
+      tokenStatus: 'valid',
+      message: `Connected (demo). Production: POST ${'/api/publish/connect/' + accountId.replace('pub-', '')} starts OAuth. Refresh token stored server-side, encrypted at rest.`,
+    };
+  },
+
+  async disconnect(accountId: string): Promise<IntegrationServiceResult> {
+    await delay(600);
+    // Production: POST /api/publish/disconnect/:platform
+    // Backend revokes OAuth tokens on the platform and deletes stored credentials.
+    return {
+      success: true,
+      status: 'not_connected',
+      message: `Disconnected. Production: backend revokes OAuth tokens for ${accountId.replace('pub-', '')}.`,
+    };
+  },
+
+  async testUpload(accountId: string): Promise<IntegrationServiceResult> {
+    await delay(2200);
+    // Production: POST /api/publish/test/:platform
+    // Backend uploads a 1-second silent test video to verify upload scopes are valid.
+    // Video is immediately deleted after confirmation.
+    return {
+      success: true,
+      status: 'connected',
+      message: `Mock upload test passed (demo). Production: /api/publish/test/${accountId.replace('pub-', '')} uploads a 1s silent test video.`,
+    };
+  },
+};
