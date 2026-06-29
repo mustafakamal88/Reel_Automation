@@ -3,8 +3,9 @@
  *
  * Thin fetch wrapper for the TrendCortex Go backend.
  *
- * All calls use relative URLs so the Vite dev proxy routes them to
- * http://localhost:8080. In production, frontend and API share the same origin.
+ * Calls use relative URLs when VITE_API_BASE_URL is empty, so the Vite dev
+ * proxy routes them to http://localhost:8080. Production builds can set
+ * VITE_API_BASE_URL to the deployed API origin.
  *
  * Token boundary: this file NEVER handles or stores OAuth tokens, refresh
  * tokens, client secrets, or API keys. Only status metadata crosses the wire
@@ -35,16 +36,23 @@ export class ApiError extends Error {
   }
 }
 
-async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
+export const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? '').replace(/\/+$/, '');
+
+export function apiUrl(path: string): string {
+  if (!API_BASE_URL) return path;
+  return `${API_BASE_URL}${path.startsWith('/') ? path : `/${path}`}`;
+}
+
+export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   let res: Response;
   try {
-    res = await fetch(path, {
+    res = await fetch(apiUrl(path), {
       credentials: 'include',
       headers: { 'Content-Type': 'application/json', ...init?.headers },
       ...init,
     });
   } catch {
-    throw new ApiError(0, 'network_error', 'Cannot reach the Go backend. Run: cd backend && go run ./cmd/api');
+    throw new ApiError(0, 'network_error', 'Cannot reach the Go backend. Check VITE_API_BASE_URL or run: cd backend && go run ./cmd/api');
   }
 
   if (!res.ok) {

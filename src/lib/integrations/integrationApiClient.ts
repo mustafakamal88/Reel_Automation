@@ -15,7 +15,7 @@
  *   POST /platforms/{platform}/test          → 501 until backend worker implemented
  */
 
-import { ApiError, getPlatformConnections, getOAuthStartURL } from '../api/client';
+import { ApiError, apiUrl, getPlatformConnections, getOAuthStartURL } from '../api/client';
 
 export type IntegrationStatus =
   | 'not_connected'
@@ -152,10 +152,14 @@ export const integrationApiClient = {
    */
   async disconnectProvider(providerId: string): Promise<ActionResult> {
     try {
-      await fetch(`/platforms/${providerId}/disconnect`, {
+      const res = await fetch(apiUrl(`/platforms/${providerId}/disconnect`), {
         method: 'POST',
         credentials: 'include',
       });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({ error: `HTTP ${res.status}` })) as { error?: string };
+        return { success: false, status: 'error', message: body.error ?? `HTTP ${res.status}` };
+      }
       return { success: true, status: 'not_connected', message: `Disconnected ${providerId}.` };
     } catch (err) {
       return {
@@ -174,7 +178,7 @@ export const integrationApiClient = {
    */
   async refreshConnection(providerId: string): Promise<ActionResult> {
     try {
-      const res = await fetch(`/platforms/${providerId}/refresh`, {
+      const res = await fetch(apiUrl(`/platforms/${providerId}/refresh`), {
         method: 'POST',
         credentials: 'include',
       });
@@ -200,7 +204,7 @@ export const integrationApiClient = {
    */
   async testConnection(providerId: string): Promise<ActionResult> {
     try {
-      const res = await fetch(`/platforms/${providerId}/test`, {
+      const res = await fetch(apiUrl(`/platforms/${providerId}/test`), {
         method: 'POST',
         credentials: 'include',
       });

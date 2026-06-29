@@ -3,6 +3,7 @@ package http
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 	"trendcortex/api/internal/audit"
 	"trendcortex/api/internal/config"
 	"trendcortex/api/internal/database"
@@ -57,13 +58,31 @@ func (s *Server) Routes() http.Handler {
 	// Job polling — session required
 	mux.HandleFunc("GET /jobs/", s.requireSession(s.handleJobStatus))
 
-	return corsMiddleware(s.cfg.AppBase, mux)
+	return corsMiddleware(s.cfg, mux)
 }
 
-// corsMiddleware adds CORS headers permitting requests from the frontend origin only.
-func corsMiddleware(allowOrigin string, next http.Handler) http.Handler {
+// corsMiddleware permits configured frontend/API origins and local Vite dev.
+// Once the production frontend origin is known, set APP_BASE_URL to that origin.
+func corsMiddleware(cfg *config.Config, next http.Handler) http.Handler {
+	allowed := map[string]bool{}
+	for _, origin := range []string{
+		cfg.AppBase,
+		cfg.APIBase,
+		"http://localhost:5173",
+		"http://127.0.0.1:5173",
+	} {
+		origin = strings.TrimRight(strings.TrimSpace(origin), "/")
+		if origin != "" {
+			allowed[origin] = true
+		}
+	}
+
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", allowOrigin)
+		origin := strings.TrimRight(r.Header.Get("Origin"), "/")
+		if allowed[origin] {
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+		}
+		w.Header().Set("Vary", "Origin")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
 		w.Header().Set("Access-Control-Allow-Credentials", "true")

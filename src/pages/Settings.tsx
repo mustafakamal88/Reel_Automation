@@ -4,7 +4,7 @@ import type { SettingsTab, PublishingAccount, IntegrationProvider } from '../lib
 import { PLATFORMS } from '../data/platforms';
 import { DATA_SOURCE_PROVIDERS, AI_PROVIDERS, PUBLISHING_ACCOUNTS } from '../lib/integrations/registry';
 import { integrationApiClient } from '../lib/integrations/integrationApiClient';
-import { getOAuthStartURL, ApiError } from '../lib/api/client';
+import { apiUrl, getOAuthStartURL, ApiError } from '../lib/api/client';
 import { IntegrationCard } from '../components/IntegrationCard';
 import { PublishingCard } from '../components/PublishingCard';
 
@@ -156,18 +156,19 @@ export function SettingsPage({ settings: initial, onSave }: Props) {
     const platform = accountId.replace('pub-', '');
     setPubLoading(prev => ({ ...prev, [accountId]: true }));
     try {
-      const res = await fetch(`/platforms/${platform}/disconnect`, {
+      const res = await fetch(apiUrl(`/platforms/${platform}/disconnect`), {
         method: 'POST', credentials: 'include',
       });
-      const msg = res.ok
-        ? `Disconnected ${platform}.`
-        : `Disconnect returned HTTP ${res.status} — not yet implemented on backend.`;
-      setPubAccounts(prev => prev.map(a =>
-        a.id === accountId
-          ? { ...a, status: 'not_connected', handle: null, uploadPermission: false,
-              publishPermission: false, tokenExpiry: null, tokenStatus: 'none' }
-          : a
-      ));
+      const body = await res.json().catch(() => ({ error: `HTTP ${res.status}` })) as { error?: string };
+      const msg = res.ok ? `Disconnected ${platform}.` : (body.error ?? `HTTP ${res.status}`);
+      if (res.ok) {
+        setPubAccounts(prev => prev.map(a =>
+          a.id === accountId
+            ? { ...a, status: 'not_connected', handle: null, uploadPermission: false,
+                publishPermission: false, tokenExpiry: null, tokenStatus: 'none' }
+            : a
+        ));
+      }
       setPubResults(prev => ({ ...prev, [accountId]: msg }));
     } catch {
       setPubResults(prev => ({ ...prev, [accountId]: `Backend offline — run: cd backend && go run ./cmd/api` }));
@@ -180,7 +181,7 @@ export function SettingsPage({ settings: initial, onSave }: Props) {
     setPubLoading(prev => ({ ...prev, [accountId]: true }));
     setPubResults(prev => ({ ...prev, [accountId]: null }));
     try {
-      const res = await fetch(`/platforms/${platform}/test`, {
+      const res = await fetch(apiUrl(`/platforms/${platform}/test`), {
         method: 'POST', credentials: 'include',
       });
       const body = await res.json().catch(() => ({ error: `HTTP ${res.status}` })) as { error?: string };
@@ -199,7 +200,7 @@ export function SettingsPage({ settings: initial, onSave }: Props) {
     setPubLoading(prev => ({ ...prev, [accountId]: true }));
     setPubResults(prev => ({ ...prev, [accountId]: null }));
     try {
-      const res = await fetch(`/platforms/${platform}/refresh`, {
+      const res = await fetch(apiUrl(`/platforms/${platform}/refresh`), {
         method: 'POST', credentials: 'include',
       });
       const body = await res.json().catch(() => ({ error: `HTTP ${res.status}` })) as { error?: string };

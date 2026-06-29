@@ -10,6 +10,7 @@ import (
 type Config struct {
 	// Server
 	Port    string
+	AppEnv  string
 	AppBase string
 	APIBase string
 
@@ -39,6 +40,7 @@ type Config struct {
 func Load() (*Config, error) {
 	cfg := &Config{
 		Port:    getEnv("PORT", "8080"),
+		AppEnv:  getEnv("APP_ENV", "development"),
 		AppBase: getEnv("APP_BASE_URL", "http://localhost:5173"),
 		APIBase: getEnv("API_BASE_URL", "http://localhost:8080"),
 

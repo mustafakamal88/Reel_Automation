@@ -5,8 +5,9 @@ import react from '@vitejs/plugin-react'
 export default defineConfig({
   plugins: [react()],
   server: {
-    // In dev, proxy all backend routes to the Go server on :8080.
-    // In production, frontend and API share the same origin (no proxy needed).
+    // When VITE_API_BASE_URL is empty, frontend calls use these relative routes
+    // and Vite proxies them to the local Go backend on :8080.
+    // When VITE_API_BASE_URL is set, calls go directly to that API origin.
     proxy: {
       '/health':    { target: 'http://localhost:8080', changeOrigin: true },
       '/platforms': { target: 'http://localhost:8080', changeOrigin: true },
