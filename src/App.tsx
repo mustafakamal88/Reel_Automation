@@ -10,6 +10,7 @@ import { CompetitorsPage } from './pages/Competitors';
 import { ApprovalsPage } from './pages/Approvals';
 import { PerformancePage } from './pages/Performance';
 import { PipelinePage } from './pages/Pipeline';
+import { DailyWorkflowPage } from './pages/DailyWorkflow';
 import { SettingsPage } from './pages/Settings';
 
 export default function App() {
@@ -81,6 +82,7 @@ export default function App() {
           )}
           {view === 'performance' && <PerformancePage />}
           {view === 'pipeline' && <PipelinePage />}
+          {view === 'workflow' && <DailyWorkflowPage />}
           {view === 'settings' && (
             <SettingsPage
               settings={settings}

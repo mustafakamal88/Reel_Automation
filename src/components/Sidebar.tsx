@@ -14,14 +14,15 @@ interface Props {
 }
 
 const NAV_ITEMS: NavItem[] = [
-  { id: 'signals', n: '01', label: 'Signals', badge: 14 },
-  { id: 'scoring', n: '02', label: 'Scoring', badge: 8 },
-  { id: 'topics', n: '03', label: "Today's 6", badge: 6 },
-  { id: 'competitors', n: '04', label: 'Competitors', badge: 6 },
-  { id: 'approvals', n: '05', label: 'Approvals' },
-  { id: 'performance', n: '06', label: 'Performance' },
-  { id: 'pipeline',    n: '07', label: 'Pipeline' },
-  { id: 'settings',    n: '08', label: 'Settings' },
+  { id: 'signals',  n: '01', label: 'Signals',        badge: 14 },
+  { id: 'scoring',  n: '02', label: 'Scoring',        badge: 8 },
+  { id: 'topics',   n: '03', label: "Today's 6",      badge: 6 },
+  { id: 'workflow', n: '04', label: 'Daily Workflow',  badge: 6 },
+  { id: 'competitors', n: '05', label: 'Competitors', badge: 6 },
+  { id: 'approvals', n: '06', label: 'Approvals' },
+  { id: 'performance', n: '07', label: 'Performance' },
+  { id: 'pipeline',   n: '08', label: 'Pipeline' },
+  { id: 'settings',   n: '09', label: 'Settings' },
 ];
 
 export function Sidebar({ currentView, onNavigate, approvals }: Props) {

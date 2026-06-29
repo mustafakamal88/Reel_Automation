@@ -1,14 +1,15 @@
 import type { View } from '../types';
 
 const VIEW_META: Record<View, { title: string; sub: string }> = {
-  signals: { title: 'Signals', sub: 'Live trend collector — 6 sources, refreshed continuously' },
-  scoring: { title: 'Topic Scoring', sub: 'Ranked keyword candidates with full score breakdown' },
-  topics: { title: "Today's 6", sub: 'AI-generated short-form topics, ready to review' },
+  signals:  { title: 'Signals',          sub: 'Live trend collector — 6 sources, refreshed continuously' },
+  scoring:  { title: 'Topic Scoring',    sub: 'Ranked keyword candidates with full score breakdown' },
+  topics:   { title: "Today's 6",        sub: 'AI-generated short-form topics, ready to review' },
+  workflow: { title: 'Daily Workflow',   sub: 'Trend discovery → selection → pipeline → approval → schedule · mock/demo only' },
   competitors: { title: 'Competitor Tracker', sub: 'Estimated reach via public signals — views/hr, velocity, repetition' },
-  approvals: { title: 'Approvals', sub: 'Review and schedule before anything goes live' },
-  performance: { title: 'Performance', sub: 'Own-account watch-time feeding tomorrow\'s topics' },
+  approvals:   { title: 'Approvals',    sub: 'Review and schedule before anything goes live' },
+  performance: { title: 'Performance',  sub: 'Own-account watch-time feeding tomorrow\'s topics' },
   pipeline:    { title: 'Pipeline Studio', sub: 'Script → storyboard → assets → render → export · 6 reels/day · mock/demo only' },
-  settings:    { title: 'Settings', sub: 'General, integrations, publishing accounts, and secret management' },
+  settings:    { title: 'Settings',     sub: 'General, integrations, publishing accounts, and secret management' },
 };
 
 interface Props {

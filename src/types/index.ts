@@ -12,7 +12,56 @@ export type View =
   | 'approvals'
   | 'performance'
   | 'pipeline'
+  | 'workflow'
   | 'settings';
+
+// ─── Daily Workflow types ─────────────────────────────────────
+
+export type WorkflowStatus = 'draft' | 'needs-review' | 'approved' | 'rejected' | 'scheduled';
+export type PipelineHandoffStatus = 'not-started' | 'queued' | 'in-progress' | 'done';
+
+export interface SelectionReason {
+  factor: string;
+  detail: string;
+}
+
+export interface ScheduleEntry {
+  platformKey: string;
+  platformLabel: string;
+  time: string;
+}
+
+export interface DailyReel {
+  topicId: string;
+  rank: number;
+  title: string;
+  trendScore: number;
+  riskScore: number;
+  watchTimePotential: number;
+  platformFit: number;
+  compositeScore: number;
+  selectionReasons: SelectionReason[];
+  platforms: Platform[];
+  pipelineStatus: PipelineHandoffStatus;
+  workflowStatus: WorkflowStatus;
+  scheduleSlots: ScheduleEntry[];
+}
+
+export interface RejectedReel {
+  topicId: string;
+  title: string;
+  trendScore: number;
+  riskScore: number;
+  compositeScore: number;
+  rejectionReasons: string[];
+}
+
+export interface DailyWorkflow {
+  date: string;
+  selectedReels: DailyReel[];
+  rejectedReels: RejectedReel[];
+  generatedAt: string;
+}
 
 export interface PlatformMeta {
   name: string;

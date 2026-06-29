@@ -1,9 +1,10 @@
-import type { ApprovalStatus, Settings } from '../types';
+import type { ApprovalStatus, Settings, WorkflowStatus } from '../types';
 
 const KEY_APPROVALS = 'signal_approvals';
 const KEY_SETTINGS = 'signal_settings';
 const KEY_VIEW = 'signal_view';
 const KEY_GENERATED = 'signal_generated';
+const KEY_WORKFLOW_STATUSES = 'signal_workflow_statuses';
 
 export const DEFAULT_SETTINGS: Settings = {
   niche: 'AI tools & creator workflow',
@@ -68,5 +69,12 @@ export const storage = {
   },
   setGenerated(v: boolean): void {
     safeSet(KEY_GENERATED, v);
+  },
+
+  getWorkflowStatuses(): Record<string, WorkflowStatus> {
+    return safeGet(KEY_WORKFLOW_STATUSES, {});
+  },
+  setWorkflowStatuses(v: Record<string, WorkflowStatus>): void {
+    safeSet(KEY_WORKFLOW_STATUSES, v);
   },
 };
