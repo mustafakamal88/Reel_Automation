@@ -5,6 +5,7 @@ export const DATA_SOURCE_PROVIDERS: IntegrationProvider[] = [
     id: 'google-trends',
     platformKey: 'gt',
     name: 'Google Trends',
+    category: 'data_source',
     status: 'demo',
     authType: 'server_adapter',
     scopes: [
@@ -19,6 +20,7 @@ export const DATA_SOURCE_PROVIDERS: IntegrationProvider[] = [
     id: 'youtube',
     platformKey: 'yt',
     name: 'YouTube Shorts',
+    category: 'data_source',
     status: 'demo',
     authType: 'api_key',
     scopes: [
@@ -34,6 +36,7 @@ export const DATA_SOURCE_PROVIDERS: IntegrationProvider[] = [
     id: 'tiktok',
     platformKey: 'tt',
     name: 'TikTok',
+    category: 'data_source',
     status: 'demo',
     authType: 'oauth2',
     scopes: [
@@ -49,6 +52,7 @@ export const DATA_SOURCE_PROVIDERS: IntegrationProvider[] = [
     id: 'instagram',
     platformKey: 'ig',
     name: 'Instagram Reels',
+    category: 'data_source',
     status: 'demo',
     authType: 'oauth2',
     scopes: [
@@ -64,6 +68,7 @@ export const DATA_SOURCE_PROVIDERS: IntegrationProvider[] = [
     id: 'facebook',
     platformKey: 'fb',
     name: 'Facebook Reels',
+    category: 'data_source',
     status: 'demo',
     authType: 'oauth2',
     scopes: [
@@ -78,6 +83,7 @@ export const DATA_SOURCE_PROVIDERS: IntegrationProvider[] = [
     id: 'twitter',
     platformKey: 'x',
     name: 'X / Twitter',
+    category: 'data_source',
     status: 'demo',
     authType: 'api_key',
     scopes: [
@@ -93,6 +99,7 @@ export const DATA_SOURCE_PROVIDERS: IntegrationProvider[] = [
     id: 'threads',
     platformKey: 'th',
     name: 'Threads',
+    category: 'data_source',
     status: 'demo',
     authType: 'oauth2',
     scopes: [
@@ -109,6 +116,7 @@ export const AI_PROVIDERS: AiProviderConfig[] = [
   {
     id: 'anthropic',
     name: 'Anthropic Claude',
+    category: 'ai_provider',
     status: 'demo',
     model: 'claude-sonnet-4-6',
     usageMode: 'demo',
@@ -120,6 +128,7 @@ export const AI_PROVIDERS: AiProviderConfig[] = [
   {
     id: 'openai',
     name: 'OpenAI',
+    category: 'ai_provider',
     status: 'not_connected',
     model: 'gpt-4o',
     usageMode: 'demo',
@@ -131,6 +140,7 @@ export const AI_PROVIDERS: AiProviderConfig[] = [
   {
     id: 'local-mock',
     name: 'Local / Mock Generator',
+    category: 'ai_provider',
     status: 'connected',
     model: 'mock-generator-v1',
     usageMode: 'local',
@@ -146,6 +156,7 @@ export const PUBLISHING_ACCOUNTS: PublishingAccount[] = [
     id: 'pub-youtube',
     platformKey: 'yt',
     name: 'YouTube Shorts',
+    category: 'publishing',
     handle: null,
     status: 'not_connected',
     uploadPermission: false,
@@ -161,6 +172,7 @@ export const PUBLISHING_ACCOUNTS: PublishingAccount[] = [
     id: 'pub-tiktok',
     platformKey: 'tt',
     name: 'TikTok',
+    category: 'publishing',
     handle: null,
     status: 'not_connected',
     uploadPermission: false,
@@ -176,6 +188,7 @@ export const PUBLISHING_ACCOUNTS: PublishingAccount[] = [
     id: 'pub-instagram',
     platformKey: 'ig',
     name: 'Instagram Reels',
+    category: 'publishing',
     handle: null,
     status: 'not_connected',
     uploadPermission: false,
@@ -191,6 +204,7 @@ export const PUBLISHING_ACCOUNTS: PublishingAccount[] = [
     id: 'pub-facebook',
     platformKey: 'fb',
     name: 'Facebook Reels',
+    category: 'publishing',
     handle: null,
     status: 'not_connected',
     uploadPermission: false,
@@ -206,6 +220,7 @@ export const PUBLISHING_ACCOUNTS: PublishingAccount[] = [
     id: 'pub-twitter',
     platformKey: 'x',
     name: 'X / Twitter',
+    category: 'publishing',
     handle: null,
     status: 'not_connected',
     uploadPermission: false,
@@ -221,6 +236,7 @@ export const PUBLISHING_ACCOUNTS: PublishingAccount[] = [
     id: 'pub-threads',
     platformKey: 'th',
     name: 'Threads',
+    category: 'publishing',
     handle: null,
     status: 'not_connected',
     uploadPermission: false,

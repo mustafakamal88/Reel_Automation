@@ -3,31 +3,32 @@ import { PLATFORMS } from '../data/platforms';
 
 function statusLabel(s: IntegrationStatus): string {
   const labels: Record<IntegrationStatus, string> = {
-    demo: 'Demo',
-    not_connected: 'Not connected',
-    connected: 'Connected',
-    error: 'Error',
-    configuring: 'Connecting…',
+    demo:            'Demo mode',
+    not_connected:   'Not connected',
+    connected:       'Connected',
+    needs_attention: 'Needs attention',
+    error:           'Error',
+    configuring:     'Connecting…',
   };
   return labels[s];
 }
 
 function authLabel(a: AuthType): string {
   const labels: Record<AuthType, string> = {
-    oauth2: 'OAuth 2.0',
-    api_key: 'API Key',
+    oauth2:         'OAuth 2.0',
+    api_key:        'API Key',
     server_adapter: 'Server',
-    none: 'None',
+    none:           'None',
   };
   return labels[a];
 }
 
 function authClass(a: AuthType): string {
   const map: Record<AuthType, string> = {
-    oauth2: 'auth-oauth2',
-    api_key: 'auth-api-key',
+    oauth2:         'auth-oauth2',
+    api_key:        'auth-api-key',
     server_adapter: 'auth-server',
-    none: 'auth-none',
+    none:           'auth-none',
   };
   return map[a];
 }
@@ -43,12 +44,32 @@ interface Props {
   loading: boolean;
   testResult: string | null;
   onTest: () => void;
+  onConnect: () => void;
+  onDisconnect: () => void;
+  onRefresh: () => void;
   onDismissResult: () => void;
 }
 
-export function IntegrationCard({ provider, loading, testResult, onTest, onDismissResult }: Props) {
-  const platform = PLATFORMS[provider.platformKey as keyof typeof PLATFORMS];
-  const statusCls = `status-${provider.status.replace('_', '-')}`;
+export function IntegrationCard({
+  provider,
+  loading,
+  testResult,
+  onTest,
+  onConnect,
+  onDisconnect,
+  onRefresh,
+  onDismissResult,
+}: Props) {
+  const platform  = PLATFORMS[provider.platformKey as keyof typeof PLATFORMS];
+  const status    = provider.status;
+  const statusCls = `status-${status.replace(/_/g, '-')}`;
+
+  const isConnected   = status === 'connected';
+  const isDemo        = status === 'demo';
+  const isDisconnected = status === 'not_connected';
+  const needsAttention = status === 'needs_attention';
+  const isError       = status === 'error';
+  const isConfiguring = status === 'configuring';
 
   return (
     <div className="integration-card">
@@ -71,7 +92,7 @@ export function IntegrationCard({ provider, loading, testResult, onTest, onDismi
         </div>
 
         <div className="integration-badges">
-          <span className={`status-badge ${statusCls}`}>{statusLabel(provider.status)}</span>
+          <span className={`status-badge ${statusCls}`}>{statusLabel(status)}</span>
           <span className={`auth-badge ${authClass(provider.authType)}`}>{authLabel(provider.authType)}</span>
         </div>
       </div>
@@ -99,17 +120,33 @@ export function IntegrationCard({ provider, loading, testResult, onTest, onDismi
 
       <div className="integration-footer">
         <span className="integration-secret-mode">{secretLabel(provider.secretStorageMode)}</span>
+
         <div className="integration-actions">
-          {loading ? (
+          {loading || isConfiguring ? (
             <span className="btn-int btn-int--loading">
               <span className="int-spinner" />
-              Testing…
+              {isConfiguring ? 'Connecting…' : 'Working…'}
             </span>
-          ) : (
-            <button className="btn-int" onClick={onTest}>
-              Test
+          ) : isConnected ? (
+            <>
+              <button className="btn-int" onClick={onTest}>Test</button>
+              <button className="btn-int btn-int--danger" onClick={onDisconnect}>Disconnect</button>
+            </>
+          ) : needsAttention ? (
+            <>
+              <button className="btn-int btn-int--primary" onClick={onRefresh}>Refresh</button>
+              <button className="btn-int btn-int--danger" onClick={onDisconnect}>Disconnect</button>
+            </>
+          ) : isError ? (
+            <>
+              <button className="btn-int btn-int--primary" onClick={onConnect}>Reconnect</button>
+              <button className="btn-int btn-int--danger" onClick={onDisconnect}>Disconnect</button>
+            </>
+          ) : (isDemo || isDisconnected) ? (
+            <button className="btn-int btn-int--primary" onClick={onConnect}>
+              {isDemo ? 'Connect' : 'Connect account'}
             </button>
-          )}
+          ) : null}
         </div>
       </div>
     </div>

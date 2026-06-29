@@ -1,14 +1,25 @@
-import type { PublishingAccount, TokenStatus } from '../lib/integrations/types';
+import type { PublishingAccount, TokenStatus, IntegrationStatus } from '../lib/integrations/types';
 import { PLATFORMS } from '../data/platforms';
 
 function tokenLabel(t: TokenStatus): string {
   const labels: Record<TokenStatus, string> = {
-    valid: 'Token valid',
+    valid:    'Token valid',
     expiring: 'Expiring soon',
-    expired: 'Token expired',
-    none: '—',
+    expired:  'Token expired',
+    none:     '—',
   };
   return labels[t];
+}
+
+function connectionLabel(s: IntegrationStatus): string {
+  const labels: Partial<Record<IntegrationStatus, string>> = {
+    connected:       'Connected',
+    configuring:     'Connecting…',
+    needs_attention: 'Needs attention',
+    error:           'Error',
+    not_connected:   'Not connected',
+  };
+  return labels[s] ?? s;
 }
 
 interface Props {
@@ -18,6 +29,7 @@ interface Props {
   onConnect: () => void;
   onDisconnect: () => void;
   onTestUpload: () => void;
+  onRefreshStatus: () => void;
   onDismissResult: () => void;
 }
 
@@ -28,12 +40,15 @@ export function PublishingCard({
   onConnect,
   onDisconnect,
   onTestUpload,
+  onRefreshStatus,
   onDismissResult,
 }: Props) {
-  const platform = PLATFORMS[account.platformKey as keyof typeof PLATFORMS];
-  const isConnected = account.status === 'connected';
-  const isConfiguring = account.status === 'configuring';
-  const statusCls = `status-${account.status.replace('_', '-')}`;
+  const platform       = PLATFORMS[account.platformKey as keyof typeof PLATFORMS];
+  const isConnected    = account.status === 'connected';
+  const isConfiguring  = account.status === 'configuring';
+  const needsAttention = account.status === 'needs_attention';
+  const isError        = account.status === 'error';
+  const statusCls      = `status-${account.status.replace(/_/g, '-')}`;
 
   return (
     <div className={`pub-card${isConnected ? ' pub-card--connected' : ''}`}>
@@ -56,9 +71,7 @@ export function PublishingCard({
         </div>
 
         <span className={`status-badge ${statusCls}`}>
-          {isConfiguring ? 'Connecting…' :
-           isConnected ? 'Connected' :
-           account.status === 'error' ? 'Error' : 'Not connected'}
+          {connectionLabel(account.status)}
         </span>
       </div>
 
@@ -119,6 +132,16 @@ export function PublishingCard({
         ) : isConnected ? (
           <>
             <button className="btn-int" onClick={onTestUpload}>Test upload</button>
+            <button className="btn-int btn-int--danger" onClick={onDisconnect}>Disconnect</button>
+          </>
+        ) : needsAttention ? (
+          <>
+            <button className="btn-int btn-int--primary" onClick={onRefreshStatus}>Refresh status</button>
+            <button className="btn-int btn-int--danger" onClick={onDisconnect}>Disconnect</button>
+          </>
+        ) : isError ? (
+          <>
+            <button className="btn-int btn-int--primary" onClick={onConnect}>Reconnect</button>
             <button className="btn-int btn-int--danger" onClick={onDisconnect}>Disconnect</button>
           </>
         ) : (

@@ -1,9 +1,9 @@
 import { useState, useCallback } from 'react';
 import type { Platform, Settings } from '../types';
-import type { SettingsTab, PublishingAccount } from '../lib/integrations/types';
+import type { SettingsTab, PublishingAccount, IntegrationProvider } from '../lib/integrations/types';
 import { PLATFORMS } from '../data/platforms';
 import { DATA_SOURCE_PROVIDERS, AI_PROVIDERS, PUBLISHING_ACCOUNTS } from '../lib/integrations/registry';
-import { mockIntegrationService } from '../lib/integrations/mockIntegrationService';
+import { integrationApiClient } from '../lib/integrations/integrationApiClient';
 import { mockPublishingService } from '../lib/integrations/mockPublishingService';
 import { IntegrationCard } from '../components/IntegrationCard';
 import { PublishingCard } from '../components/PublishingCard';
@@ -11,23 +11,26 @@ import { PublishingCard } from '../components/PublishingCard';
 const ALL_PLATFORMS: Platform[] = ['yt', 'tt', 'ig', 'fb', 'x', 'th', 'gt'];
 
 const TABS: { id: SettingsTab; label: string; count?: number }[] = [
-  { id: 'general', label: 'General' },
-  { id: 'sources', label: 'Data Sources', count: 7 },
-  { id: 'ai', label: 'AI Providers', count: 3 },
-  { id: 'publishing', label: 'Publishing', count: 6 },
-  { id: 'security', label: 'Security' },
+  { id: 'general',    label: 'General' },
+  { id: 'sources',    label: 'Data Sources', count: 7 },
+  { id: 'ai',         label: 'AI Providers', count: 3 },
+  { id: 'publishing', label: 'Publishing',   count: 6 },
+  { id: 'security',   label: 'Security' },
 ];
 
 const BACKEND_ENDPOINTS = [
-  { method: 'POST', path: '/api/integrations/connect/:provider', note: 'Initiate OAuth or validate API key' },
-  { method: 'POST', path: '/api/integrations/disconnect/:provider', note: 'Revoke tokens and remove credentials' },
-  { method: 'GET', path: '/api/integrations/status/:provider', note: 'Return current connection status' },
-  { method: 'GET', path: '/api/integrations/test/:provider', note: 'Lightweight live credential check' },
-  { method: 'POST', path: '/api/publish/connect/:platform', note: 'Start OAuth for upload + publish scopes' },
-  { method: 'POST', path: '/api/publish/disconnect/:platform', note: 'Revoke platform OAuth tokens' },
-  { method: 'POST', path: '/api/publish/test/:platform', note: 'Upload 1s silent test video' },
-  { method: 'POST', path: '/api/publish/upload', note: 'Upload and schedule video post' },
-  { method: 'POST', path: '/api/ai/generate', note: 'Generate scripts/captions via AI provider' },
+  { method: 'POST', path: '/api/integrations/connect/:provider',    note: 'Initiate OAuth (startOAuth → redirect to provider)' },
+  { method: 'GET',  path: '/api/integrations/callback',             note: 'OAuth callback — exchange code, encrypt + store tokens' },
+  { method: 'POST', path: '/api/integrations/disconnect/:provider', note: 'Revoke tokens and delete encrypted credentials' },
+  { method: 'GET',  path: '/api/integrations/status',               note: 'Return connection status for all providers (no tokens)' },
+  { method: 'POST', path: '/api/integrations/refresh/:provider',    note: 'Exchange refresh token, rotate stored credentials' },
+  { method: 'GET',  path: '/api/integrations/test/:provider',       note: 'Lightweight live credential check via provider API' },
+  { method: 'POST', path: '/api/publish/connect/:platform',         note: 'Start OAuth for upload + publish scopes' },
+  { method: 'POST', path: '/api/publish/disconnect/:platform',      note: 'Revoke platform OAuth tokens and delete credentials' },
+  { method: 'POST', path: '/api/publish/refresh/:platform',         note: 'Refresh publish token; return expiry status only' },
+  { method: 'POST', path: '/api/publish/test/:platform',            note: 'Upload 1s silent test video; verify, then delete' },
+  { method: 'POST', path: '/api/publish/upload',                    note: 'Upload and schedule video post' },
+  { method: 'POST', path: '/api/ai/generate',                       note: 'Generate scripts/captions via AI provider' },
 ];
 
 interface Props {
@@ -38,18 +41,22 @@ interface Props {
 export function SettingsPage({ settings: initial, onSave }: Props) {
   const [activeTab, setActiveTab] = useState<SettingsTab>('general');
 
-  // General settings (localStorage-backed via App.tsx)
+  // General settings (localStorage-backed via App.tsx — harmless UI preferences only)
   const [settings, setSettings] = useState<Settings>(initial);
   const [saved, setSaved] = useState(false);
 
-  // Integration test states (in-memory — no credentials in storage)
-  const [intLoading, setIntLoading] = useState<Record<string, boolean>>({});
-  const [intResults, setIntResults] = useState<Record<string, string | null>>({});
+  // ── Data source connection states ─────────────────────────────
+  // In-memory only — no credentials, no tokens, no secrets in this state.
+  // Only connection status metadata (timestamps, scope names) is kept here.
+  const [dataProviders, setDataProviders] = useState<IntegrationProvider[]>(DATA_SOURCE_PROVIDERS);
+  const [intLoading,   setIntLoading]   = useState<Record<string, boolean>>({});
+  const [intResults,   setIntResults]   = useState<Record<string, string | null>>({});
 
-  // Publishing account states (in-memory — no tokens in storage)
+  // ── Publishing account states ─────────────────────────────────
+  // Same contract: in-memory status only, no tokens in frontend state.
   const [pubAccounts, setPubAccounts] = useState<PublishingAccount[]>(PUBLISHING_ACCOUNTS);
-  const [pubLoading, setPubLoading] = useState<Record<string, boolean>>({});
-  const [pubResults, setPubResults] = useState<Record<string, string | null>>({});
+  const [pubLoading,  setPubLoading]  = useState<Record<string, boolean>>({});
+  const [pubResults,  setPubResults]  = useState<Record<string, string | null>>({});
 
   // ── General settings handlers ─────────────────────────────────
 
@@ -71,12 +78,48 @@ export function SettingsPage({ settings: initial, onSave }: Props) {
     setTimeout(() => setSaved(false), 2000);
   }
 
-  // ── Integration test handler ──────────────────────────────────
+  // ── Data source connection handlers ───────────────────────────
+
+  const handleIntConnect = useCallback(async (id: string) => {
+    setIntLoading(prev => ({ ...prev, [id]: true }));
+    setDataProviders(prev => prev.map(p =>
+      p.id === id ? { ...p, status: 'configuring' } : p
+    ));
+    const result = await integrationApiClient.startOAuth(id);
+    setIntLoading(prev => ({ ...prev, [id]: false }));
+    setDataProviders(prev => prev.map(p =>
+      p.id === id
+        ? { ...p, status: result.status, lastSync: result.connectedAt ? 'just now' : p.lastSync }
+        : p
+    ));
+    setIntResults(prev => ({ ...prev, [id]: result.message }));
+  }, []);
+
+  const handleIntDisconnect = useCallback(async (id: string) => {
+    setIntLoading(prev => ({ ...prev, [id]: true }));
+    const result = await integrationApiClient.disconnectProvider(id);
+    setIntLoading(prev => ({ ...prev, [id]: false }));
+    setDataProviders(prev => prev.map(p =>
+      p.id === id ? { ...p, status: result.status, lastSync: null } : p
+    ));
+    setIntResults(prev => ({ ...prev, [id]: null }));
+  }, []);
+
+  const handleIntRefresh = useCallback(async (id: string) => {
+    setIntLoading(prev => ({ ...prev, [id]: true }));
+    setIntResults(prev => ({ ...prev, [id]: null }));
+    const result = await integrationApiClient.refreshConnection(id);
+    setIntLoading(prev => ({ ...prev, [id]: false }));
+    setDataProviders(prev => prev.map(p =>
+      p.id === id ? { ...p, status: result.status } : p
+    ));
+    setIntResults(prev => ({ ...prev, [id]: result.message }));
+  }, []);
 
   const handleIntTest = useCallback(async (id: string) => {
     setIntLoading(prev => ({ ...prev, [id]: true }));
     setIntResults(prev => ({ ...prev, [id]: null }));
-    const result = await mockIntegrationService.testConnection(id);
+    const result = await integrationApiClient.testConnection(id);
     setIntLoading(prev => ({ ...prev, [id]: false }));
     setIntResults(prev => ({ ...prev, [id]: result.message }));
   }, []);
@@ -94,12 +137,12 @@ export function SettingsPage({ settings: initial, onSave }: Props) {
       a.id === accountId
         ? {
             ...a,
-            status: result.status,
-            handle: result.handle ?? null,
-            uploadPermission: result.uploadPermission ?? false,
+            status:            result.status,
+            handle:            result.handle ?? null,
+            uploadPermission:  result.uploadPermission ?? false,
             publishPermission: result.publishPermission ?? false,
-            tokenExpiry: result.tokenExpiry ?? null,
-            tokenStatus: result.tokenStatus ?? 'none',
+            tokenExpiry:       result.tokenExpiry ?? null,
+            tokenStatus:       result.tokenStatus ?? 'none',
           }
         : a
     ));
@@ -114,12 +157,12 @@ export function SettingsPage({ settings: initial, onSave }: Props) {
       a.id === accountId
         ? {
             ...a,
-            status: result.status,
-            handle: null,
-            uploadPermission: false,
+            status:            result.status,
+            handle:            null,
+            uploadPermission:  false,
             publishPermission: false,
-            tokenExpiry: null,
-            tokenStatus: 'none',
+            tokenExpiry:       null,
+            tokenStatus:       'none',
           }
         : a
     ));
@@ -132,6 +175,21 @@ export function SettingsPage({ settings: initial, onSave }: Props) {
     const result = await mockPublishingService.testUpload(accountId);
     setPubLoading(prev => ({ ...prev, [accountId]: false }));
     setPubResults(prev => ({ ...prev, [accountId]: result.message }));
+  }, []);
+
+  const handlePubRefreshStatus = useCallback(async (accountId: string) => {
+    setPubLoading(prev => ({ ...prev, [accountId]: true }));
+    setPubResults(prev => ({ ...prev, [accountId]: null }));
+    // Production: POST /api/publish/refresh/:platform — backend refreshes the OAuth token server-side.
+    await new Promise(r => setTimeout(r, 900));
+    setPubLoading(prev => ({ ...prev, [accountId]: false }));
+    setPubAccounts(prev => prev.map(a =>
+      a.id === accountId ? { ...a, status: 'connected', tokenStatus: 'valid' } : a
+    ));
+    setPubResults(prev => ({
+      ...prev,
+      [accountId]: `Token refreshed (demo). Production: POST /api/publish/refresh/${accountId.replace('pub-', '')} exchanges the refresh token server-side.`,
+    }));
   }, []);
 
   // ── Render ────────────────────────────────────────────────────
@@ -220,7 +278,7 @@ export function SettingsPage({ settings: initial, onSave }: Props) {
               <label className="form-label">Active platforms</label>
               <div className="platform-toggles">
                 {ALL_PLATFORMS.map(p => {
-                  const meta = PLATFORMS[p];
+                  const meta   = PLATFORMS[p];
                   const active = settings.platforms.includes(p);
                   return (
                     <button
@@ -229,9 +287,9 @@ export function SettingsPage({ settings: initial, onSave }: Props) {
                       onClick={() => togglePlatform(p)}
                       aria-pressed={active}
                       style={{
-                        background: active ? meta.bg : 'var(--bg-subtle)',
+                        background:  active ? meta.bg  : 'var(--bg-subtle)',
                         borderColor: active ? meta.color : 'var(--border-strong)',
-                        color: active ? meta.color : 'var(--text-dim)',
+                        color:       active ? meta.color : 'var(--text-dim)',
                         fontFamily: 'inherit',
                         cursor: 'pointer',
                       }}
@@ -281,7 +339,7 @@ export function SettingsPage({ settings: initial, onSave }: Props) {
           </button>
           <span className="demo-badge">
             <span style={{ width: 5, height: 5, borderRadius: '50%', background: '#a78bfa', display: 'inline-block' }} />
-            Settings persist in localStorage
+            Settings persist in localStorage (theme &amp; preferences only — no secrets)
           </span>
         </div>
       )}
@@ -295,15 +353,25 @@ export function SettingsPage({ settings: initial, onSave }: Props) {
               Connected platforms supply trend signals for scoring and topic generation.
               Credentials are managed server-side via <code className="int-code">/api/integrations/*</code>.
             </div>
+            <div className="security-inline-warning">
+              <span className="security-warning-icon">⚠</span>
+              OAuth client secrets and API keys must <strong>never</strong> be placed in{' '}
+              <code className="int-code">VITE_</code> variables or the browser bundle.
+              All credentials are encrypted and stored server-side only. The frontend receives
+              connection status only — never raw tokens.
+            </div>
           </div>
           <div className="integration-grid">
-            {DATA_SOURCE_PROVIDERS.map(provider => (
+            {dataProviders.map(provider => (
               <IntegrationCard
                 key={provider.id}
                 provider={provider}
                 loading={!!intLoading[provider.id]}
                 testResult={intResults[provider.id] ?? null}
                 onTest={() => handleIntTest(provider.id)}
+                onConnect={() => handleIntConnect(provider.id)}
+                onDisconnect={() => handleIntDisconnect(provider.id)}
+                onRefresh={() => handleIntRefresh(provider.id)}
                 onDismissResult={() => setIntResults(prev => ({ ...prev, [provider.id]: null }))}
               />
             ))}
@@ -321,12 +389,15 @@ export function SettingsPage({ settings: initial, onSave }: Props) {
             </div>
             <div className="security-inline-warning">
               <span className="security-warning-icon">⚠</span>
-              AI provider API keys must <strong>never</strong> be stored in the browser, localStorage, or <code className="int-code">VITE_</code> variables — these are bundled into the public JS file. All key management goes through <code className="int-code">/api/ai/*</code> backend endpoints.
+              AI provider API keys must <strong>never</strong> be stored in the browser, localStorage, or{' '}
+              <code className="int-code">VITE_</code> variables — these are compiled into the public JS bundle.
+              All key management goes through <code className="int-code">/api/ai/*</code> backend endpoints.
+              Keys are stored encrypted at rest using KMS (AWS Secrets Manager / HashiCorp Vault).
             </div>
           </div>
           <div className="ai-provider-grid">
             {AI_PROVIDERS.map(p => {
-              const statusCls = `status-${p.status.replace('_', '-')}`;
+              const statusCls = `status-${p.status.replace(/_/g, '-')}`;
               return (
                 <div key={p.id} className="ai-provider-card">
                   <div className="ai-card-top">
@@ -343,8 +414,8 @@ export function SettingsPage({ settings: initial, onSave }: Props) {
                       </div>
                     </div>
                     <span className={`status-badge ${statusCls}`}>
-                      {p.status === 'demo' ? 'Demo' :
-                       p.status === 'connected' ? 'Connected' :
+                      {p.status === 'demo'          ? 'Demo mode'     :
+                       p.status === 'connected'     ? 'Connected'     :
                        p.status === 'not_connected' ? 'Not connected' : p.status}
                     </span>
                   </div>
@@ -358,21 +429,15 @@ export function SettingsPage({ settings: initial, onSave }: Props) {
 
                   <div className="ai-card-footer">
                     <code className="int-code int-code--endpoint">{p.backendEndpoint}</code>
-                    {p.status === 'not_connected' && (
+                    {(p.status === 'not_connected' || p.status === 'demo') && (
                       <button
-                        className="btn-int btn-int--primary"
+                        className={`btn-int${p.status === 'not_connected' ? ' btn-int--primary' : ''}`}
                         onClick={() => {
-                          alert(`Production: Configure ${p.name} API key on your backend server.\nEndpoint: ${p.backendEndpoint}\nKey must be stored encrypted — never in VITE_ vars or the browser.`);
-                        }}
-                      >
-                        Configure
-                      </button>
-                    )}
-                    {p.status === 'demo' && (
-                      <button
-                        className="btn-int"
-                        onClick={() => {
-                          alert(`Running in demo mode.\nTo switch to live: add ${p.name} API key to your backend environment and point ${p.backendEndpoint} at the real API.`);
+                          alert(
+                            `Production: Configure ${p.name} API key on your backend server.\n` +
+                            `Endpoint: ${p.backendEndpoint}\n` +
+                            `Key must be stored encrypted server-side — never in VITE_ vars or the browser.`
+                          );
                         }}
                       >
                         Configure
@@ -396,7 +461,10 @@ export function SettingsPage({ settings: initial, onSave }: Props) {
             </div>
             <div className="security-inline-warning">
               <span className="security-warning-icon">⚠</span>
-              OAuth refresh tokens are stored <strong>server-side only</strong> — the frontend never receives them. Connect/disconnect actions call <code className="int-code">/api/publish/*</code> and receive connection status only.
+              OAuth refresh tokens are stored <strong>server-side only</strong> — the frontend never
+              receives them. Connect/disconnect/refresh actions call{' '}
+              <code className="int-code">/api/publish/*</code> and return connection status only.
+              Token rotation happens automatically server-side on a cron schedule.
             </div>
           </div>
           <div className="pub-grid">
@@ -409,6 +477,7 @@ export function SettingsPage({ settings: initial, onSave }: Props) {
                 onConnect={() => handlePubConnect(account.id)}
                 onDisconnect={() => handlePubDisconnect(account.id)}
                 onTestUpload={() => handlePubTestUpload(account.id)}
+                onRefreshStatus={() => handlePubRefreshStatus(account.id)}
                 onDismissResult={() => setPubResults(prev => ({ ...prev, [account.id]: null }))}
               />
             ))}
@@ -422,7 +491,7 @@ export function SettingsPage({ settings: initial, onSave }: Props) {
           <div className="int-section-header">
             <div className="int-section-title">Secret Management</div>
             <div className="int-section-sub">
-              How credentials are handled in SIGNAL — current and production rules.
+              How credentials are handled in SIGNAL — current demo rules and production requirements.
             </div>
           </div>
 
@@ -431,27 +500,49 @@ export function SettingsPage({ settings: initial, onSave }: Props) {
               {
                 icon: '🚫',
                 title: 'Secrets never stored in the browser',
-                body: 'No API keys, OAuth tokens, refresh tokens, or client secrets are stored in localStorage, sessionStorage, cookies, or React state. VITE_ environment variables are compiled into the public JavaScript bundle and must never hold sensitive values.',
+                body: 'No API keys, OAuth tokens, refresh tokens, or client secrets are stored in ' +
+                  'localStorage, sessionStorage, cookies, or React state. VITE_ environment variables ' +
+                  'are compiled into the public JavaScript bundle and must never hold sensitive values. ' +
+                  'The frontend only receives connection status metadata — never raw credentials.',
               },
               {
                 icon: '🔐',
-                title: 'Production secrets → encrypted backend storage',
-                body: 'All credentials must be stored server-side, encrypted at rest (e.g. AWS Secrets Manager, HashiCorp Vault, or an encrypted DB column). The frontend only receives connection status — never raw tokens.',
+                title: 'OAuth client secrets belong only on the backend',
+                body: 'client_id and client_secret for OAuth 2.0 providers (TikTok, Instagram, Facebook, ' +
+                  'Twitter, Threads, YouTube) must live in server environment variables (process.env), ' +
+                  'never in VITE_ vars or the browser bundle. They are used only during the token ' +
+                  'exchange step in the server-side OAuth callback handler.',
+              },
+              {
+                icon: '🔑',
+                title: 'Tokens must be encrypted server-side',
+                body: 'All access and refresh tokens are encrypted at rest using AES-256-GCM with a ' +
+                  'KMS-managed data key before storage. Production storage options: AWS Secrets Manager, ' +
+                  'HashiCorp Vault, GCP Secret Manager, or an encrypted Postgres/DynamoDB table with ' +
+                  'column-level encryption. The encryption key is never stored alongside the ciphertext.',
               },
               {
                 icon: '🖥',
                 title: 'Local development',
-                body: 'For local backend development, use a server-side .env file with non-VITE_ prefixed variables. These stay on the server process and are never bundled into the frontend asset.',
+                body: 'For local backend development, use a server-side .env file with non-VITE_ ' +
+                  'prefixed variables (e.g. TIKTOK_CLIENT_SECRET). These stay on the server process ' +
+                  'and are never bundled into the frontend asset. Never commit .env files to git.',
               },
               {
                 icon: '🎭',
                 title: 'Current demo mode',
-                body: 'SIGNAL is running with mock providers only. No real API calls are made. All connection statuses shown in the Integrations UI are simulated for demonstration. No real credentials are needed or accepted at this stage.',
+                body: 'SIGNAL is running with mock providers only. No real API calls are made and no ' +
+                  'real credentials are needed or accepted. All connection statuses shown in the ' +
+                  'Integrations UI are simulated. The token vault and OAuth service run in-memory ' +
+                  'only — state resets on page reload, and no data is persisted.',
               },
               {
                 icon: '🔄',
-                title: 'OAuth token refresh',
-                body: 'Token refresh happens entirely server-side on a cron schedule. The frontend triggers refresh via POST /api/publish/refresh/:platform but never sees the new token — only a success/expiry status response.',
+                title: 'OAuth token refresh and rotation',
+                body: 'Token refresh happens entirely server-side on a cron schedule. The frontend ' +
+                  'triggers refresh via POST /api/publish/refresh/:platform but never sees the new ' +
+                  'token — only a success/expiry status response. Refresh tokens are rotated on every ' +
+                  'use (RFC 6749 §10.4). KMS key rotation re-encrypts stored ciphertext on a separate schedule.',
               },
             ].map(rule => (
               <div key={rule.title} className="security-rule">
