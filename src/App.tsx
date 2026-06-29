@@ -11,6 +11,8 @@ import { ApprovalsPage } from './pages/Approvals';
 import { PerformancePage } from './pages/Performance';
 import { PipelinePage } from './pages/Pipeline';
 import { DailyWorkflowPage } from './pages/DailyWorkflow';
+import { DailyBatchPage } from './pages/DailyBatch';
+import { SocialConnectionsPage } from './pages/SocialConnections';
 import { SettingsPage } from './pages/Settings';
 
 export default function App() {
@@ -83,6 +85,8 @@ export default function App() {
           {view === 'performance' && <PerformancePage />}
           {view === 'pipeline' && <PipelinePage />}
           {view === 'workflow' && <DailyWorkflowPage />}
+          {view === 'batch' && <DailyBatchPage />}
+          {view === 'connections' && <SocialConnectionsPage />}
           {view === 'settings' && (
             <SettingsPage
               settings={settings}

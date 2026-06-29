@@ -22,3 +22,19 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Environment — never commit real secrets
+.env
+.env.local
+.env.*.local
+
+# Go backend
+backend/bin/
+backend/tmp/
+backend/*.exe
+backend/trendcortex-api
+
+# Go test cache and coverage
+*.test
+*.out
+coverage.txt

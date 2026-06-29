@@ -13,7 +13,59 @@ export type View =
   | 'performance'
   | 'pipeline'
   | 'workflow'
+  | 'batch'
+  | 'connections'
   | 'settings';
+
+// ─── Platform connection types (real OAuth state) ─────────────
+
+export type PlatformConnectionStatus =
+  | 'not_connected'
+  | 'connected'
+  | 'expired'
+  | 'revoked'
+  | 'needs_review';
+
+export interface PlatformConnection {
+  platform: Platform;
+  name: string;
+  status: PlatformConnectionStatus;
+  handle: string | null;
+  connectedAt: string | null;
+  expiresAt: string | null;
+  scopes: string[];
+  canPublish: boolean;
+}
+
+// ─── Batch job types ──────────────────────────────────────────
+
+export type BatchStatus =
+  | 'draft'
+  | 'rendering'
+  | 'ready'
+  | 'zipped'
+  | 'queued'
+  | 'publishing'
+  | 'published'
+  | 'failed'
+  | 'needs_review';
+
+export interface BatchVideo {
+  id: string;
+  rank: number;
+  title: string;
+  status: BatchStatus;
+  platforms: Platform[];
+}
+
+export interface DailyBatch {
+  date: string;
+  videos: BatchVideo[];
+  batchStatus: BatchStatus;
+  zipUrl: string | null;
+  publishedCount: number;
+  requiresApproval: boolean;
+}
 
 // ─── Daily Workflow types ─────────────────────────────────────
 

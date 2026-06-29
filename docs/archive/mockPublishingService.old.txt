@@ -1,3 +1,10 @@
+ARCHIVED — Phase 1 mock publishing service.
+Replaced by real backend calls in Phase 1.5.
+The real endpoints are: POST /platforms/{platform}/disconnect|refresh|test
+See backend/internal/http/handlers_platform.go for implementations.
+
+---
+
 import type { IntegrationServiceResult, PublishingAccount } from './types';
 
 function delay(ms: number): Promise<void> {

@@ -14,23 +14,25 @@ interface Props {
 }
 
 export const NAV_ITEMS: NavItem[] = [
-  { id: 'signals',  n: '01', label: 'Signals',        badge: 14 },
-  { id: 'scoring',  n: '02', label: 'Scoring',        badge: 8 },
-  { id: 'topics',   n: '03', label: "Today's 6",      badge: 6 },
-  { id: 'workflow', n: '04', label: 'Daily Workflow',  badge: 6 },
-  { id: 'competitors', n: '05', label: 'Competitors', badge: 6 },
-  { id: 'approvals', n: '06', label: 'Approvals' },
-  { id: 'performance', n: '07', label: 'Performance' },
-  { id: 'pipeline',   n: '08', label: 'Pipeline' },
-  { id: 'settings',   n: '09', label: 'Settings' },
+  { id: 'signals',     n: '01', label: 'Signals',          badge: 14 },
+  { id: 'scoring',     n: '02', label: 'Scoring',          badge: 8 },
+  { id: 'topics',      n: '03', label: "Today's 6",        badge: 6 },
+  { id: 'workflow',    n: '04', label: 'Daily Workflow',    badge: 6 },
+  { id: 'batch',       n: '05', label: 'Batch & Publish',  badge: 6 },
+  { id: 'connections', n: '06', label: 'Connections' },
+  { id: 'competitors', n: '07', label: 'Competitors',      badge: 6 },
+  { id: 'approvals',   n: '08', label: 'Approvals' },
+  { id: 'performance', n: '09', label: 'Performance' },
+  { id: 'pipeline',    n: '10', label: 'Pipeline' },
+  { id: 'settings',    n: '11', label: 'Settings' },
 ];
 
 const MOBILE_NAV_ITEMS: NavItem[] = [
-  { id: 'topics',   n: '01', label: "Today's 6",      badge: 6 },
-  { id: 'signals',  n: '02', label: 'Signals',        badge: 14 },
-  { id: 'pipeline', n: '03', label: 'Pipeline' },
-  { id: 'workflow', n: '04', label: 'Workflow',       badge: 6 },
-  { id: 'settings', n: '05', label: 'Settings' },
+  { id: 'topics',      n: '01', label: "Today's 6",   badge: 6 },
+  { id: 'batch',       n: '02', label: 'Publish',     badge: 6 },
+  { id: 'signals',     n: '03', label: 'Signals',     badge: 14 },
+  { id: 'connections', n: '04', label: 'Connect' },
+  { id: 'settings',    n: '05', label: 'Settings' },
 ];
 
 export function Sidebar({ currentView, onNavigate, approvals }: Props) {
@@ -43,8 +45,8 @@ export function Sidebar({ currentView, onNavigate, approvals }: Props) {
           <div className="sidebar-logo-icon-inner" />
         </div>
         <div className="sidebar-logo-text">
-          <div className="name">SIGNAL</div>
-          <div className="tagline">trend engine</div>
+          <div className="name">TrendCortex</div>
+          <div className="tagline">catch · create · publish</div>
         </div>
       </div>
 

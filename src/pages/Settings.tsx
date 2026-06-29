@@ -4,7 +4,7 @@ import type { SettingsTab, PublishingAccount, IntegrationProvider } from '../lib
 import { PLATFORMS } from '../data/platforms';
 import { DATA_SOURCE_PROVIDERS, AI_PROVIDERS, PUBLISHING_ACCOUNTS } from '../lib/integrations/registry';
 import { integrationApiClient } from '../lib/integrations/integrationApiClient';
-import { mockPublishingService } from '../lib/integrations/mockPublishingService';
+import { getOAuthStartURL, ApiError } from '../lib/api/client';
 import { IntegrationCard } from '../components/IntegrationCard';
 import { PublishingCard } from '../components/PublishingCard';
 
@@ -19,18 +19,16 @@ const TABS: { id: SettingsTab; label: string; count?: number }[] = [
 ];
 
 const BACKEND_ENDPOINTS = [
-  { method: 'POST', path: '/api/integrations/connect/:provider',    note: 'Initiate OAuth (startOAuth → redirect to provider)' },
-  { method: 'GET',  path: '/api/integrations/callback',             note: 'OAuth callback — exchange code, encrypt + store tokens' },
-  { method: 'POST', path: '/api/integrations/disconnect/:provider', note: 'Revoke tokens and delete encrypted credentials' },
-  { method: 'GET',  path: '/api/integrations/status',               note: 'Return connection status for all providers (no tokens)' },
-  { method: 'POST', path: '/api/integrations/refresh/:provider',    note: 'Exchange refresh token, rotate stored credentials' },
-  { method: 'GET',  path: '/api/integrations/test/:provider',       note: 'Lightweight live credential check via provider API' },
-  { method: 'POST', path: '/api/publish/connect/:platform',         note: 'Start OAuth for upload + publish scopes' },
-  { method: 'POST', path: '/api/publish/disconnect/:platform',      note: 'Revoke platform OAuth tokens and delete credentials' },
-  { method: 'POST', path: '/api/publish/refresh/:platform',         note: 'Refresh publish token; return expiry status only' },
-  { method: 'POST', path: '/api/publish/test/:platform',            note: 'Upload 1s silent test video; verify, then delete' },
-  { method: 'POST', path: '/api/publish/upload',                    note: 'Upload and schedule video post' },
-  { method: 'POST', path: '/api/ai/generate',                       note: 'Generate scripts/captions via AI provider' },
+  { method: 'GET',  path: '/health',                          note: 'Liveness probe — Railway health check, no auth' },
+  { method: 'GET',  path: '/platforms/connections',           note: 'OAuth status for all publishable platforms (no tokens)' },
+  { method: 'POST', path: '/platforms/{platform}/disconnect', note: 'Revoke OAuth tokens and delete encrypted credentials (501 until implemented)' },
+  { method: 'POST', path: '/platforms/{platform}/refresh',    note: 'Exchange refresh token; return expiry status only (501 until implemented)' },
+  { method: 'POST', path: '/platforms/{platform}/test',       note: 'Lightweight live credential probe via provider API (501 until implemented)' },
+  { method: 'GET',  path: '/oauth/{platform}/start',          note: 'Begin OAuth redirect — returns authorize_url for browser redirect' },
+  { method: 'GET',  path: '/oauth/{platform}/callback',       note: 'OAuth callback — exchange code, encrypt + store tokens server-side' },
+  { method: 'POST', path: '/batches/{batchID}/zip',           note: 'Queue ZIP creation job — returns job_id for polling (501 until implemented)' },
+  { method: 'POST', path: '/batches/{batchID}/publish',       note: 'Queue publish jobs per platform — human approval required (501 until implemented)' },
+  { method: 'GET',  path: '/jobs/{jobID}',                    note: 'Poll background job status (501 until implemented)' },
 ];
 
 interface Props {
@@ -127,69 +125,97 @@ export function SettingsPage({ settings: initial, onSave }: Props) {
   // ── Publishing account handlers ───────────────────────────────
 
   const handlePubConnect = useCallback(async (accountId: string) => {
+    const platform = accountId.replace('pub-', '');
     setPubLoading(prev => ({ ...prev, [accountId]: true }));
     setPubAccounts(prev => prev.map(a =>
       a.id === accountId ? { ...a, status: 'configuring' } : a
     ));
-    const result = await mockPublishingService.connect(accountId);
+    try {
+      const res = await getOAuthStartURL(platform);
+      // Redirect browser to platform OAuth page — backend handles callback
+      window.location.href = res.authorize_url;
+    } catch (err) {
+      let msg = 'OAuth request failed';
+      if (err instanceof ApiError) {
+        if (err.isCredentialsMissing) msg = `Platform app credentials are missing. Add backend environment variables first.`;
+        else if (err.isBackendOffline) msg = `Backend offline — run: cd backend && go run ./cmd/api`;
+        else if (err.isNotImplemented) msg = `OAuth not yet wired on backend (PKCE + state storage required).`;
+        else msg = err.message;
+      } else if (err instanceof Error) {
+        msg = err.message;
+      }
+      setPubAccounts(prev => prev.map(a =>
+        a.id === accountId ? { ...a, status: 'not_connected' } : a
+      ));
+      setPubResults(prev => ({ ...prev, [accountId]: msg }));
+    }
     setPubLoading(prev => ({ ...prev, [accountId]: false }));
-    setPubAccounts(prev => prev.map(a =>
-      a.id === accountId
-        ? {
-            ...a,
-            status:            result.status,
-            handle:            result.handle ?? null,
-            uploadPermission:  result.uploadPermission ?? false,
-            publishPermission: result.publishPermission ?? false,
-            tokenExpiry:       result.tokenExpiry ?? null,
-            tokenStatus:       result.tokenStatus ?? 'none',
-          }
-        : a
-    ));
-    setPubResults(prev => ({ ...prev, [accountId]: result.message }));
   }, []);
 
   const handlePubDisconnect = useCallback(async (accountId: string) => {
+    const platform = accountId.replace('pub-', '');
     setPubLoading(prev => ({ ...prev, [accountId]: true }));
-    const result = await mockPublishingService.disconnect(accountId);
+    try {
+      const res = await fetch(`/platforms/${platform}/disconnect`, {
+        method: 'POST', credentials: 'include',
+      });
+      const msg = res.ok
+        ? `Disconnected ${platform}.`
+        : `Disconnect returned HTTP ${res.status} — not yet implemented on backend.`;
+      setPubAccounts(prev => prev.map(a =>
+        a.id === accountId
+          ? { ...a, status: 'not_connected', handle: null, uploadPermission: false,
+              publishPermission: false, tokenExpiry: null, tokenStatus: 'none' }
+          : a
+      ));
+      setPubResults(prev => ({ ...prev, [accountId]: msg }));
+    } catch {
+      setPubResults(prev => ({ ...prev, [accountId]: `Backend offline — run: cd backend && go run ./cmd/api` }));
+    }
     setPubLoading(prev => ({ ...prev, [accountId]: false }));
-    setPubAccounts(prev => prev.map(a =>
-      a.id === accountId
-        ? {
-            ...a,
-            status:            result.status,
-            handle:            null,
-            uploadPermission:  false,
-            publishPermission: false,
-            tokenExpiry:       null,
-            tokenStatus:       'none',
-          }
-        : a
-    ));
-    setPubResults(prev => ({ ...prev, [accountId]: null }));
   }, []);
 
   const handlePubTestUpload = useCallback(async (accountId: string) => {
+    const platform = accountId.replace('pub-', '');
     setPubLoading(prev => ({ ...prev, [accountId]: true }));
     setPubResults(prev => ({ ...prev, [accountId]: null }));
-    const result = await mockPublishingService.testUpload(accountId);
+    try {
+      const res = await fetch(`/platforms/${platform}/test`, {
+        method: 'POST', credentials: 'include',
+      });
+      const body = await res.json().catch(() => ({ error: `HTTP ${res.status}` })) as { error?: string };
+      const msg = res.ok
+        ? `Test passed for ${platform}.`
+        : (body.error ?? `HTTP ${res.status} — test endpoint not yet implemented.`);
+      setPubResults(prev => ({ ...prev, [accountId]: msg }));
+    } catch {
+      setPubResults(prev => ({ ...prev, [accountId]: `Backend offline — run: cd backend && go run ./cmd/api` }));
+    }
     setPubLoading(prev => ({ ...prev, [accountId]: false }));
-    setPubResults(prev => ({ ...prev, [accountId]: result.message }));
   }, []);
 
   const handlePubRefreshStatus = useCallback(async (accountId: string) => {
+    const platform = accountId.replace('pub-', '');
     setPubLoading(prev => ({ ...prev, [accountId]: true }));
     setPubResults(prev => ({ ...prev, [accountId]: null }));
-    // Production: POST /api/publish/refresh/:platform — backend refreshes the OAuth token server-side.
-    await new Promise(r => setTimeout(r, 900));
+    try {
+      const res = await fetch(`/platforms/${platform}/refresh`, {
+        method: 'POST', credentials: 'include',
+      });
+      const body = await res.json().catch(() => ({ error: `HTTP ${res.status}` })) as { error?: string };
+      const msg = res.ok
+        ? `Token refreshed for ${platform}.`
+        : (body.error ?? `HTTP ${res.status} — refresh not yet implemented.`);
+      if (res.ok) {
+        setPubAccounts(prev => prev.map(a =>
+          a.id === accountId ? { ...a, status: 'connected', tokenStatus: 'valid' } : a
+        ));
+      }
+      setPubResults(prev => ({ ...prev, [accountId]: msg }));
+    } catch {
+      setPubResults(prev => ({ ...prev, [accountId]: `Backend offline — run: cd backend && go run ./cmd/api` }));
+    }
     setPubLoading(prev => ({ ...prev, [accountId]: false }));
-    setPubAccounts(prev => prev.map(a =>
-      a.id === accountId ? { ...a, status: 'connected', tokenStatus: 'valid' } : a
-    ));
-    setPubResults(prev => ({
-      ...prev,
-      [accountId]: `Token refreshed (demo). Production: POST /api/publish/refresh/${accountId.replace('pub-', '')} exchanges the refresh token server-side.`,
-    }));
   }, []);
 
   // ── Render ────────────────────────────────────────────────────
@@ -491,7 +517,7 @@ export function SettingsPage({ settings: initial, onSave }: Props) {
           <div className="int-section-header">
             <div className="int-section-title">Secret Management</div>
             <div className="int-section-sub">
-              How credentials are handled in SIGNAL — current demo rules and production requirements.
+              How credentials are handled in TrendCortex — security rules and backend requirements.
             </div>
           </div>
 
@@ -529,12 +555,12 @@ export function SettingsPage({ settings: initial, onSave }: Props) {
                   'and are never bundled into the frontend asset. Never commit .env files to git.',
               },
               {
-                icon: '🎭',
-                title: 'Current demo mode',
-                body: 'SIGNAL is running with mock providers only. No real API calls are made and no ' +
-                  'real credentials are needed or accepted. All connection statuses shown in the ' +
-                  'Integrations UI are simulated. The token vault and OAuth service run in-memory ' +
-                  'only — state resets on page reload, and no data is persisted.',
+                icon: '🖥',
+                title: 'Backend required for OAuth',
+                body: 'TrendCortex requires the Go backend (cd backend && go run ./cmd/api) running with ' +
+                  'platform credentials in .env before any OAuth connection can be established. ' +
+                  'Social Connections and Publishing tabs call real backend endpoints — ' +
+                  'no mock fallbacks. If the backend is offline, buttons show an inline error instead of fake success.',
               },
               {
                 icon: '🔄',
