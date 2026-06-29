@@ -1,7 +1,7 @@
 import { useState, useCallback } from 'react';
 import type { View, ApprovalStatus } from './types';
 import { storage } from './lib/storage';
-import { Sidebar } from './components/Sidebar';
+import { MobileBottomNav, Sidebar } from './components/Sidebar';
 import { Header } from './components/Header';
 import { SignalsPage } from './pages/Signals';
 import { ScoringPage } from './pages/Scoring';
@@ -91,6 +91,11 @@ export default function App() {
           )}
         </div>
       </main>
+
+      <MobileBottomNav
+        currentView={view}
+        onNavigate={navigate}
+      />
     </div>
   );
 }
