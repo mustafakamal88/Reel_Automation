@@ -11,6 +11,7 @@ export type View =
   | 'competitors'
   | 'approvals'
   | 'performance'
+  | 'pipeline'
   | 'settings';
 
 export interface PlatformMeta {
@@ -117,6 +118,123 @@ export interface Settings {
   contentStyle: string;
   riskTolerance: 'low' | 'medium' | 'high';
   brandVoice: string;
+}
+
+// ─── Pipeline types ───────────────────────────────────────────
+
+export type PipelineStatus =
+  | 'idle'
+  | 'generating-script'
+  | 'generating-storyboard'
+  | 'planning-assets'
+  | 'queued-render'
+  | 'rendering'
+  | 'exporting'
+  | 'done'
+  | 'error';
+
+export type ExportTarget =
+  | 'yt-shorts'
+  | 'tiktok'
+  | 'ig-reels'
+  | 'fb-reels'
+  | 'x-twitter'
+  | 'threads';
+
+export interface VideoTopic {
+  id: string;
+  title: string;
+  hook: string;
+  platforms: Platform[];
+  trendScore: number;
+  riskScore: number;
+}
+
+export interface QualityCheck {
+  name: string;
+  passed: boolean;
+  message: string;
+  severity: 'info' | 'warning' | 'error';
+}
+
+export interface ScriptDraft {
+  topicId: string;
+  title: string;
+  hook: string;
+  body: string;
+  cta: string;
+  estimatedDuration: number;
+  wordCount: number;
+  beats: ScriptBeat[];
+  qualityChecks: QualityCheck[];
+}
+
+export interface StoryboardScene {
+  index: number;
+  timeRange: string;
+  visual: string;
+  caption: string;
+  type: 'hook' | 'body' | 'cta';
+  bRoll: string;
+}
+
+export interface AssetPlan {
+  topicId: string;
+  musicTrack: string;
+  voiceStyle: string;
+  captionStyle: string;
+  colorGrade: string;
+  requiredBRoll: string[];
+  copyrightSafe: boolean;
+  copyrightWarning?: string;
+}
+
+export interface RenderJob {
+  id: string;
+  topicId: string;
+  status: 'queued' | 'rendering' | 'done' | 'failed';
+  progress: number;
+  estimatedSeconds: number;
+  format: 'mp4';
+  resolution: '1080x1920';
+  fps: 30 | 60;
+  queuePosition: number;
+  enqueuedAt: string;
+  completedAt?: string;
+}
+
+export interface ExportFile {
+  target: ExportTarget;
+  filename: string;
+  resolution: string;
+  durationSec: number;
+  sizeKB: number;
+  status: 'pending' | 'ready' | 'failed';
+}
+
+export interface ExportPackage {
+  id: string;
+  topicId: string;
+  renderJobId: string;
+  targets: ExportTarget[];
+  status: 'pending' | 'ready' | 'failed';
+  files: ExportFile[];
+  exportedAt?: string;
+}
+
+export interface VideoPipeline {
+  id: string;
+  topicId: string;
+  status: PipelineStatus;
+  topic: VideoTopic;
+  script?: ScriptDraft;
+  storyboard?: StoryboardScene[];
+  assetPlan?: AssetPlan;
+  renderJob?: RenderJob;
+  exportPackage?: ExportPackage;
+  qualityWarnings: string[];
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface AppState {

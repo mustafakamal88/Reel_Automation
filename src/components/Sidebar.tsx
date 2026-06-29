@@ -20,7 +20,8 @@ const NAV_ITEMS: NavItem[] = [
   { id: 'competitors', n: '04', label: 'Competitors', badge: 6 },
   { id: 'approvals', n: '05', label: 'Approvals' },
   { id: 'performance', n: '06', label: 'Performance' },
-  { id: 'settings', n: '07', label: 'Settings' },
+  { id: 'pipeline',    n: '07', label: 'Pipeline' },
+  { id: 'settings',    n: '08', label: 'Settings' },
 ];
 
 export function Sidebar({ currentView, onNavigate, approvals }: Props) {

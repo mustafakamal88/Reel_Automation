@@ -7,7 +7,8 @@ const VIEW_META: Record<View, { title: string; sub: string }> = {
   competitors: { title: 'Competitor Tracker', sub: 'Estimated reach via public signals — views/hr, velocity, repetition' },
   approvals: { title: 'Approvals', sub: 'Review and schedule before anything goes live' },
   performance: { title: 'Performance', sub: 'Own-account watch-time feeding tomorrow\'s topics' },
-  settings: { title: 'Settings', sub: 'General, integrations, publishing accounts, and secret management' },
+  pipeline:    { title: 'Pipeline Studio', sub: 'Script → storyboard → assets → render → export · 6 reels/day · mock/demo only' },
+  settings:    { title: 'Settings', sub: 'General, integrations, publishing accounts, and secret management' },
 };
 
 interface Props {
