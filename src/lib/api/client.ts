@@ -140,3 +140,194 @@ export interface JobStatus {
 export async function getJobStatus(jobID: string): Promise<JobStatus> {
   return apiFetch<JobStatus>(`/jobs/${jobID}`);
 }
+
+// ── Phase 4A: trend discovery → scoring → daily batch → reel plan pipeline ────
+
+export interface TrendSource {
+  id: string;
+  workspace_id: string;
+  name: string;
+  source_type: string;
+  status: string;
+  confidence: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface TrendItem {
+  id: string;
+  workspace_id: string;
+  trend_source_id: string;
+  topic: string;
+  description: string;
+  platform_hint: string;
+  velocity: number;
+  status: 'new' | 'scored' | 'batched' | 'rejected';
+  discovered_at: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface TopicScore {
+  id: string;
+  workspace_id: string;
+  trend_item_id: string;
+  total_score: number;
+  velocity_score: number;
+  source_confidence_score: number;
+  platform_fit_score: number;
+  safety_score: number;
+  watch_time_score: number;
+  competition_score: number;
+  reason: string;
+  breakdown: Record<string, number>;
+  created_at: string;
+}
+
+export interface DailyBatchV2 {
+  id: string;
+  workspace_id: string;
+  batch_date: string;
+  status: 'planned' | 'ready';
+  reel_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ReelPlan {
+  id: string;
+  workspace_id: string;
+  daily_batch_id: string;
+  trend_item_id: string;
+  topic_score_id: string;
+  rank: number;
+  platform: string;
+  title_idea: string;
+  script_outline: string;
+  description_draft: string;
+  hashtags_draft: string;
+  thumbnail_idea: string;
+  status: 'draft' | 'video_requested';
+  created_at: string;
+  updated_at: string;
+}
+
+export interface VideoJob {
+  id: string;
+  workspace_id: string;
+  reel_plan_id: string;
+  status: 'pending_provider_connection' | 'draft_ready' | 'failed';
+  provider: string;
+  notes: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ExportJob {
+  id: string;
+  workspace_id: string;
+  daily_batch_id: string;
+  status: 'zip_generation_not_implemented' | 'failed' | 'completed';
+  zip_path: string | null;
+  error_message: string | null;
+  created_at: string;
+  completed_at: string | null;
+}
+
+export interface PublishJobV2 {
+  id: string;
+  workspace_id: string;
+  reel_plan_id: string;
+  platform: string;
+  status: 'platform_not_connected' | 'queued' | 'running' | 'done' | 'failed' | 'skipped';
+  retry_count: number;
+  error_message: string | null;
+  platform_post_id: string | null;
+  scheduled_for: string | null;
+  started_at: string | null;
+  completed_at: string | null;
+  created_at: string;
+}
+
+export async function getTrendSources(): Promise<{ trend_sources: TrendSource[] }> {
+  return apiFetch('/api/trend-sources');
+}
+
+export async function createTrendSource(body: { name: string; source_type: string; confidence?: number }): Promise<TrendSource> {
+  return apiFetch('/api/trend-sources', { method: 'POST', body: JSON.stringify(body) });
+}
+
+export interface DiscoverTrendsResponse {
+  status: 'created' | 'provider_not_connected';
+  message?: string;
+  count?: number;
+  items?: TrendItem[];
+}
+
+export async function discoverTrends(trendSourceID: string): Promise<DiscoverTrendsResponse> {
+  return apiFetch('/api/trends/discover', {
+    method: 'POST',
+    body: JSON.stringify({ trend_source_id: trendSourceID }),
+  });
+}
+
+export async function getTrends(status?: string): Promise<{ trend_items: TrendItem[] }> {
+  const qs = status ? `?status=${encodeURIComponent(status)}` : '';
+  return apiFetch(`/api/trends${qs}`);
+}
+
+export async function scoreTopics(trendItemIDs?: string[]): Promise<{ scored: number; topic_scores: TopicScore[] }> {
+  return apiFetch('/api/topics/score', {
+    method: 'POST',
+    body: JSON.stringify({ trend_item_ids: trendItemIDs ?? [] }),
+  });
+}
+
+export async function getTopicScores(): Promise<{ topic_scores: TopicScore[] }> {
+  return apiFetch('/api/topics/scores');
+}
+
+export interface CreateDailyBatchResponse {
+  batch: DailyBatchV2;
+  reel_plans: ReelPlan[];
+  already_existed: boolean;
+}
+
+export async function createDailyBatch(date?: string): Promise<CreateDailyBatchResponse> {
+  return apiFetch('/api/batches/daily', {
+    method: 'POST',
+    body: JSON.stringify(date ? { date } : {}),
+  });
+}
+
+export async function getDailyBatches(): Promise<{ daily_batches: DailyBatchV2[] }> {
+  return apiFetch('/api/batches');
+}
+
+export async function getBatchReels(batchID: string): Promise<{ reel_plans: ReelPlan[] }> {
+  return apiFetch(`/api/batches/${batchID}/reels`);
+}
+
+export async function prepareVideoJob(reelID: string): Promise<{ video_job: VideoJob; already_existed: boolean }> {
+  return apiFetch(`/api/reels/${reelID}/prepare-video-job`, { method: 'POST' });
+}
+
+export async function getVideoJobs(): Promise<{ video_jobs: VideoJob[] }> {
+  return apiFetch('/api/video-jobs');
+}
+
+export async function createBatchExport(batchID: string): Promise<ExportJob> {
+  return apiFetch(`/api/batches/${batchID}/export`, { method: 'POST' });
+}
+
+export async function getExportJobs(): Promise<{ export_jobs: ExportJob[] }> {
+  return apiFetch('/api/export-jobs');
+}
+
+export async function publishReel(reelID: string): Promise<PublishJobV2> {
+  return apiFetch(`/api/reels/${reelID}/publish`, { method: 'POST' });
+}
+
+export async function getPublishJobs(): Promise<{ publish_jobs: PublishJobV2[] }> {
+  return apiFetch('/api/publish-jobs');
+}

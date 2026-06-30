@@ -6,6 +6,7 @@ const VIEW_META: Record<View, { title: string; sub: string }> = {
   topics:      { title: "Today's 6",         sub: 'AI-generated short-form topics, ready to review and approve' },
   workflow:    { title: 'Daily Workflow',    sub: 'Trend discovery → selection → pipeline → approval → schedule' },
   batch:       { title: 'Batch & Publish',  sub: 'Auto-upload to connected platforms or download ZIP — 6 videos/day' },
+  realPipeline: { title: 'Real Automation Pipeline', sub: 'Trend discovery → scoring → daily batch → video/export/publish jobs — backed by Postgres' },
   connections: { title: 'Social Connections', sub: 'Connect platform accounts via OAuth — no passwords, official APIs only' },
   competitors: { title: 'Competitor Tracker', sub: 'Estimated reach via public signals — views/hr, velocity, repetition' },
   approvals:   { title: 'Approvals',        sub: 'Review and approve before anything goes live — required before first publish' },

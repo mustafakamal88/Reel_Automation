@@ -58,6 +58,37 @@ func (s *Server) Routes() http.Handler {
 	// Job polling — session required
 	mux.HandleFunc("GET /jobs/", s.requireSession(s.handleJobStatus))
 
+	// ── Phase 4A: trend discovery → scoring → daily batch → reel plan ──────
+	// pipeline. Session middleware is not yet attached here (requireSession
+	// is currently a no-op everywhere it's used); see defaultWorkspaceID for
+	// the single-workspace placeholder this phase runs against until real
+	// auth lands.
+	mux.HandleFunc("GET /api/trend-sources", s.handleListTrendSources)
+	mux.HandleFunc("POST /api/trend-sources", s.handleCreateTrendSource)
+
+	mux.HandleFunc("POST /api/trends/discover", s.handleDiscoverTrends)
+	mux.HandleFunc("GET /api/trends", s.handleListTrends)
+
+	mux.HandleFunc("POST /api/topics/score", s.handleScoreTopics)
+	mux.HandleFunc("GET /api/topics/scores", s.handleListTopicScores)
+
+	mux.HandleFunc("POST /api/batches/daily", s.handleCreateDailyBatch)
+	mux.HandleFunc("GET /api/batches", s.handleListDailyBatches)
+	mux.HandleFunc("GET /api/batches/{id}", s.handleGetDailyBatch)
+	mux.HandleFunc("GET /api/batches/{id}/reels", s.handleListBatchReels)
+	mux.HandleFunc("POST /api/batches/{id}/export", s.handleCreateExportJob)
+
+	mux.HandleFunc("POST /api/reels/{id}/prepare-video-job", s.handlePrepareVideoJob)
+	mux.HandleFunc("POST /api/reels/{id}/publish", s.handlePublishReel)
+
+	mux.HandleFunc("GET /api/video-jobs", s.handleListVideoJobs)
+	mux.HandleFunc("GET /api/video-jobs/{id}", s.handleGetVideoJob)
+
+	mux.HandleFunc("GET /api/export-jobs", s.handleListExportJobs)
+	mux.HandleFunc("GET /api/export-jobs/{id}", s.handleGetExportJob)
+
+	mux.HandleFunc("GET /api/publish-jobs", s.handleListPublishJobs)
+
 	return corsMiddleware(s.cfg, mux)
 }
 

@@ -14,6 +14,7 @@ export type View =
   | 'pipeline'
   | 'workflow'
   | 'batch'
+  | 'realPipeline'
   | 'connections'
   | 'settings';
 

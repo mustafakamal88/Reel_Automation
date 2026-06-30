@@ -12,6 +12,7 @@ import { PerformancePage } from './pages/Performance';
 import { PipelinePage } from './pages/Pipeline';
 import { DailyWorkflowPage } from './pages/DailyWorkflow';
 import { DailyBatchPage } from './pages/DailyBatch';
+import { RealPipelinePage } from './pages/RealPipeline';
 import { SocialConnectionsPage } from './pages/SocialConnections';
 import { SettingsPage } from './pages/Settings';
 
@@ -86,6 +87,7 @@ export default function App() {
           {view === 'pipeline' && <PipelinePage />}
           {view === 'workflow' && <DailyWorkflowPage />}
           {view === 'batch' && <DailyBatchPage />}
+          {view === 'realPipeline' && <RealPipelinePage />}
           {view === 'connections' && <SocialConnectionsPage />}
           {view === 'settings' && (
             <SettingsPage

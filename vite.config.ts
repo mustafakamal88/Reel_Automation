@@ -14,6 +14,7 @@ export default defineConfig({
       '/oauth':     { target: 'http://localhost:8080', changeOrigin: true },
       '/batches':   { target: 'http://localhost:8080', changeOrigin: true },
       '/jobs':      { target: 'http://localhost:8080', changeOrigin: true },
+      '/api':       { target: 'http://localhost:8080', changeOrigin: true },
     },
   },
 })

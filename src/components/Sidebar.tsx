@@ -19,12 +19,13 @@ export const NAV_ITEMS: NavItem[] = [
   { id: 'topics',      n: '03', label: "Today's 6",        badge: 6 },
   { id: 'workflow',    n: '04', label: 'Daily Workflow',    badge: 6 },
   { id: 'batch',       n: '05', label: 'Batch & Publish',  badge: 6 },
-  { id: 'connections', n: '06', label: 'Connections' },
-  { id: 'competitors', n: '07', label: 'Competitors',      badge: 6 },
-  { id: 'approvals',   n: '08', label: 'Approvals' },
-  { id: 'performance', n: '09', label: 'Performance' },
-  { id: 'pipeline',    n: '10', label: 'Pipeline' },
-  { id: 'settings',    n: '11', label: 'Settings' },
+  { id: 'realPipeline', n: '06', label: 'Real Pipeline' },
+  { id: 'connections', n: '07', label: 'Connections' },
+  { id: 'competitors', n: '08', label: 'Competitors',      badge: 6 },
+  { id: 'approvals',   n: '09', label: 'Approvals' },
+  { id: 'performance', n: '10', label: 'Performance' },
+  { id: 'pipeline',    n: '11', label: 'Pipeline' },
+  { id: 'settings',    n: '12', label: 'Settings' },
 ];
 
 const MOBILE_NAV_ITEMS: NavItem[] = [

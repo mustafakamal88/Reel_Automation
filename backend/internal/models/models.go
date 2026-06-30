@@ -166,7 +166,8 @@ const (
 type PublishJob struct {
 	ID            string           `json:"id" db:"id"`
 	WorkspaceID   string           `json:"workspace_id" db:"workspace_id"`
-	VideoAssetID  string           `json:"video_asset_id" db:"video_asset_id"`
+	VideoAssetID  *string          `json:"video_asset_id,omitempty" db:"video_asset_id"`
+	ReelPlanID    *string          `json:"reel_plan_id,omitempty" db:"reel_plan_id"`
 	Platform      PlatformKey      `json:"platform" db:"platform"`
 	Status        PublishJobStatus `json:"status" db:"status"`
 	RetryCount    int              `json:"retry_count" db:"retry_count"`
