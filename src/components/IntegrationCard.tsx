@@ -3,7 +3,6 @@ import { PLATFORMS } from '../data/platforms';
 
 function statusLabel(s: IntegrationStatus): string {
   const labels: Record<IntegrationStatus, string> = {
-    demo:            'Not connected',
     not_connected:   'Not connected',
     connected:       'Connected',
     needs_attention: 'Needs attention',
@@ -65,7 +64,6 @@ export function IntegrationCard({
   const statusCls = `status-${status.replace(/_/g, '-')}`;
 
   const isConnected   = status === 'connected';
-  const isDemo        = status === 'demo';
   const isDisconnected = status === 'not_connected';
   const needsAttention = status === 'needs_attention';
   const isError       = status === 'error';
@@ -142,9 +140,9 @@ export function IntegrationCard({
               <button className="btn-int btn-int--primary" onClick={onConnect}>Reconnect</button>
               <button className="btn-int btn-int--danger" onClick={onDisconnect}>Disconnect</button>
             </>
-          ) : (isDemo || isDisconnected) ? (
+          ) : isDisconnected ? (
             <button className="btn-int btn-int--primary" onClick={onConnect}>
-              {isDemo ? 'Connect' : 'Connect account'}
+              Connect account
             </button>
           ) : null}
         </div>

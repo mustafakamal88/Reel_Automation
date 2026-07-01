@@ -1,6 +1,3 @@
-// Provider registry — swap any mock for a real adapter when API keys are available.
-// Each provider implements the same interface so the scoring engine is provider-agnostic.
-
 import type { Signal } from '../../types';
 import { googleTrendsProvider } from './google-trends';
 import { youtubeProvider } from './youtube';
@@ -13,7 +10,6 @@ import { facebookProvider } from './facebook';
 export interface Provider {
   id: string;
   name: string;
-  /** Fetch (or simulate) latest signals from this source. */
   fetchSignals(): Promise<Signal[]>;
 }
 

@@ -1,7 +1,5 @@
 import type { RenderJob, ExportPackage, ExportFile, ExportTarget } from '../../types';
 
-// MOCK ONLY — builds export packages locally, no uploads to any platform.
-
 interface PlatformSpec {
   label: string;
   resolution: string;
@@ -36,34 +34,26 @@ export async function exportVideo(
   targets: ExportTarget[],
   durationSec: number,
 ): Promise<ExportPackage> {
-  await new Promise<void>(r => setTimeout(r, 480));
-
   const files: ExportFile[] = targets.map(target => {
     const spec = PLATFORM_SPECS[target];
-    const fits = durationSec <= spec.maxDurationSec;
-    const sizeKB = fits
-      ? Math.round((durationSec * spec.avgBitrateKbps) / 8)
-      : 0;
 
     return {
       target,
-      filename: `${renderJob.topicId}_${target}.mp4`,
+      filename: '',
       resolution: spec.resolution,
       durationSec,
-      sizeKB,
-      status: fits ? 'ready' : 'failed',
+      sizeKB: 0,
+      status: 'failed',
     };
   });
 
-  const allReady = files.every(f => f.status === 'ready');
-
   return {
-    id: `exp-${renderJob.topicId}-${Date.now()}`,
+    id: '',
     topicId: renderJob.topicId,
     renderJobId: renderJob.id,
     targets,
-    status: allReady ? 'ready' : 'failed',
+    status: 'failed',
     files,
-    exportedAt: new Date().toISOString(),
+    exportedAt: '',
   };
 }

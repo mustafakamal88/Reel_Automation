@@ -17,6 +17,8 @@ import { SocialConnectionsPage } from './pages/SocialConnections';
 import { SettingsPage } from './pages/Settings';
 
 export default function App() {
+  storage.migrate();
+
   const [view, setView] = useState<View>(() => (storage.getView() as View) || 'signals');
   const [approvals, setApprovals] = useState(() => storage.getApprovals());
   const [settings, setSettings] = useState(() => storage.getSettings());

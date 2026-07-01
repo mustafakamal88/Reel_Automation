@@ -1,24 +1,24 @@
-# SIGNAL Trend Engine
+# TrendCortex / Reels Automation
 
-A real-time trend intelligence dashboard for short-form content creators. SIGNAL monitors social signals across 6 platforms, scores topic candidates using a multi-factor algorithm, generates AI-scripted content ideas daily, and tracks approval workflow through to performance analytics.
+TrendCortex is a short-form video automation workspace backed by a Go API and Postgres. The frontend shows honest empty states until real providers, accounts, and backend data are connected.
 
 ## What it does
 
-- **Signals** — live feed of trending searches, hashtags, and viral videos across Google Trends, YouTube, TikTok, Instagram, X/Twitter, Facebook, and Threads
-- **Scoring** — ranks keyword candidates by trend velocity, cross-platform reach, views/hour, engagement, search interest, niche match, low-competition bonus, saturation penalty, and risk
-- **Today's 6** — one-click generation of 6 AI-scored content topics with hooks, 24-second scripts, captions, and platform targets
-- **Topic Drawer** — per-topic detail view with timestamped script breakdown and approve/reject action
-- **Competitors** — tracks competitor accounts by followers, views/hr, and latest breakout content
-- **Approvals** — review queue for all generated topics with status tracking (pending / approved / rejected)
-- **Performance** — own-account metrics: views, retention, best platform, per-post breakdown, and platform split chart
-- **Settings** — configure niche, content style, brand voice, region, active platforms, risk tolerance, and API keys
+- **Signals** — empty until real trend sources are connected.
+- **Scoring** — empty until real trend items exist in the backend.
+- **Today's 6** — empty until real reel plans are created.
+- **Real Pipeline** — reads trend, scoring, daily batch, render, export, and publish job state from the Go backend.
+- **Pipeline Studio** — keeps the real Phase 4D render + ZIP test flow.
+- **Connections and Settings** — show connection status only; secrets stay in backend environment variables.
 
 ## Tech stack
 
 - React 19 + TypeScript
 - Vite 8
+- Go backend
+- Postgres
 - CSS custom properties (no framework)
-- Playwright (dev tooling — screenshots only, no test suite yet)
+- Playwright for browser smoke checks
 
 ## Local development
 
@@ -28,6 +28,13 @@ npm run dev
 ```
 
 Open [http://localhost:5173](http://localhost:5173)
+
+Backend:
+
+```bash
+cd backend
+go run ./cmd/api
+```
 
 ## Build
 
@@ -39,24 +46,10 @@ Output goes to `dist/`.
 
 ## Current status
 
-**Demo / mock providers only.** All data is generated from static mock providers in `src/lib/providers/`. No real API calls are made. The app is fully functional as a UI prototype.
+The app intentionally does not create placeholder content. Without connected providers and backend records, the UI should show empty states such as “No live trend data connected yet” and “No real reels generated yet.”
 
-## Future API integration TODOs
+## Provider integration notes
 
-Connect real data sources by adding the following env vars to `.env.local`:
+Secrets must be configured server-side only. Do not use `VITE_` variables for API keys, OAuth secrets, refresh tokens, or model provider keys.
 
-| Variable | API |
-|---|---|
-| `VITE_YOUTUBE_API_KEY` | YouTube Data API v3 |
-| `VITE_TIKTOK_CLIENT_KEY` | TikTok Research API |
-| `VITE_META_ACCESS_TOKEN` | Meta Graph API (IG + FB) |
-| `VITE_X_BEARER_TOKEN` | X API v2 |
-| `VITE_ANTHROPIC_API_KEY` | Anthropic API (content generation) |
-
-Additional integration work needed:
-- Replace mock providers in `src/lib/providers/` with real API clients
-- Wire `content-generator.ts` to actual Claude API calls (`VITE_ANTHROPIC_API_KEY`)
-- Add a backend proxy or edge function to keep API keys server-side
-- Implement Playwright test suite for regression coverage
-- Add scheduling/publishing integration (Buffer, later.com, or direct API)
-# Reel_Automation
+Required backend variables include `DATABASE_URL`, `SESSION_SECRET`, and `TOKEN_ENCRYPTION_KEY`.

@@ -364,9 +364,12 @@ export function SettingsPage({ settings: initial, onSave }: Props) {
           <button className="save-btn" onClick={handleSave}>
             {saved ? '✓ Saved' : 'Save settings'}
           </button>
-          <span className="demo-badge">
+          <span className="storage-badge">
             <span style={{ width: 5, height: 5, borderRadius: '50%', background: '#a78bfa', display: 'inline-block' }} />
             Settings persist in localStorage (theme &amp; preferences only — no secrets)
+          </span>
+          <span className="storage-badge">
+            Build: real-empty-state
           </span>
         </div>
       )}
@@ -441,8 +444,7 @@ export function SettingsPage({ settings: initial, onSave }: Props) {
                       </div>
                     </div>
                     <span className={`status-badge ${statusCls}`}>
-                      {p.status === 'demo'          ? 'Not connected' :
-                       p.status === 'connected'     ? 'Connected'     :
+                      {p.status === 'connected'     ? 'Connected'     :
                        p.status === 'not_connected' ? 'Not connected' : p.status}
                     </span>
                   </div>
@@ -456,7 +458,7 @@ export function SettingsPage({ settings: initial, onSave }: Props) {
 
                   <div className="ai-card-footer">
                     <code className="int-code int-code--endpoint">{p.backendEndpoint}</code>
-                    {(p.status === 'not_connected' || p.status === 'demo') && (
+                    {p.status === 'not_connected' && (
                       <button
                         className={`btn-int${p.status === 'not_connected' ? ' btn-int--primary' : ''}`}
                         onClick={() => {
@@ -560,8 +562,8 @@ export function SettingsPage({ settings: initial, onSave }: Props) {
                 title: 'Backend required for OAuth',
                 body: 'TrendCortex requires the Go backend (cd backend && go run ./cmd/api) running with ' +
                   'platform credentials in .env before any OAuth connection can be established. ' +
-                  'Social Connections and Publishing tabs call real backend endpoints — ' +
-                  'no mock fallbacks. If the backend is offline, buttons show an inline error instead of fake success.',
+                  'Social Connections and Publishing tabs call real backend endpoints. ' +
+                  'If the backend is offline, buttons show an inline error instead of a success state.',
               },
               {
                 icon: '🔄',

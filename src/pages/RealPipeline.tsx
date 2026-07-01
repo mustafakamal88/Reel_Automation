@@ -294,7 +294,7 @@ export function RealPipelinePage() {
       )}
 
       {/* 1. Trend Sources */}
-      <Card title="Trend Sources" sub="No live source integration is wired in yet. Manual source rows may exist in the backend, but the frontend does not create sample trend data.">
+      <Card title="Trend Sources" sub="No live source integration is wired in yet. Manual source rows may exist in the backend, but the frontend does not create generated trend data.">
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 4 }}>
           {sources.length === 0 && <span style={{ fontSize: 12, color: 'var(--text-dim)' }}>No trend sources yet.</span>}
           {sources.map(s => (

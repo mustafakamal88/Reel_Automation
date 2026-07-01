@@ -186,7 +186,7 @@ CREATE TABLE IF NOT EXISTS audit_log (
     created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- Seed default platform rate limits
+-- Default platform rate limits
 INSERT INTO platform_rate_limits (platform, daily_upload_limit, min_secs_between, max_duration_sec, max_file_size_mb)
 VALUES
     ('youtube',   100, 0,    60,  256),

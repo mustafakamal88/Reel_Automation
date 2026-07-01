@@ -1,5 +1,4 @@
 export type IntegrationStatus =
-  | 'demo'
   | 'not_connected'
   | 'connected'
   | 'needs_attention'   // token valid but expiring soon; refresh recommended
@@ -39,7 +38,7 @@ export interface AiProviderConfig {
   category: ProviderCategory;
   status: IntegrationStatus;
   model: string;
-  usageMode: 'demo' | 'api' | 'local';
+  usageMode: 'api' | 'local';
   secretStorageMode: SecretStorageMode;
   backendEndpoint: string;
   contextWindow: string;

@@ -4,8 +4,6 @@ import type {
   PipelineHandoffStatus,
 } from '../types';
 
-// MOCK ONLY — all functions operate on local state, no API calls, no uploads.
-
 export function computeCompositeScore(
   trendScore: number,
   watchTimePotential: number,
@@ -25,7 +23,7 @@ export function selectTop6(reels: DailyReel[]): DailyReel[] {
   return rankReels(reels).slice(0, 6);
 }
 
-export function mockHandoffToPipeline(reel: DailyReel): DailyReel {
+export function handoffToPipeline(reel: DailyReel): DailyReel {
   if (reel.pipelineStatus !== 'not-started') return reel;
   return { ...reel, pipelineStatus: 'queued' as PipelineHandoffStatus };
 }
