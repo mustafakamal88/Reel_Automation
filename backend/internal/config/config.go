@@ -3,6 +3,7 @@ package config
 import (
 	"errors"
 	"os"
+	"path/filepath"
 )
 
 // Config holds all runtime configuration loaded from environment variables.
@@ -59,10 +60,10 @@ func Load() (*Config, error) {
 		APIBase: getEnv("API_BASE_URL", "http://localhost:8080"),
 
 		DatabaseURL: os.Getenv("DATABASE_URL"),
-		ExportDir:   getEnv("EXPORT_DIR", "exports"),
+		ExportDir:   getEnv("EXPORT_DIR", defaultArtifactDir("exports")),
 
 		RenderProvider:   getEnv("RENDER_PROVIDER", "ffmpeg"),
-		MediaOutputDir:   getEnv("MEDIA_OUTPUT_DIR", "generated-media"),
+		MediaOutputDir:   getEnv("MEDIA_OUTPUT_DIR", defaultArtifactDir("generated-media")),
 		OpenAIAPIKey:     os.Getenv("OPENAI_API_KEY"),
 		OpenAITTSModel:   getEnv("OPENAI_TTS_MODEL", "gpt-4o-mini-tts"),
 		OpenAIImageModel: getEnv("OPENAI_IMAGE_MODEL", "gpt-image-1"),
@@ -103,4 +104,8 @@ func getEnv(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+func defaultArtifactDir(name string) string {
+	return filepath.Join(os.TempDir(), "trendcortex", name)
 }

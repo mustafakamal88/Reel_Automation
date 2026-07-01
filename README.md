@@ -36,6 +36,13 @@ cd backend
 go run ./cmd/api
 ```
 
+Backend runtime artifacts:
+
+- `EXPORT_DIR` controls where ZIP exports are written.
+- `MEDIA_OUTPUT_DIR` controls where generated video/thumbnail artifacts are written.
+- If unset, both default to writable temp paths under `/tmp/trendcortex/` on Unix-like systems.
+- For persistent production exports, point these variables at a Railway volume or future object-storage staging path.
+
 ## Build
 
 ```bash

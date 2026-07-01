@@ -3,7 +3,10 @@ package http
 import (
 	"archive/zip"
 	"context"
+	stdhttp "net/http"
+	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"trendcortex/api/internal/config"
@@ -69,5 +72,37 @@ func TestRunRenderExportTest_MissingProviderCreatesManifestZipWithoutCrash(t *te
 		if names[name] {
 			t.Fatalf("did not expect media entry %q when provider and fallback rendering are unavailable", name)
 		}
+	}
+}
+
+func TestRoutes_PostRenderExportTestCreatesZip(t *testing.T) {
+	tmp := t.TempDir()
+	s := &Server{cfg: &config.Config{
+		RenderProvider: "ffmpeg",
+		MediaOutputDir: filepath.Join(tmp, "media"),
+		ExportDir:      filepath.Join(tmp, "exports"),
+		FFmpegPath:     "ffmpeg",
+		FFprobePath:    "ffprobe",
+	}}
+
+	body := strings.NewReader(`{
+		"title":"Router smoke test",
+		"script":"A test script",
+		"caption":"A test caption",
+		"target_platforms":["instagram"],
+		"number_of_reels":1,
+		"allow_local_fallback":false
+	}`)
+	req := httptest.NewRequest(stdhttp.MethodPost, "/api/reels/export-test", body)
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	s.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != stdhttp.StatusCreated {
+		t.Fatalf("POST /api/reels/export-test status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"success":true`) {
+		t.Fatalf("expected successful export response, body = %s", rec.Body.String())
 	}
 }
