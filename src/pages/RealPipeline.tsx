@@ -6,6 +6,7 @@ import {
   getTrendSources, createTrendSource, discoverTrends, getTrends,
   scoreTopics, getTopicScores, createDailyBatch, getDailyBatches, getBatchReels,
   prepareVideoJob, getRenderJobs, renderReel, createBatchExport, getExportJobs, downloadExportZip,
+  runRenderExportTest, downloadRenderExportTestZip, type RenderExportTestResponse,
   publishReel, getPublishJobs,
 } from '../lib/api/client';
 
@@ -41,9 +42,9 @@ function toneForStatus(status: string): 'neutral' | 'good' | 'warn' | 'bad' {
   if ([
     'new', 'draft', 'planned', 'pending_provider_connection', 'video_requested', 'zip_generation_not_implemented',
     'artifact_missing', 'video_artifact_missing', 'thumbnail_artifact_missing', 'media_artifacts_missing',
-    'rendering', 'audio_artifact_missing', 'renderer_not_available',
+    'rendering', 'packaging_zip', 'fallback', 'audio_artifact_missing', 'renderer_not_available',
   ].includes(status)) return 'warn';
-  if (['rejected', 'failed', 'platform_not_connected', 'provider_not_connected'].includes(status)) return 'bad';
+  if (['rejected', 'failed', 'platform_not_connected', 'provider_not_connected', 'provider_missing'].includes(status)) return 'bad';
   return 'neutral';
 }
 
@@ -90,6 +91,8 @@ export function RealPipelinePage() {
   const [busy, setBusy] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [actionNote, setActionNote] = useState<string | null>(null);
+  const [exportTestState, setExportTestState] = useState<'idle' | 'rendering' | 'packaging_zip' | 'ready' | 'fallback' | 'provider_missing' | 'failed'>('idle');
+  const [exportTestResult, setExportTestResult] = useState<RenderExportTestResponse | null>(null);
 
   const today = new Date().toISOString().split('T')[0];
   const currentBatch = batches.find(b => b.batch_date === today) ?? batches[0];
@@ -120,14 +123,16 @@ export function RealPipelinePage() {
     getBatchReels(currentBatch.id).then(r => setReels(r.reel_plans)).catch(() => setReels([]));
   }, [currentBatch?.id]);
 
-  async function runAction(key: string, fn: () => Promise<void>) {
+  async function runAction(key: string, fn: () => Promise<void>): Promise<boolean> {
     setBusy(key);
     setActionError(null);
     setActionNote(null);
     try {
       await fn();
+      return true;
     } catch (err) {
       setActionError(errMsg(err, 'Action failed'));
+      return false;
     } finally {
       setBusy(null);
     }
@@ -213,6 +218,49 @@ export function RealPipelinePage() {
       const filename = `trendcortex-batch-${currentBatch?.batch_date ?? job.daily_batch_id}.zip`;
       await downloadExportZip(job.id, filename);
       setActionNote('ZIP download started.');
+    });
+  }
+
+  async function handleRenderExportTest() {
+    const sourceReel = reels[0];
+    setExportTestState('rendering');
+    const ok = await runAction('export-test', async () => {
+      const result = await runRenderExportTest({
+        topic: sourceReel?.title_idea ?? 'TrendCortex end-to-end export test',
+        title: sourceReel?.title_idea ?? 'TrendCortex end-to-end export test',
+        script: sourceReel?.script_outline ?? 'This is a TrendCortex render plus ZIP export test.',
+        caption: sourceReel?.description_draft ?? 'End-to-end render and ZIP export smoke test.',
+        target_platforms: ['youtube', 'tiktok', 'instagram', 'facebook', 'x'],
+        style: sourceReel?.thumbnail_idea ?? 'vertical editorial social video',
+        format: 'vertical_9_16',
+        number_of_reels: 1,
+        allow_local_fallback: true,
+      });
+      setExportTestState('packaging_zip');
+      setExportTestResult(result);
+      if (result.render_status === 'provider_not_connected' || result.render_status === 'renderer_not_available') {
+        setExportTestState('provider_missing');
+      } else if (result.provider === 'local_ffmpeg_test') {
+        setExportTestState('fallback');
+      } else if (result.success) {
+        setExportTestState('ready');
+      } else {
+        setExportTestState('failed');
+      }
+      setActionNote(result.fallback_reason
+        ? `Export test ZIP ready using ${result.provider}. Fallback reason: ${result.fallback_reason}`
+        : `Export test ZIP ready using ${result.provider}.`);
+    });
+    if (!ok) {
+      setExportTestState('failed');
+    }
+  }
+
+  async function handleDownloadExportTest() {
+    if (!exportTestResult) return;
+    await runAction('export-test-download', async () => {
+      await downloadRenderExportTestZip(exportTestResult.download_url, exportTestResult.zip_filename);
+      setActionNote('Export test ZIP download started.');
     });
   }
 
@@ -432,6 +480,47 @@ export function RealPipelinePage() {
       </Card>
 
       {/* 6. Export Job Status */}
+      <Card title="Phase 4D End-to-End Test" sub="Runs one backend request that tries provider rendering, clearly falls back to local FFmpeg test media when allowed, packages the result into a ZIP, and returns a download link.">
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          <Pill tone={toneForStatus(exportTestState)}>{exportTestState}</Pill>
+          {exportTestResult && <Pill tone={toneForStatus(exportTestResult.render_status)}>render: {exportTestResult.render_status}</Pill>}
+          {exportTestResult && <Pill tone={toneForStatus(exportTestResult.export_status)}>zip: {exportTestResult.export_status}</Pill>}
+          {exportTestResult?.provider && <Pill>{exportTestResult.provider}</Pill>}
+        </div>
+        {exportTestResult?.fallback_reason && (
+          <div style={{ fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.5 }}>
+            {exportTestResult.fallback_reason}
+          </div>
+        )}
+        {exportTestResult?.zip_filename && (
+          <div style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
+            {exportTestResult.zip_filename} · {exportTestResult.included_files.length} file(s)
+          </div>
+        )}
+        {exportTestResult && (
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+            {exportTestResult.included_files.slice(0, 10).map(name => <Pill key={name}>{name}</Pill>)}
+            {exportTestResult.included_files.length > 10 && <Pill>+{exportTestResult.included_files.length - 10} more</Pill>}
+          </div>
+        )}
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <ActionButton
+            label="Run render + ZIP test"
+            busyLabel="Rendering + packaging ZIP…"
+            busy={busy === 'export-test'}
+            onClick={handleRenderExportTest}
+          />
+          {exportTestResult?.download_url && (
+            <ActionButton
+              label="Download test ZIP"
+              busyLabel="Downloading…"
+              busy={busy === 'export-test-download'}
+              onClick={handleDownloadExportTest}
+            />
+          )}
+        </div>
+      </Card>
+
       <Card title="Export Job (ZIP)" sub="A ZIP is only built when every reel has a real video.mp4 and thumbnail.png on disk. Otherwise this honestly reports exactly which reels are missing which file — never a fake download.">
         <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
           {batchExportJob ? (

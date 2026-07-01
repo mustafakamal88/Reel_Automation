@@ -151,6 +151,62 @@ func RenderReel(ctx context.Context, cfg Config, input ReelInput) Result {
 	}
 }
 
+// RenderLocalTestReel creates clearly labeled local test media with FFmpeg
+// only. It is intended for end-to-end ZIP smoke tests when provider-backed
+// rendering is unavailable; callers must report it as a fallback, not as
+// provider success.
+func RenderLocalTestReel(ctx context.Context, cfg Config, input ReelInput) Result {
+	if status, notes := localRendererPrerequisiteStatus(cfg); status != "" {
+		return Result{Status: status, Notes: notes}
+	}
+
+	dir, err := SafeOutputDir(cfg.OutputDir, input.WorkspaceID, input.ReelPlanID)
+	if err != nil {
+		return Result{Status: StatusFailed, Notes: err.Error()}
+	}
+	if err := os.MkdirAll(dir, 0750); err != nil {
+		return Result{Status: StatusFailed, Notes: fmt.Sprintf("create media output dir: %v", err)}
+	}
+
+	thumbnailPath := filepath.Join(dir, "thumbnail.png")
+	if err := renderLocalThumbnail(ctx, cfg.FFmpegPath, thumbnailPath); err != nil {
+		return Result{Status: StatusThumbnailMissing, Notes: fmt.Sprintf("local thumbnail render failed: %v", err)}
+	}
+	if !fileExists(thumbnailPath) {
+		return Result{Status: StatusThumbnailMissing, Notes: "local renderer did not produce thumbnail.png"}
+	}
+
+	videoPath := filepath.Join(dir, "video.mp4")
+	if err := renderLocalTestVideo(ctx, cfg.FFmpegPath, videoPath); err != nil {
+		return Result{Status: StatusFailed, Notes: fmt.Sprintf("local ffmpeg render failed: %v", err)}
+	}
+	if !fileExists(videoPath) {
+		return Result{Status: StatusFailed, Notes: "local renderer did not produce video.mp4"}
+	}
+
+	tw, th, err := pngDimensions(thumbnailPath)
+	if err != nil {
+		return Result{Status: StatusFailed, Notes: fmt.Sprintf("read thumbnail dimensions: %v", err)}
+	}
+	duration := probeDuration(ctx, cfg.FFprobePath, videoPath)
+
+	return Result{
+		Status:               StatusCompleted,
+		Notes:                "Rendered local FFmpeg test media because provider-backed rendering was unavailable.",
+		VideoPath:            videoPath,
+		VideoFormat:          "mp4",
+		VideoWidth:           VideoWidth,
+		VideoHeight:          VideoHeight,
+		VideoDurationSeconds: duration,
+		VideoCodec:           "h264",
+		AudioCodec:           "aac",
+		ThumbnailPath:        thumbnailPath,
+		ThumbnailFormat:      "png",
+		ThumbnailWidth:       tw,
+		ThumbnailHeight:      th,
+	}
+}
+
 func prerequisiteStatus(cfg Config) (status, notes string) {
 	if strings.TrimSpace(cfg.Provider) != "ffmpeg" {
 		return StatusProviderNotConnected, "RENDER_PROVIDER must be set to ffmpeg for the server-side renderer."
@@ -158,6 +214,24 @@ func prerequisiteStatus(cfg Config) (status, notes string) {
 	if strings.TrimSpace(cfg.OpenAIAPIKey) == "" {
 		return StatusProviderNotConnected, "OPENAI_API_KEY is not configured; no TTS or image provider is connected."
 	}
+	ffmpegPath := strings.TrimSpace(cfg.FFmpegPath)
+	if ffmpegPath == "" {
+		ffmpegPath = "ffmpeg"
+	}
+	if _, err := exec.LookPath(ffmpegPath); err != nil {
+		return StatusRendererNotAvailable, "FFmpeg is not available on PATH or FFMPEG_PATH."
+	}
+	ffprobePath := strings.TrimSpace(cfg.FFprobePath)
+	if ffprobePath == "" {
+		ffprobePath = "ffprobe"
+	}
+	if _, err := exec.LookPath(ffprobePath); err != nil {
+		return StatusRendererNotAvailable, "FFprobe is not available on PATH or FFPROBE_PATH."
+	}
+	return "", ""
+}
+
+func localRendererPrerequisiteStatus(cfg Config) (status, notes string) {
 	ffmpegPath := strings.TrimSpace(cfg.FFmpegPath)
 	if ffmpegPath == "" {
 		ffmpegPath = "ffmpeg"
@@ -342,6 +416,35 @@ func renderVideo(ctx context.Context, ffmpegPath, thumbnailPath, audioPath, vide
 		"-c:a", "aac",
 		"-b:a", "128k",
 		"-shortest",
+		"-movflags", "+faststart",
+		videoPath,
+	}
+	return runCommand(ctx, ffmpegPath, args...)
+}
+
+func renderLocalThumbnail(ctx context.Context, ffmpegPath, thumbnailPath string) error {
+	args := []string{
+		"-y",
+		"-f", "lavfi",
+		"-i", "color=c=0x15121f:s=1080x1920:d=1",
+		"-frames:v", "1",
+		thumbnailPath,
+	}
+	return runCommand(ctx, ffmpegPath, args...)
+}
+
+func renderLocalTestVideo(ctx context.Context, ffmpegPath, videoPath string) error {
+	args := []string{
+		"-y",
+		"-f", "lavfi",
+		"-i", "color=c=0x15121f:s=1080x1920:r=30:d=2",
+		"-f", "lavfi",
+		"-i", "anullsrc=channel_layout=stereo:sample_rate=44100",
+		"-shortest",
+		"-c:v", "libx264",
+		"-pix_fmt", "yuv420p",
+		"-c:a", "aac",
+		"-b:a", "128k",
 		"-movflags", "+faststart",
 		videoPath,
 	}

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 )
 
@@ -133,8 +134,53 @@ func TestBuildReelBatchZip_MetadataJSONStructure(t *testing.T) {
 		t.Fatal("reel-01/metadata.json not found in zip")
 	}
 
-	if got != meta {
+	if !reflect.DeepEqual(got, meta) {
 		t.Errorf("metadata.json round-trip mismatch:\n got  %+v\n want %+v", got, meta)
+	}
+}
+
+func TestBuildReelBatchZipWithManifest_IncludesManifestAndPlatformCaptions(t *testing.T) {
+	tmp := t.TempDir()
+	reels := []ReelExportContent{{
+		Rank:             1,
+		Title:            "Title",
+		Description:      "Description",
+		Caption:          "Caption",
+		PlatformCaptions: map[string]string{"youtube": "YouTube description", "tiktok": "TikTok caption"},
+		Metadata:         ReelExportMetadata{Rank: 1, RenderStatus: "completed", Provider: "local_ffmpeg_test"},
+	}}
+	summary := BatchExportSummary{BatchID: "b1", Date: "2026-06-30", ReelCount: 1}
+	manifest := ExportManifest{BatchID: "b1", Date: "2026-06-30", ExportStatus: "completed", RenderStatus: "completed", Provider: "local_ffmpeg_test"}
+
+	zipPath, included, err := BuildReelBatchZipWithManifest(filepath.Join(tmp, "exports"), "2026-06-30", summary, reels, &manifest)
+	if err != nil {
+		t.Fatalf("BuildReelBatchZipWithManifest: %v", err)
+	}
+	zr, err := zip.OpenReader(zipPath)
+	if err != nil {
+		t.Fatalf("open zip: %v", err)
+	}
+	defer zr.Close()
+
+	names := map[string]bool{}
+	for _, f := range zr.File {
+		names[f.Name] = true
+	}
+	for _, name := range []string{
+		"reel-01/caption.txt",
+		"reel-01/youtube-description.txt",
+		"reel-01/tiktok-caption.txt",
+		"reel-01/instagram-caption.txt",
+		"reel-01/facebook-caption.txt",
+		"reel-01/x-caption.txt",
+		"export-manifest.json",
+	} {
+		if !names[name] {
+			t.Fatalf("expected %q in zip; entries=%v", name, names)
+		}
+	}
+	if !containsString(included, "export-manifest.json") {
+		t.Fatalf("included files did not report export-manifest.json: %v", included)
 	}
 }
 
@@ -160,4 +206,13 @@ func TestBuildReelBatchZip_NoFakeMediaWhenAllArtifactsMissing(t *testing.T) {
 			t.Errorf("no video.mp4/thumbnail.png should exist when no real artifact was provided, found %q", f.Name)
 		}
 	}
+}
+
+func containsString(items []string, want string) bool {
+	for _, item := range items {
+		if item == want {
+			return true
+		}
+	}
+	return false
 }

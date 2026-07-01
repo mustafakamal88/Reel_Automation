@@ -81,6 +81,8 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /api/reels/{id}/prepare-video-job", s.handlePrepareVideoJob)
 	mux.HandleFunc("POST /api/reels/{id}/render", s.handleRenderReel)
 	mux.HandleFunc("POST /api/reels/{id}/publish", s.handlePublishReel)
+	mux.HandleFunc("POST /api/reels/export-test", s.handleRenderExportTest)
+	mux.HandleFunc("GET /api/reels/export-test/download/{filename}", s.handleDownloadRenderExportTest)
 
 	mux.HandleFunc("GET /api/video-jobs", s.handleListVideoJobs)
 	mux.HandleFunc("GET /api/video-jobs/{id}", s.handleGetVideoJob)

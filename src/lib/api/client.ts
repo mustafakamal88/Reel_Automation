@@ -360,6 +360,34 @@ export async function getRenderJobs(): Promise<{ render_jobs: VideoJob[] }> {
   return apiFetch('/api/render-jobs');
 }
 
+export interface RenderExportTestRequest {
+  topic?: string;
+  title?: string;
+  script?: string;
+  caption?: string;
+  target_platforms?: string[];
+  style?: string;
+  format?: string;
+  number_of_reels?: number;
+  allow_local_fallback?: boolean;
+}
+
+export interface RenderExportTestResponse {
+  success: boolean;
+  render_status: string;
+  export_status: string;
+  zip_filename: string;
+  zip_path: string;
+  download_url: string;
+  included_files: string[];
+  provider: string;
+  fallback_reason?: string;
+}
+
+export async function runRenderExportTest(body: RenderExportTestRequest): Promise<RenderExportTestResponse> {
+  return apiFetch('/api/reels/export-test', { method: 'POST', body: JSON.stringify(body) });
+}
+
 export interface CreateExportJobResponse {
   export_job: ExportJob;
   missing_video_reels: number[];
@@ -381,9 +409,17 @@ export async function getExportJobs(): Promise<{ export_jobs: ExportJob[] }> {
  * ApiError if the job isn't completed or the ZIP is missing on disk.
  */
 export async function downloadExportZip(jobID: string, filename: string): Promise<void> {
+  return downloadZipPath(`/api/export-jobs/${jobID}/download`, filename);
+}
+
+export async function downloadRenderExportTestZip(downloadURL: string, filename: string): Promise<void> {
+  return downloadZipPath(downloadURL, filename);
+}
+
+async function downloadZipPath(path: string, filename: string): Promise<void> {
   let res: Response;
   try {
-    res = await fetch(apiUrl(`/api/export-jobs/${jobID}/download`), { credentials: 'include' });
+    res = await fetch(apiUrl(path), { credentials: 'include' });
   } catch {
     throw new ApiError(0, 'network_error', 'Cannot reach the Go backend. Check VITE_API_BASE_URL or run: cd backend && go run ./cmd/api');
   }
