@@ -21,6 +21,16 @@ type Config struct {
 	// committed to git — see backend/.gitignore.
 	ExportDir string
 
+	// Real media rendering. Provider credentials are loaded server-side only;
+	// never expose these values to the frontend.
+	RenderProvider   string
+	MediaOutputDir   string
+	OpenAIAPIKey     string
+	OpenAITTSModel   string
+	OpenAIImageModel string
+	FFmpegPath       string
+	FFprobePath      string
+
 	// Session / encryption
 	SessionSecret      string
 	TokenEncryptionKey string
@@ -50,6 +60,14 @@ func Load() (*Config, error) {
 
 		DatabaseURL: os.Getenv("DATABASE_URL"),
 		ExportDir:   getEnv("EXPORT_DIR", "exports"),
+
+		RenderProvider:   getEnv("RENDER_PROVIDER", "ffmpeg"),
+		MediaOutputDir:   getEnv("MEDIA_OUTPUT_DIR", "generated-media"),
+		OpenAIAPIKey:     os.Getenv("OPENAI_API_KEY"),
+		OpenAITTSModel:   getEnv("OPENAI_TTS_MODEL", "gpt-4o-mini-tts"),
+		OpenAIImageModel: getEnv("OPENAI_IMAGE_MODEL", "gpt-image-1"),
+		FFmpegPath:       getEnv("FFMPEG_PATH", "ffmpeg"),
+		FFprobePath:      getEnv("FFPROBE_PATH", "ffprobe"),
 
 		SessionSecret:      os.Getenv("SESSION_SECRET"),
 		TokenEncryptionKey: os.Getenv("TOKEN_ENCRYPTION_KEY"),

@@ -8,8 +8,8 @@ import "time"
 // items, trend items get scored, the daily batch picks the top 6 scored
 // items into reel plans, and each reel plan can request a video job, an
 // export job (ZIP), and publish jobs. Nothing here fakes a completed state —
-// video/export/publish stay in honest "not implemented" / "not connected"
-// states until a real provider is wired in.
+// video/export/publish stay in honest "not connected", "missing artifact",
+// or "failed" states unless the real provider path succeeds.
 
 // TrendSource is where trend_items are allowed to come from.
 // Only "manual" and "demo_seed" can create trend_items today; any other
@@ -55,9 +55,9 @@ type TrendItem struct {
 }
 
 const (
-	TrendItemStatusNew     = "new"
-	TrendItemStatusScored  = "scored"
-	TrendItemStatusBatched = "batched"
+	TrendItemStatusNew      = "new"
+	TrendItemStatusScored   = "scored"
+	TrendItemStatusBatched  = "batched"
 	TrendItemStatusRejected = "rejected"
 )
 
@@ -65,19 +65,19 @@ const (
 // One row per trend_item (UNIQUE constraint), recomputed by re-running
 // POST /api/topics/score.
 type TopicScore struct {
-	ID                     string    `json:"id" db:"id"`
-	WorkspaceID            string    `json:"workspace_id" db:"workspace_id"`
-	TrendItemID            string    `json:"trend_item_id" db:"trend_item_id"`
-	TotalScore             float64   `json:"total_score" db:"total_score"`
-	VelocityScore          float64   `json:"velocity_score" db:"velocity_score"`
-	SourceConfidenceScore  float64   `json:"source_confidence_score" db:"source_confidence_score"`
-	PlatformFitScore       float64   `json:"platform_fit_score" db:"platform_fit_score"`
-	SafetyScore            float64   `json:"safety_score" db:"safety_score"`
-	WatchTimeScore         float64   `json:"watch_time_score" db:"watch_time_score"`
-	CompetitionScore       float64   `json:"competition_score" db:"competition_score"`
-	Reason                 string    `json:"reason" db:"reason"`
-	BreakdownJSON          []byte    `json:"-" db:"breakdown"`
-	CreatedAt              time.Time `json:"created_at" db:"created_at"`
+	ID                    string    `json:"id" db:"id"`
+	WorkspaceID           string    `json:"workspace_id" db:"workspace_id"`
+	TrendItemID           string    `json:"trend_item_id" db:"trend_item_id"`
+	TotalScore            float64   `json:"total_score" db:"total_score"`
+	VelocityScore         float64   `json:"velocity_score" db:"velocity_score"`
+	SourceConfidenceScore float64   `json:"source_confidence_score" db:"source_confidence_score"`
+	PlatformFitScore      float64   `json:"platform_fit_score" db:"platform_fit_score"`
+	SafetyScore           float64   `json:"safety_score" db:"safety_score"`
+	WatchTimeScore        float64   `json:"watch_time_score" db:"watch_time_score"`
+	CompetitionScore      float64   `json:"competition_score" db:"competition_score"`
+	Reason                string    `json:"reason" db:"reason"`
+	BreakdownJSON         []byte    `json:"-" db:"breakdown"`
+	CreatedAt             time.Time `json:"created_at" db:"created_at"`
 }
 
 // DailyBatch groups up to 6 reel_plans selected for a single calendar date.
@@ -102,22 +102,22 @@ const (
 //
 // The video/thumbnail artifact fields stay NULL/empty until a real render
 // pipeline writes a real video.mp4 / thumbnail.png to disk and records its
-// path here — no render provider is connected yet (see VideoJob), so today
-// these are always empty and ExportStatus always reports a missing artifact.
+// path here. If provider credentials or FFmpeg are missing, these stay empty
+// and ExportStatus reports the missing artifact honestly.
 type ReelPlan struct {
-	ID               string    `json:"id" db:"id"`
-	WorkspaceID      string    `json:"workspace_id" db:"workspace_id"`
-	DailyBatchID     string    `json:"daily_batch_id" db:"daily_batch_id"`
-	TrendItemID      string    `json:"trend_item_id" db:"trend_item_id"`
-	TopicScoreID     string    `json:"topic_score_id" db:"topic_score_id"`
-	Rank             int       `json:"rank" db:"rank"`
-	Platform         string    `json:"platform" db:"platform"`
-	TitleIdea        string    `json:"title_idea" db:"title_idea"`
-	ScriptOutline    string    `json:"script_outline" db:"script_outline"`
-	DescriptionDraft string    `json:"description_draft" db:"description_draft"`
-	HashtagsDraft    string    `json:"hashtags_draft" db:"hashtags_draft"`
-	ThumbnailIdea    string    `json:"thumbnail_idea" db:"thumbnail_idea"`
-	Status           string    `json:"status" db:"status"`
+	ID               string `json:"id" db:"id"`
+	WorkspaceID      string `json:"workspace_id" db:"workspace_id"`
+	DailyBatchID     string `json:"daily_batch_id" db:"daily_batch_id"`
+	TrendItemID      string `json:"trend_item_id" db:"trend_item_id"`
+	TopicScoreID     string `json:"topic_score_id" db:"topic_score_id"`
+	Rank             int    `json:"rank" db:"rank"`
+	Platform         string `json:"platform" db:"platform"`
+	TitleIdea        string `json:"title_idea" db:"title_idea"`
+	ScriptOutline    string `json:"script_outline" db:"script_outline"`
+	DescriptionDraft string `json:"description_draft" db:"description_draft"`
+	HashtagsDraft    string `json:"hashtags_draft" db:"hashtags_draft"`
+	ThumbnailIdea    string `json:"thumbnail_idea" db:"thumbnail_idea"`
+	Status           string `json:"status" db:"status"`
 
 	VideoArtifactPath    *string  `json:"video_artifact_path" db:"video_artifact_path"`
 	VideoFormat          string   `json:"video_format" db:"video_format"`
@@ -140,7 +140,7 @@ type ReelPlan struct {
 }
 
 const (
-	ReelPlanStatusDraft         = "draft"
+	ReelPlanStatusDraft          = "draft"
 	ReelPlanStatusVideoRequested = "video_requested"
 )
 
@@ -153,9 +153,9 @@ const (
 	ReelExportStatusReady            = "ready"                      // both real artifacts exist on disk
 )
 
-// VideoJob tracks the (not yet implemented) render pipeline for a reel plan.
-// Status is always honest about what actually happened — never a fake
-// "rendering" or "done" state.
+// VideoJob tracks the real media render pipeline for a reel plan. Status is
+// always honest about what actually happened — never a fake "rendering" or
+// "done" state.
 type VideoJob struct {
 	ID          string    `json:"id" db:"id"`
 	WorkspaceID string    `json:"workspace_id" db:"workspace_id"`
@@ -168,9 +168,15 @@ type VideoJob struct {
 }
 
 const (
-	VideoJobStatusPendingProvider = "pending_provider_connection"
-	VideoJobStatusDraftReady      = "draft_ready"
-	VideoJobStatusFailed          = "failed"
+	VideoJobStatusPendingProvider  = "pending_provider_connection"
+	VideoJobStatusDraftReady       = "draft_ready"
+	VideoJobStatusProviderMissing  = "provider_not_connected"
+	VideoJobStatusRendererMissing  = "renderer_not_available"
+	VideoJobStatusAudioMissing     = "audio_artifact_missing"
+	VideoJobStatusThumbnailMissing = "thumbnail_artifact_missing"
+	VideoJobStatusRendering        = "rendering"
+	VideoJobStatusCompleted        = "completed"
+	VideoJobStatusFailed           = "failed"
 )
 
 // ExportJob tracks a ZIP export request for a daily batch. The status

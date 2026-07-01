@@ -10,6 +10,7 @@ RUN CGO_ENABLED=0 GOOS=linux go build -o /out/trendcortex-api ./cmd/api
 
 FROM alpine:3.21
 
+RUN apk add --no-cache ffmpeg
 RUN addgroup -S app && adduser -S app -G app
 WORKDIR /app
 

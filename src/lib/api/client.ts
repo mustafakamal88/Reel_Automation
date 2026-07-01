@@ -235,7 +235,16 @@ export interface VideoJob {
   id: string;
   workspace_id: string;
   reel_plan_id: string;
-  status: 'pending_provider_connection' | 'draft_ready' | 'failed';
+  status:
+    | 'pending_provider_connection'
+    | 'draft_ready'
+    | 'provider_not_connected'
+    | 'renderer_not_available'
+    | 'audio_artifact_missing'
+    | 'thumbnail_artifact_missing'
+    | 'rendering'
+    | 'completed'
+    | 'failed';
   provider: string;
   notes: string;
   created_at: string;
@@ -341,6 +350,14 @@ export async function prepareVideoJob(reelID: string): Promise<{ video_job: Vide
 
 export async function getVideoJobs(): Promise<{ video_jobs: VideoJob[] }> {
   return apiFetch('/api/video-jobs');
+}
+
+export async function renderReel(reelID: string): Promise<{ render_job: VideoJob; status: string; notes: string }> {
+  return apiFetch(`/api/reels/${reelID}/render`, { method: 'POST' });
+}
+
+export async function getRenderJobs(): Promise<{ render_jobs: VideoJob[] }> {
+  return apiFetch('/api/render-jobs');
 }
 
 export interface CreateExportJobResponse {

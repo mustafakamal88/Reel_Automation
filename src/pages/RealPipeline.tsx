@@ -5,7 +5,7 @@ import {
   type ReelPlan, type VideoJob, type ExportJob, type PublishJobV2,
   getTrendSources, createTrendSource, discoverTrends, getTrends,
   scoreTopics, getTopicScores, createDailyBatch, getDailyBatches, getBatchReels,
-  prepareVideoJob, getVideoJobs, createBatchExport, getExportJobs, downloadExportZip,
+  prepareVideoJob, getRenderJobs, renderReel, createBatchExport, getExportJobs, downloadExportZip,
   publishReel, getPublishJobs,
 } from '../lib/api/client';
 
@@ -41,6 +41,7 @@ function toneForStatus(status: string): 'neutral' | 'good' | 'warn' | 'bad' {
   if ([
     'new', 'draft', 'planned', 'pending_provider_connection', 'video_requested', 'zip_generation_not_implemented',
     'artifact_missing', 'video_artifact_missing', 'thumbnail_artifact_missing', 'media_artifacts_missing',
+    'rendering', 'audio_artifact_missing', 'renderer_not_available',
   ].includes(status)) return 'warn';
   if (['rejected', 'failed', 'platform_not_connected', 'provider_not_connected'].includes(status)) return 'bad';
   return 'neutral';
@@ -97,13 +98,13 @@ export function RealPipelinePage() {
     try {
       const [s, t, sc, b, vj, ej, pj] = await Promise.all([
         getTrendSources(), getTrends(), getTopicScores(), getDailyBatches(),
-        getVideoJobs(), getExportJobs(), getPublishJobs(),
+        getRenderJobs(), getExportJobs(), getPublishJobs(),
       ]);
       setSources(s.trend_sources);
       setTrends(t.trend_items);
       setScores(sc.topic_scores);
       setBatches(b.daily_batches);
-      setVideoJobs(vj.video_jobs);
+      setVideoJobs(vj.render_jobs);
       setExportJobs(ej.export_jobs);
       setPublishJobs(pj.publish_jobs);
       setLoadError(null);
@@ -167,8 +168,20 @@ export function RealPipelinePage() {
   async function handlePrepareVideoJob(reelID: string) {
     await runAction(`video-${reelID}`, async () => {
       await prepareVideoJob(reelID);
-      const [vj, r] = await Promise.all([getVideoJobs(), currentBatch ? getBatchReels(currentBatch.id) : null]);
-      setVideoJobs(vj.video_jobs);
+      const [vj, r] = await Promise.all([getRenderJobs(), currentBatch ? getBatchReels(currentBatch.id) : null]);
+      setVideoJobs(vj.render_jobs);
+      if (r) setReels(r.reel_plans);
+    });
+  }
+
+  async function handleRenderMedia(reelID: string) {
+    await runAction(`render-${reelID}`, async () => {
+      const res = await renderReel(reelID);
+      setActionNote(res.status === 'completed'
+        ? 'Render completed: real video.mp4 and thumbnail.png were written.'
+        : `Render did not complete: ${res.status}${res.notes ? ` — ${res.notes}` : ''}`);
+      const [vj, r] = await Promise.all([getRenderJobs(), currentBatch ? getBatchReels(currentBatch.id) : null]);
+      setVideoJobs(vj.render_jobs);
       if (r) setReels(r.reel_plans);
     });
   }
@@ -357,9 +370,15 @@ export function RealPipelinePage() {
                   <div style={{ fontSize: 11, color: 'var(--text-dim)', fontStyle: 'italic' }}>{reel.thumbnail_idea}</div>
 
                   <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 4 }}>
-                    <Pill tone={toneForStatus(vj?.status ?? 'not_requested')}>video job: {vj?.status ?? 'not_requested'}</Pill>
+                    <Pill tone={toneForStatus(vj?.status ?? 'not_requested')}>render: {vj?.status ?? 'not_requested'}</Pill>
+                    {vj?.provider && <Pill>{vj.provider}</Pill>}
                     <Pill tone={toneForStatus(latestPublish?.status ?? 'not_requested')}>publish: {latestPublish?.status ?? 'not_requested'}</Pill>
                   </div>
+                  {vj?.notes && (
+                    <div style={{ fontSize: 10, color: 'var(--text-dim)', lineHeight: 1.5 }}>
+                      {vj.notes}
+                    </div>
+                  )}
 
                   <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                     <Pill tone={reel.video_artifact_path ? 'good' : 'warn'}>
@@ -373,10 +392,10 @@ export function RealPipelinePage() {
                     expected: video.mp4 · thumbnail.png
                   </div>
 
-                  <div style={{ display: 'flex', gap: 8, marginTop: 6 }}>
+                  <div style={{ display: 'flex', gap: 8, marginTop: 6, flexWrap: 'wrap' }}>
                     <button
                       className="generate-btn idle"
-                      style={{ flex: 1, fontSize: 11 }}
+                      style={{ flex: '1 1 130px', fontSize: 11 }}
                       disabled={busy === `video-${reel.id}` || !!vj}
                       onClick={() => handlePrepareVideoJob(reel.id)}
                       type="button"
@@ -386,7 +405,17 @@ export function RealPipelinePage() {
                     </button>
                     <button
                       className="generate-btn idle"
-                      style={{ flex: 1, fontSize: 11 }}
+                      style={{ flex: '1 1 130px', fontSize: 11 }}
+                      disabled={busy === `render-${reel.id}`}
+                      onClick={() => handleRenderMedia(reel.id)}
+                      type="button"
+                    >
+                      <span className="generate-btn-dot" style={{ background: '#15121f' }} />
+                      {busy === `render-${reel.id}` ? 'Rendering…' : 'Render media'}
+                    </button>
+                    <button
+                      className="generate-btn idle"
+                      style={{ flex: '1 1 130px', fontSize: 11 }}
                       disabled={busy === `publish-${reel.id}`}
                       onClick={() => handlePublish(reel.id)}
                       type="button"
