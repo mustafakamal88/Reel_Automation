@@ -19,7 +19,6 @@ import { SettingsPage } from './pages/Settings';
 export default function App() {
   const [view, setView] = useState<View>(() => (storage.getView() as View) || 'signals');
   const [approvals, setApprovals] = useState(() => storage.getApprovals());
-  const [generated, setGenerated] = useState(() => storage.getGenerated());
   const [settings, setSettings] = useState(() => storage.getSettings());
   const [openTopicId, setOpenTopicId] = useState<string | null>(null);
 
@@ -28,12 +27,6 @@ export default function App() {
     setOpenTopicId(null);
     storage.setView(v);
   }, []);
-
-  const handleGenerate = useCallback(() => {
-    setGenerated(true);
-    storage.setGenerated(true);
-    navigate('topics');
-  }, [navigate]);
 
   const handleApprove = useCallback((id: string, status: ApprovalStatus) => {
     setApprovals(prev => {
@@ -59,8 +52,6 @@ export default function App() {
       <main className="main">
         <Header
           view={view}
-          generated={generated}
-          onGenerate={handleGenerate}
           region={settings.region}
         />
 
@@ -69,7 +60,7 @@ export default function App() {
           {view === 'scoring' && <ScoringPage />}
           {view === 'topics' && (
             <TopicsPage
-              generated={generated}
+              generated={false}
               onApprove={handleApprove}
               onNavigateToApprovals={() => navigate('approvals')}
               openTopicId={openTopicId}

@@ -441,7 +441,7 @@ export function SettingsPage({ settings: initial, onSave }: Props) {
                       </div>
                     </div>
                     <span className={`status-badge ${statusCls}`}>
-                      {p.status === 'demo'          ? 'Demo mode'     :
+                      {p.status === 'demo'          ? 'Not connected' :
                        p.status === 'connected'     ? 'Connected'     :
                        p.status === 'not_connected' ? 'Not connected' : p.status}
                     </span>

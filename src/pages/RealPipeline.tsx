@@ -3,7 +3,7 @@ import {
   ApiError,
   type TrendSource, type TrendItem, type TopicScore, type DailyBatchV2,
   type ReelPlan, type VideoJob, type ExportJob, type PublishJobV2,
-  getTrendSources, createTrendSource, discoverTrends, getTrends,
+  getTrendSources, getTrends,
   scoreTopics, getTopicScores, createDailyBatch, getDailyBatches, getBatchReels,
   prepareVideoJob, getRenderJobs, renderReel, createBatchExport, getExportJobs, downloadExportZip,
   runRenderExportTest, downloadRenderExportTestZip, type RenderExportTestResponse,
@@ -136,20 +136,6 @@ export function RealPipelinePage() {
     } finally {
       setBusy(null);
     }
-  }
-
-  async function handleAddDemoSource() {
-    await runAction('add-source', async () => {
-      const existing = sources.find(s => s.source_type === 'demo_seed');
-      const src = existing ?? await createTrendSource({ name: 'Demo Seed', source_type: 'demo_seed', confidence: 0.7 });
-      const res = await discoverTrends(src.id);
-      if (res.status === 'provider_not_connected') {
-        setActionNote(res.message ?? 'Provider not connected.');
-      } else {
-        setActionNote(`Discovered ${res.count ?? 0} demo trend item(s).`);
-      }
-      await loadAll();
-    });
   }
 
   async function handleScoreTopics() {
@@ -308,27 +294,22 @@ export function RealPipelinePage() {
       )}
 
       {/* 1. Trend Sources */}
-      <Card title="Trend Sources" sub="Only manual and demo_seed sources can create trend items today. Any other source_type (YouTube, Google Trends, X, TikTok...) reports provider_not_connected — no live integration is wired in yet.">
+      <Card title="Trend Sources" sub="No live source integration is wired in yet. Manual source rows may exist in the backend, but the frontend does not create sample trend data.">
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 4 }}>
           {sources.length === 0 && <span style={{ fontSize: 12, color: 'var(--text-dim)' }}>No trend sources yet.</span>}
           {sources.map(s => (
-            <Pill key={s.id} tone={s.source_type === 'manual' || s.source_type === 'demo_seed' ? 'good' : 'bad'}>
+            <Pill key={s.id} tone={s.source_type === 'manual' ? 'good' : 'bad'}>
               {s.name} · {s.source_type} · conf {s.confidence.toFixed(2)}
             </Pill>
           ))}
         </div>
-        <ActionButton
-          label="Add demo source & discover"
-          busyLabel="Discovering…"
-          busy={busy === 'add-source'}
-          onClick={handleAddDemoSource}
-        />
+        <span style={{ fontSize: 12, color: 'var(--text-dim)' }}>No real trend collection has run yet.</span>
       </Card>
 
       {/* 2. Discovered Trends */}
       <Card title="Discovered Trends" sub={`${trends.length} total · ${newTrendCount} new · ${scoredCount} scored`}>
         {trends.length === 0 ? (
-          <span style={{ fontSize: 12, color: 'var(--text-dim)' }}>No trend items yet — discover some above.</span>
+          <span style={{ fontSize: 12, color: 'var(--text-dim)' }}>No live trend data connected yet.</span>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
             {trends.slice(0, 12).map(t => (

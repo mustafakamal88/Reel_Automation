@@ -1,69 +1,5 @@
 import { useState } from 'react';
-import type { BatchVideo, BatchStatus } from '../types';
 import { requestBatchZip, requestBatchPublish, ApiError } from '../lib/api/client';
-
-// Empty-state placeholder rows — shown when no real batch is available from the backend.
-// These are NOT real videos and do NOT represent successful operations.
-const EMPTY_STATE_ROWS: BatchVideo[] = [
-  { id: 'placeholder-1', rank: 1, title: '— pending batch generation —', status: 'draft', platforms: [] },
-  { id: 'placeholder-2', rank: 2, title: '— pending batch generation —', status: 'draft', platforms: [] },
-  { id: 'placeholder-3', rank: 3, title: '— pending batch generation —', status: 'draft', platforms: [] },
-];
-
-const STATUS_LABEL: Record<BatchStatus, { label: string; color: string }> = {
-  draft:        { label: 'Draft',        color: 'var(--text-dim)' },
-  rendering:    { label: 'Rendering…',   color: 'var(--accent)' },
-  ready:        { label: 'Ready',        color: 'var(--green)' },
-  zipped:       { label: 'Zipped',       color: 'var(--green)' },
-  queued:       { label: 'Queued',       color: 'var(--accent)' },
-  publishing:   { label: 'Publishing…',  color: 'var(--accent)' },
-  published:    { label: 'Published',    color: 'var(--green)' },
-  failed:       { label: 'Failed',       color: 'var(--red)' },
-  needs_review: { label: 'Needs review', color: 'var(--yellow)' },
-};
-
-const PLATFORM_LABELS: Record<string, string> = {
-  yt: 'YT', tt: 'TT', ig: 'IG', fb: 'FB', th: 'TH', x: 'X',
-};
-
-function VideoRow({ video }: { video: BatchVideo }) {
-  const s = STATUS_LABEL[video.status] ?? { label: video.status, color: 'var(--text-dim)' };
-  const isPlaceholder = video.id.startsWith('placeholder-');
-  return (
-    <div style={{
-      display: 'flex', alignItems: 'center', gap: 12,
-      padding: '12px 16px', borderBottom: '1px solid var(--border-card)',
-      opacity: isPlaceholder ? 0.4 : 1,
-    }}>
-      <span style={{
-        fontFamily: 'var(--font-mono)', fontSize: 11,
-        color: 'var(--text-dimmer)', width: 20, flexShrink: 0,
-      }}>
-        {String(video.rank).padStart(2, '0')}
-      </span>
-      <span style={{ flex: 1, fontSize: 13, color: 'var(--text-primary)', fontWeight: 500 }}>
-        {video.title}
-      </span>
-      <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
-        {video.platforms.map(p => (
-          <span key={p} style={{
-            fontSize: 10, fontFamily: 'var(--font-mono)',
-            color: 'var(--text-muted)', background: 'var(--bg-subtle)',
-            border: '1px solid var(--border-strong)', borderRadius: 3, padding: '1px 5px',
-          }}>
-            {PLATFORM_LABELS[p] ?? p.toUpperCase()}
-          </span>
-        ))}
-      </div>
-      <span style={{
-        fontSize: 11, fontFamily: 'var(--font-mono)',
-        color: s.color, flexShrink: 0, width: 80, textAlign: 'right',
-      }}>
-        {s.label}
-      </span>
-    </div>
-  );
-}
 
 type ActionState = 'idle' | 'pending' | 'done' | 'error';
 
@@ -151,8 +87,8 @@ export function DailyBatchPage() {
             Auto-upload
           </div>
           <div style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.6 }}>
-            Queue all ready videos for upload to every connected platform.
-            Jobs run via the Go backend — no browser tab needs to stay open.
+            No uploads have been attempted. Connect accounts, configure provider keys,
+            and create real approved reels before requesting publish jobs.
           </div>
           <div style={{ fontSize: 11, color: 'var(--text-dim)', fontFamily: 'var(--font-mono)' }}>
             POST /batches/{today}/publish
@@ -168,9 +104,9 @@ export function DailyBatchPage() {
                 : uploadState === 'error' ? 'var(--red)'
                 : '#15121f',
             }} />
-            {uploadState === 'idle'    && 'Auto-upload to all platforms'}
+            {uploadState === 'idle'    && 'Request upload jobs'}
             {uploadState === 'pending' && 'Queuing jobs…'}
-            {uploadState === 'done'    && `Jobs queued (${uploadJobIds.length})`}
+            {uploadState === 'done'    && `Backend returned ${uploadJobIds.length} job(s)`}
             {uploadState === 'error'   && 'Request failed'}
           </button>
           {uploadError && (
@@ -198,8 +134,8 @@ export function DailyBatchPage() {
             Download ZIP
           </div>
           <div style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.6 }}>
-            Download all videos as a structured ZIP package for manual review and publishing.
-            Includes metadata, captions, thumbnails, and platform-specific JSON.
+            Build a ZIP only from real backend batch artifacts. If no real batch exists,
+            the backend returns an error instead of a fake package.
           </div>
           <div style={{ fontSize: 11, color: 'var(--text-dim)', fontFamily: 'var(--font-mono)' }}>
             POST /batches/{today}/zip → poll GET /jobs/{'{jobID}'}
@@ -249,15 +185,13 @@ export function DailyBatchPage() {
           display: 'flex', alignItems: 'center', gap: 10,
         }}>
           Today's videos
-          <span style={{
-            fontSize: 10, fontFamily: 'var(--font-mono)',
-            color: 'var(--text-dim)', background: 'var(--bg-subtle)',
-            border: '1px solid var(--border-strong)', borderRadius: 3, padding: '1px 6px',
-          }}>
-            empty state — pending backend batch pipeline
-          </span>
+          <span style={{ fontSize: 10, fontFamily: 'var(--font-mono)', color: 'var(--text-dim)' }}>0 real videos</span>
         </div>
-        {EMPTY_STATE_ROWS.map(v => <VideoRow key={v.id} video={v} />)}
+        <div className="empty-state" style={{ margin: 0, borderRadius: 0 }}>
+          <div className="empty-icon">BP</div>
+          <div className="empty-title">No batch runs yet.</div>
+          <div className="empty-desc">No uploads have been attempted. Connect accounts and configure provider keys first.</div>
+        </div>
       </div>
 
       <div style={{ marginTop: 16 }}>

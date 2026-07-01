@@ -14,14 +14,14 @@ interface Props {
 }
 
 export const NAV_ITEMS: NavItem[] = [
-  { id: 'signals',     n: '01', label: 'Signals',          badge: 14 },
-  { id: 'scoring',     n: '02', label: 'Scoring',          badge: 8 },
-  { id: 'topics',      n: '03', label: "Today's 6",        badge: 6 },
-  { id: 'workflow',    n: '04', label: 'Daily Workflow',    badge: 6 },
-  { id: 'batch',       n: '05', label: 'Batch & Publish',  badge: 6 },
+  { id: 'signals',     n: '01', label: 'Signals' },
+  { id: 'scoring',     n: '02', label: 'Scoring' },
+  { id: 'topics',      n: '03', label: "Today's 6" },
+  { id: 'workflow',    n: '04', label: 'Daily Workflow' },
+  { id: 'batch',       n: '05', label: 'Batch & Publish' },
   { id: 'realPipeline', n: '06', label: 'Real Pipeline' },
   { id: 'connections', n: '07', label: 'Connections' },
-  { id: 'competitors', n: '08', label: 'Competitors',      badge: 6 },
+  { id: 'competitors', n: '08', label: 'Competitors' },
   { id: 'approvals',   n: '09', label: 'Approvals' },
   { id: 'performance', n: '10', label: 'Performance' },
   { id: 'pipeline',    n: '11', label: 'Pipeline' },
@@ -29,9 +29,9 @@ export const NAV_ITEMS: NavItem[] = [
 ];
 
 const MOBILE_NAV_ITEMS: NavItem[] = [
-  { id: 'topics',      n: '01', label: "Today's 6",   badge: 6 },
-  { id: 'batch',       n: '02', label: 'Publish',     badge: 6 },
-  { id: 'signals',     n: '03', label: 'Signals',     badge: 14 },
+  { id: 'topics',      n: '01', label: "Today's 6" },
+  { id: 'batch',       n: '02', label: 'Publish' },
+  { id: 'signals',     n: '03', label: 'Signals' },
   { id: 'connections', n: '04', label: 'Connect' },
   { id: 'settings',    n: '05', label: 'Settings' },
 ];
@@ -92,13 +92,13 @@ export function Sidebar({ currentView, onNavigate, approvals }: Props) {
       <div className="sidebar-footer">
         <div className="collector-status">
           <span className="collector-dot" aria-hidden="true" />
-          <span className="collector-label">6 collectors live</span>
+          <span className="collector-label">Not configured</span>
         </div>
         <div className="user-card">
           <div className="user-avatar" aria-hidden="true">JD</div>
           <div>
-            <div className="user-name">Jordan D.</div>
-            <div className="user-role">Growth lead</div>
+            <div className="user-name">Local workspace</div>
+            <div className="user-role">No account connected</div>
           </div>
         </div>
       </div>

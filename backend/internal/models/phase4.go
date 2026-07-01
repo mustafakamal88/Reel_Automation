@@ -12,7 +12,7 @@ import "time"
 // or "failed" states unless the real provider path succeeds.
 
 // TrendSource is where trend_items are allowed to come from.
-// Only "manual" and "demo_seed" can create trend_items today; any other
+// Only "manual" can create trend_items today; any other
 // source_type (youtube, google_trends, tiktok, x, instagram, ...) is a
 // real future integration and currently reports provider_not_connected.
 type TrendSource struct {
@@ -27,15 +27,14 @@ type TrendSource struct {
 }
 
 const (
-	TrendSourceTypeManual   = "manual"
-	TrendSourceTypeDemoSeed = "demo_seed"
+	TrendSourceTypeManual = "manual"
 )
 
 // IsDiscoverable reports whether this source type is allowed to create
 // trend_items directly. Every other source type is a not-yet-connected
 // external provider.
 func (s TrendSource) IsDiscoverable() bool {
-	return s.SourceType == TrendSourceTypeManual || s.SourceType == TrendSourceTypeDemoSeed
+	return s.SourceType == TrendSourceTypeManual
 }
 
 // TrendItem is a single discovered topic candidate, always traceable back

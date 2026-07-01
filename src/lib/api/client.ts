@@ -71,6 +71,17 @@ export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> 
   return res.json() as Promise<T>;
 }
 
+// ── Health ───────────────────────────────────────────────────────────────────
+
+export interface HealthResponse {
+  ok: boolean;
+  service: string;
+}
+
+export async function getHealth(): Promise<HealthResponse> {
+  return apiFetch<HealthResponse>('/health');
+}
+
 // ── Platform connections ──────────────────────────────────────────────────────
 
 export interface PlatformStatus {

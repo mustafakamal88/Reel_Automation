@@ -3,7 +3,7 @@ import { PLATFORMS } from '../data/platforms';
 
 function statusLabel(s: IntegrationStatus): string {
   const labels: Record<IntegrationStatus, string> = {
-    demo:            'Demo mode',
+    demo:            'Not connected',
     not_connected:   'Not connected',
     connected:       'Connected',
     needs_attention: 'Needs attention',

@@ -110,20 +110,7 @@ type discoverRequest struct {
 	Items         []discoverItemRequest  `json:"items"`
 }
 
-// demoSeedItems is a fixed, clearly-labeled set of generic short-form
-// content ideas used only when source_type == demo_seed and the caller
-// did not supply its own items. These are placeholder planning inputs,
-// not real live trend data from any platform.
-var demoSeedItems = []discoverItemRequest{
-	{Topic: "5 morning habits that boost focus", Description: "Quick habit-stacking breakdown for productivity-minded viewers.", PlatformHint: "tiktok", Velocity: 72},
-	{Topic: "Why everyone is switching to this budgeting method", Description: "Personal finance explainer comparing budgeting approaches.", PlatformHint: "instagram", Velocity: 65},
-	{Topic: "Top 3 mistakes beginners make in home workouts", Description: "Fitness tips for at-home exercisers avoiding common errors.", PlatformHint: "youtube", Velocity: 58},
-	{Topic: "This 60 second pasta hack changed dinner forever", Description: "Fast recipe demo aimed at weeknight cooking.", PlatformHint: "tiktok", Velocity: 81},
-	{Topic: "How to negotiate your rent before renewal", Description: "Renter's guide to lease renewal conversations.", PlatformHint: "instagram", Velocity: 49},
-	{Topic: "What if you only owned 30 pieces of clothing", Description: "Minimalist wardrobe challenge explainer.", PlatformHint: "youtube", Velocity: 54},
-}
-
-// handleDiscoverTrends creates trend_items from manual/demo_seed input only.
+// handleDiscoverTrends creates trend_items from explicit manual input only.
 // Any other source_type is a real future provider integration and reports
 // provider_not_connected without writing any rows.
 //
@@ -160,17 +147,14 @@ func (s *Server) handleDiscoverTrends(w http.ResponseWriter, r *http.Request) {
 	if !src.IsDiscoverable() {
 		jsonOK(w, map[string]any{
 			"status":  "provider_not_connected",
-			"message": "source_type \"" + src.SourceType + "\" is not connected yet — no live integration is wired in. Use a manual or demo_seed source to create trend_items today.",
+			"message": "source_type \"" + src.SourceType + "\" is not connected yet — no live integration is wired in. Use a manual source with explicit items to create trend_items today.",
 		})
 		return
 	}
 
 	items := req.Items
-	if len(items) == 0 && src.SourceType == models.TrendSourceTypeDemoSeed {
-		items = demoSeedItems
-	}
 	if len(items) == 0 {
-		jsonError(w, "items is required for a manual source (or omit it on a demo_seed source to use the built-in demo set)", http.StatusBadRequest)
+		jsonError(w, "items is required for a manual source", http.StatusBadRequest)
 		return
 	}
 

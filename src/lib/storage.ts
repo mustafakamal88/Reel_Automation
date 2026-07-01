@@ -16,12 +16,6 @@ export const DEFAULT_SETTINGS: Settings = {
 };
 
 export const DEFAULT_APPROVALS: Record<string, ApprovalStatus> = {
-  t1: 'approved',
-  t2: 'pending',
-  t3: 'rejected',
-  t4: 'pending',
-  t5: 'approved',
-  t6: 'pending',
 };
 
 function safeGet<T>(key: string, fallback: T): T {
