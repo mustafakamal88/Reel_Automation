@@ -17,6 +17,10 @@ type Config struct {
 	// Database
 	DatabaseURL string
 
+	// ExportDir is the local folder ZIP exports are written to. Never
+	// committed to git — see backend/.gitignore.
+	ExportDir string
+
 	// Session / encryption
 	SessionSecret      string
 	TokenEncryptionKey string
@@ -45,6 +49,7 @@ func Load() (*Config, error) {
 		APIBase: getEnv("API_BASE_URL", "http://localhost:8080"),
 
 		DatabaseURL: os.Getenv("DATABASE_URL"),
+		ExportDir:   getEnv("EXPORT_DIR", "exports"),
 
 		SessionSecret:      os.Getenv("SESSION_SECRET"),
 		TokenEncryptionKey: os.Getenv("TOKEN_ENCRYPTION_KEY"),

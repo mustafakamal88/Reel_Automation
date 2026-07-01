@@ -99,6 +99,11 @@ const (
 // ReelPlan is one of up to 6 daily reel slots: a scored trend item turned
 // into a concrete content plan with draft copy. All draft fields are
 // placeholders for human review — never auto-published.
+//
+// The video/thumbnail artifact fields stay NULL/empty until a real render
+// pipeline writes a real video.mp4 / thumbnail.png to disk and records its
+// path here — no render provider is connected yet (see VideoJob), so today
+// these are always empty and ExportStatus always reports a missing artifact.
 type ReelPlan struct {
 	ID               string    `json:"id" db:"id"`
 	WorkspaceID      string    `json:"workspace_id" db:"workspace_id"`
@@ -113,13 +118,39 @@ type ReelPlan struct {
 	HashtagsDraft    string    `json:"hashtags_draft" db:"hashtags_draft"`
 	ThumbnailIdea    string    `json:"thumbnail_idea" db:"thumbnail_idea"`
 	Status           string    `json:"status" db:"status"`
-	CreatedAt        time.Time `json:"created_at" db:"created_at"`
-	UpdatedAt        time.Time `json:"updated_at" db:"updated_at"`
+
+	VideoArtifactPath    *string  `json:"video_artifact_path" db:"video_artifact_path"`
+	VideoFormat          string   `json:"video_format" db:"video_format"`
+	VideoWidth           *int     `json:"video_width" db:"video_width"`
+	VideoHeight          *int     `json:"video_height" db:"video_height"`
+	VideoDurationSeconds *float64 `json:"video_duration_seconds" db:"video_duration_seconds"`
+	VideoCodec           string   `json:"video_codec" db:"video_codec"`
+	AudioCodec           string   `json:"audio_codec" db:"audio_codec"`
+
+	ThumbnailArtifactPath *string `json:"thumbnail_artifact_path" db:"thumbnail_artifact_path"`
+	ThumbnailFormat       string  `json:"thumbnail_format" db:"thumbnail_format"`
+	ThumbnailWidth        *int    `json:"thumbnail_width" db:"thumbnail_width"`
+	ThumbnailHeight       *int    `json:"thumbnail_height" db:"thumbnail_height"`
+
+	ExportStatus string  `json:"export_status" db:"export_status"`
+	ExportError  *string `json:"export_error" db:"export_error"`
+
+	CreatedAt time.Time `json:"created_at" db:"created_at"`
+	UpdatedAt time.Time `json:"updated_at" db:"updated_at"`
 }
 
 const (
 	ReelPlanStatusDraft         = "draft"
 	ReelPlanStatusVideoRequested = "video_requested"
+)
+
+// Per-reel export readiness. Mirrors ExportJob's status vocabulary but
+// scoped to a single reel's video.mp4 / thumbnail.png artifacts.
+const (
+	ReelExportStatusArtifactMissing  = "artifact_missing"           // neither video.mp4 nor thumbnail.png exist on disk yet
+	ReelExportStatusVideoMissing     = "video_artifact_missing"     // thumbnail.png exists, video.mp4 does not
+	ReelExportStatusThumbnailMissing = "thumbnail_artifact_missing" // video.mp4 exists, thumbnail.png does not
+	ReelExportStatusReady            = "ready"                      // both real artifacts exist on disk
 )
 
 // VideoJob tracks the (not yet implemented) render pipeline for a reel plan.
@@ -142,9 +173,10 @@ const (
 	VideoJobStatusFailed          = "failed"
 )
 
-// ExportJob tracks a ZIP export request for a daily batch. ZIP generation
-// is not implemented yet (it needs real rendered video files), so this
-// always lands on zip_generation_not_implemented today.
+// ExportJob tracks a ZIP export request for a daily batch. The status
+// always honestly reflects what was found/built — it never claims a
+// completed ZIP exists unless every reel's video.mp4 and thumbnail.png
+// were found as real files on disk and packaged.
 type ExportJob struct {
 	ID           string     `json:"id" db:"id"`
 	WorkspaceID  string     `json:"workspace_id" db:"workspace_id"`
@@ -157,9 +189,14 @@ type ExportJob struct {
 }
 
 const (
-	ExportJobStatusNotImplemented = "zip_generation_not_implemented"
-	ExportJobStatusFailed         = "failed"
-	ExportJobStatusCompleted      = "completed"
+	// ExportJobStatusNotImplemented is a legacy status from before Phase 4B;
+	// kept only so old rows still decode. No longer produced by the handler.
+	ExportJobStatusNotImplemented   = "zip_generation_not_implemented"
+	ExportJobStatusVideoMissing     = "video_artifact_missing"
+	ExportJobStatusThumbnailMissing = "thumbnail_artifact_missing"
+	ExportJobStatusMediaMissing     = "media_artifacts_missing"
+	ExportJobStatusFailed           = "failed"
+	ExportJobStatusCompleted        = "completed"
 )
 
 const PublishJobStatusPlatformNotConnected PublishJobStatus = "platform_not_connected"

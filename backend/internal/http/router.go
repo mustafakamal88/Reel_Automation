@@ -86,6 +86,7 @@ func (s *Server) Routes() http.Handler {
 
 	mux.HandleFunc("GET /api/export-jobs", s.handleListExportJobs)
 	mux.HandleFunc("GET /api/export-jobs/{id}", s.handleGetExportJob)
+	mux.HandleFunc("GET /api/export-jobs/{id}/download", s.handleDownloadExportJob)
 
 	mux.HandleFunc("GET /api/publish-jobs", s.handleListPublishJobs)
 

@@ -118,13 +118,11 @@ func (s *Server) handleCreateDailyBatch(w http.ResponseWriter, r *http.Request) 
 				(workspace_id, daily_batch_id, trend_item_id, topic_score_id, rank, platform,
 				 title_idea, script_outline, description_draft, hashtags_draft, thumbnail_idea)
 			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-			RETURNING id, workspace_id, daily_batch_id, trend_item_id, topic_score_id, rank, platform,
-				title_idea, script_outline, description_draft, hashtags_draft, thumbnail_idea, status, created_at, updated_at`,
+			RETURNING `+reelPlanColumns,
 			workspaceID, batch.ID, c.TrendItemID, c.TopicScoreID, i+1, c.PlatformHint,
 			draftTitleIdea(c.Topic), draftScriptOutline(c.Topic, c.Description), draftDescription(c.Description),
 			draftHashtags(c.Topic), draftThumbnailIdea(c.Topic),
-		).Scan(&rp.ID, &rp.WorkspaceID, &rp.DailyBatchID, &rp.TrendItemID, &rp.TopicScoreID, &rp.Rank, &rp.Platform,
-			&rp.TitleIdea, &rp.ScriptOutline, &rp.DescriptionDraft, &rp.HashtagsDraft, &rp.ThumbnailIdea, &rp.Status, &rp.CreatedAt, &rp.UpdatedAt)
+		).Scan(reelPlanScanDest(&rp)...)
 		if err != nil {
 			jsonError(w, "reel plan insert failed: "+err.Error(), http.StatusInternalServerError)
 			return
@@ -155,10 +153,41 @@ func (s *Server) fetchDailyBatchByDate(ctx context.Context, workspaceID, date st
 	return b, err
 }
 
+func (s *Server) fetchDailyBatchByID(ctx context.Context, workspaceID, id string) (models.DailyBatch, error) {
+	var b models.DailyBatch
+	err := s.db.QueryRowContext(ctx, `
+		SELECT id, workspace_id, batch_date::text, status, reel_count, created_at, updated_at
+		FROM daily_batches WHERE id = $1 AND workspace_id = $2`, id, workspaceID,
+	).Scan(&b.ID, &b.WorkspaceID, &b.BatchDate, &b.Status, &b.ReelCount, &b.CreatedAt, &b.UpdatedAt)
+	return b, err
+}
+
+// reelPlanColumns is the full reel_plans column list (including Phase 4B
+// artifact-tracking columns), shared by every query that scans into a
+// models.ReelPlan so the SELECT/RETURNING list and reelPlanScanDest stay in
+// lockstep.
+const reelPlanColumns = `
+	id, workspace_id, daily_batch_id, trend_item_id, topic_score_id, rank, platform,
+	title_idea, script_outline, description_draft, hashtags_draft, thumbnail_idea, status,
+	video_artifact_path, video_format, video_width, video_height, video_duration_seconds, video_codec, audio_codec,
+	thumbnail_artifact_path, thumbnail_format, thumbnail_width, thumbnail_height,
+	export_status, export_error, created_at, updated_at`
+
+// reelPlanScanDest returns the Scan() destination slice matching
+// reelPlanColumns, in the same order.
+func reelPlanScanDest(rp *models.ReelPlan) []any {
+	return []any{
+		&rp.ID, &rp.WorkspaceID, &rp.DailyBatchID, &rp.TrendItemID, &rp.TopicScoreID, &rp.Rank, &rp.Platform,
+		&rp.TitleIdea, &rp.ScriptOutline, &rp.DescriptionDraft, &rp.HashtagsDraft, &rp.ThumbnailIdea, &rp.Status,
+		&rp.VideoArtifactPath, &rp.VideoFormat, &rp.VideoWidth, &rp.VideoHeight, &rp.VideoDurationSeconds, &rp.VideoCodec, &rp.AudioCodec,
+		&rp.ThumbnailArtifactPath, &rp.ThumbnailFormat, &rp.ThumbnailWidth, &rp.ThumbnailHeight,
+		&rp.ExportStatus, &rp.ExportError, &rp.CreatedAt, &rp.UpdatedAt,
+	}
+}
+
 func (s *Server) fetchReelPlansForBatch(ctx context.Context, batchID string) ([]models.ReelPlan, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, workspace_id, daily_batch_id, trend_item_id, topic_score_id, rank, platform,
-			title_idea, script_outline, description_draft, hashtags_draft, thumbnail_idea, status, created_at, updated_at
+		SELECT `+reelPlanColumns+`
 		FROM reel_plans WHERE daily_batch_id = $1 ORDER BY rank ASC`, batchID)
 	if err != nil {
 		return nil, err
@@ -168,8 +197,7 @@ func (s *Server) fetchReelPlansForBatch(ctx context.Context, batchID string) ([]
 	plans := []models.ReelPlan{}
 	for rows.Next() {
 		var rp models.ReelPlan
-		if err := rows.Scan(&rp.ID, &rp.WorkspaceID, &rp.DailyBatchID, &rp.TrendItemID, &rp.TopicScoreID, &rp.Rank, &rp.Platform,
-			&rp.TitleIdea, &rp.ScriptOutline, &rp.DescriptionDraft, &rp.HashtagsDraft, &rp.ThumbnailIdea, &rp.Status, &rp.CreatedAt, &rp.UpdatedAt); err != nil {
+		if err := rows.Scan(reelPlanScanDest(&rp)...); err != nil {
 			return nil, err
 		}
 		plans = append(plans, rp)
@@ -260,40 +288,9 @@ func (s *Server) handleListBatchReels(w http.ResponseWriter, r *http.Request) {
 	jsonOK(w, map[string]any{"reel_plans": plans})
 }
 
-// POST /api/batches/{id}/export
-func (s *Server) handleCreateExportJob(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-	workspaceID, err := s.defaultWorkspaceID(ctx)
-	if err != nil {
-		jsonError(w, "workspace lookup failed: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-	batchID := r.PathValue("id")
-
-	var exists string
-	if err := s.db.QueryRowContext(ctx, `SELECT id FROM daily_batches WHERE id = $1 AND workspace_id = $2`, batchID, workspaceID).Scan(&exists); err != nil {
-		jsonError(w, "daily batch not found", http.StatusNotFound)
-		return
-	}
-
-	// ZIP generation requires real rendered video files, which the video
-	// job pipeline does not produce yet (no render provider is connected).
-	// The export_job record is real; the status honestly reflects that.
-	var job models.ExportJob
-	err = s.db.QueryRowContext(ctx, `
-		INSERT INTO export_jobs (workspace_id, daily_batch_id, status)
-		VALUES ($1, $2, $3)
-		RETURNING id, workspace_id, daily_batch_id, status, zip_path, error_message, created_at, completed_at`,
-		workspaceID, batchID, models.ExportJobStatusNotImplemented,
-	).Scan(&job.ID, &job.WorkspaceID, &job.DailyBatchID, &job.Status, &job.ZipPath, &job.ErrorMessage, &job.CreatedAt, &job.CompletedAt)
-	if err != nil {
-		jsonError(w, "export job insert failed: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	w.WriteHeader(http.StatusCreated)
-	jsonOK(w, job)
-}
+// POST /api/batches/{id}/export is implemented in handlers_api_export.go —
+// it needs the full reel artifact-checking + ZIP-building logic, which is
+// large enough to warrant its own file.
 
 // ── Draft content placeholders ───────────────────────────────────────────────
 // Deterministic, clearly-labeled placeholders — never auto-published, always

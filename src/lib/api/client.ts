@@ -194,6 +194,8 @@ export interface DailyBatchV2 {
   updated_at: string;
 }
 
+export type ReelExportStatus = 'artifact_missing' | 'video_artifact_missing' | 'thumbnail_artifact_missing' | 'ready';
+
 export interface ReelPlan {
   id: string;
   workspace_id: string;
@@ -208,6 +210,23 @@ export interface ReelPlan {
   hashtags_draft: string;
   thumbnail_idea: string;
   status: 'draft' | 'video_requested';
+
+  video_artifact_path: string | null;
+  video_format: string;
+  video_width: number | null;
+  video_height: number | null;
+  video_duration_seconds: number | null;
+  video_codec: string;
+  audio_codec: string;
+
+  thumbnail_artifact_path: string | null;
+  thumbnail_format: string;
+  thumbnail_width: number | null;
+  thumbnail_height: number | null;
+
+  export_status: ReelExportStatus;
+  export_error: string | null;
+
   created_at: string;
   updated_at: string;
 }
@@ -223,11 +242,19 @@ export interface VideoJob {
   updated_at: string;
 }
 
+export type ExportJobStatus =
+  | 'video_artifact_missing'
+  | 'thumbnail_artifact_missing'
+  | 'media_artifacts_missing'
+  | 'failed'
+  | 'completed'
+  | 'zip_generation_not_implemented'; // legacy status from before real ZIP export — no longer produced
+
 export interface ExportJob {
   id: string;
   workspace_id: string;
   daily_batch_id: string;
-  status: 'zip_generation_not_implemented' | 'failed' | 'completed';
+  status: ExportJobStatus;
   zip_path: string | null;
   error_message: string | null;
   created_at: string;
@@ -316,12 +343,50 @@ export async function getVideoJobs(): Promise<{ video_jobs: VideoJob[] }> {
   return apiFetch('/api/video-jobs');
 }
 
-export async function createBatchExport(batchID: string): Promise<ExportJob> {
+export interface CreateExportJobResponse {
+  export_job: ExportJob;
+  missing_video_reels: number[];
+  missing_thumbnail_reels: number[];
+}
+
+export async function createBatchExport(batchID: string): Promise<CreateExportJobResponse> {
   return apiFetch(`/api/batches/${batchID}/export`, { method: 'POST' });
 }
 
 export async function getExportJobs(): Promise<{ export_jobs: ExportJob[] }> {
   return apiFetch('/api/export-jobs');
+}
+
+/**
+ * Downloads a completed export job's ZIP and triggers a browser save.
+ * Fetches with credentials (rather than a plain <a href>) so this works
+ * against a cross-origin API that requires the session cookie. Throws
+ * ApiError if the job isn't completed or the ZIP is missing on disk.
+ */
+export async function downloadExportZip(jobID: string, filename: string): Promise<void> {
+  let res: Response;
+  try {
+    res = await fetch(apiUrl(`/api/export-jobs/${jobID}/download`), { credentials: 'include' });
+  } catch {
+    throw new ApiError(0, 'network_error', 'Cannot reach the Go backend. Check VITE_API_BASE_URL or run: cd backend && go run ./cmd/api');
+  }
+  if (!res.ok) {
+    let message = `HTTP ${res.status}`;
+    try {
+      const body = await res.json() as { error?: string };
+      if (body.error) message = body.error;
+    } catch { /* non-JSON error body */ }
+    throw new ApiError(res.status, 'download_failed', message);
+  }
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
 }
 
 export async function publishReel(reelID: string): Promise<PublishJobV2> {

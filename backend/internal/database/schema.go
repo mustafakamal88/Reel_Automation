@@ -309,12 +309,37 @@ ALTER TABLE publish_jobs ALTER COLUMN video_asset_id DROP NOT NULL;
 ALTER TABLE publish_jobs ADD COLUMN IF NOT EXISTS reel_plan_id UUID REFERENCES reel_plans(id) ON DELETE CASCADE;
 `
 
+// SchemaPhase4B adds per-reel video/thumbnail artifact tracking columns to
+// reel_plans so ZIP export can honestly tell whether a real rendered video
+// and thumbnail exist on disk for each reel, instead of always reporting
+// "not implemented". These columns stay NULL/empty until a real render
+// pipeline writes real files and records their paths — see
+// migrations/003_phase4b_export.sql.
+const SchemaPhase4B = `
+ALTER TABLE reel_plans ADD COLUMN IF NOT EXISTS video_artifact_path TEXT;
+ALTER TABLE reel_plans ADD COLUMN IF NOT EXISTS video_format TEXT NOT NULL DEFAULT '';
+ALTER TABLE reel_plans ADD COLUMN IF NOT EXISTS video_width INT;
+ALTER TABLE reel_plans ADD COLUMN IF NOT EXISTS video_height INT;
+ALTER TABLE reel_plans ADD COLUMN IF NOT EXISTS video_duration_seconds NUMERIC(8,3);
+ALTER TABLE reel_plans ADD COLUMN IF NOT EXISTS video_codec TEXT NOT NULL DEFAULT '';
+ALTER TABLE reel_plans ADD COLUMN IF NOT EXISTS audio_codec TEXT NOT NULL DEFAULT '';
+ALTER TABLE reel_plans ADD COLUMN IF NOT EXISTS thumbnail_artifact_path TEXT;
+ALTER TABLE reel_plans ADD COLUMN IF NOT EXISTS thumbnail_format TEXT NOT NULL DEFAULT '';
+ALTER TABLE reel_plans ADD COLUMN IF NOT EXISTS thumbnail_width INT;
+ALTER TABLE reel_plans ADD COLUMN IF NOT EXISTS thumbnail_height INT;
+ALTER TABLE reel_plans ADD COLUMN IF NOT EXISTS export_status TEXT NOT NULL DEFAULT 'artifact_missing';
+ALTER TABLE reel_plans ADD COLUMN IF NOT EXISTS export_error TEXT;
+`
+
 // Migrate runs the schema DDL against the connected database.
 // Safe to run multiple times due to IF NOT EXISTS clauses.
 func (db *DB) Migrate() error {
 	if _, err := db.Exec(Schema); err != nil {
 		return err
 	}
-	_, err := db.Exec(SchemaPhase4)
+	if _, err := db.Exec(SchemaPhase4); err != nil {
+		return err
+	}
+	_, err := db.Exec(SchemaPhase4B)
 	return err
 }

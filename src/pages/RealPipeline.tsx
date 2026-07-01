@@ -5,7 +5,7 @@ import {
   type ReelPlan, type VideoJob, type ExportJob, type PublishJobV2,
   getTrendSources, createTrendSource, discoverTrends, getTrends,
   scoreTopics, getTopicScores, createDailyBatch, getDailyBatches, getBatchReels,
-  prepareVideoJob, getVideoJobs, createBatchExport, getExportJobs,
+  prepareVideoJob, getVideoJobs, createBatchExport, getExportJobs, downloadExportZip,
   publishReel, getPublishJobs,
 } from '../lib/api/client';
 
@@ -38,7 +38,10 @@ function Pill({ children, tone = 'neutral' }: { children: React.ReactNode; tone?
 
 function toneForStatus(status: string): 'neutral' | 'good' | 'warn' | 'bad' {
   if (['scored', 'ready', 'draft_ready', 'connected', 'created', 'queued', 'done', 'completed'].includes(status)) return 'good';
-  if (['new', 'draft', 'planned', 'pending_provider_connection', 'video_requested', 'zip_generation_not_implemented'].includes(status)) return 'warn';
+  if ([
+    'new', 'draft', 'planned', 'pending_provider_connection', 'video_requested', 'zip_generation_not_implemented',
+    'artifact_missing', 'video_artifact_missing', 'thumbnail_artifact_missing', 'media_artifacts_missing',
+  ].includes(status)) return 'warn';
   if (['rejected', 'failed', 'platform_not_connected', 'provider_not_connected'].includes(status)) return 'bad';
   return 'neutral';
 }
@@ -184,10 +187,19 @@ export function RealPipelinePage() {
   async function handleExport() {
     if (!currentBatch) return;
     await runAction('export', async () => {
-      const job = await createBatchExport(currentBatch.id);
-      setActionNote(`Export job created: ${job.status}`);
-      const ej = await getExportJobs();
+      const res = await createBatchExport(currentBatch.id);
+      setActionNote(`Export job created: ${res.export_job.status}`);
+      const [ej, r] = await Promise.all([getExportJobs(), getBatchReels(currentBatch.id)]);
       setExportJobs(ej.export_jobs);
+      setReels(r.reel_plans);
+    });
+  }
+
+  async function handleDownloadExport(job: ExportJob) {
+    await runAction('download', async () => {
+      const filename = `trendcortex-batch-${currentBatch?.batch_date ?? job.daily_batch_id}.zip`;
+      await downloadExportZip(job.id, filename);
+      setActionNote('ZIP download started.');
     });
   }
 
@@ -196,6 +208,8 @@ export function RealPipelinePage() {
   const batchExportJob = exportJobs.find(j => j.daily_batch_id === currentBatch?.id);
   const reelPublishJobs = (reelID: string) => publishJobs.filter(j => j.reel_plan_id === reelID);
   const reelVideoJob = (reelID: string) => videoJobs.find(j => j.reel_plan_id === reelID);
+  const missingVideoReels = reels.filter(r => !r.video_artifact_path);
+  const missingThumbnailReels = reels.filter(r => !r.thumbnail_artifact_path);
 
   return (
     <section className="page-section">
@@ -343,8 +357,20 @@ export function RealPipelinePage() {
                   <div style={{ fontSize: 11, color: 'var(--text-dim)', fontStyle: 'italic' }}>{reel.thumbnail_idea}</div>
 
                   <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 4 }}>
-                    <Pill tone={toneForStatus(vj?.status ?? 'not_requested')}>video: {vj?.status ?? 'not_requested'}</Pill>
+                    <Pill tone={toneForStatus(vj?.status ?? 'not_requested')}>video job: {vj?.status ?? 'not_requested'}</Pill>
                     <Pill tone={toneForStatus(latestPublish?.status ?? 'not_requested')}>publish: {latestPublish?.status ?? 'not_requested'}</Pill>
+                  </div>
+
+                  <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                    <Pill tone={reel.video_artifact_path ? 'good' : 'warn'}>
+                      video.mp4: {reel.video_artifact_path ? 'present' : 'missing'}
+                    </Pill>
+                    <Pill tone={reel.thumbnail_artifact_path ? 'good' : 'warn'}>
+                      thumbnail.png: {reel.thumbnail_artifact_path ? 'present' : 'missing'}
+                    </Pill>
+                  </div>
+                  <div style={{ fontSize: 10, color: 'var(--text-dimmer)', fontFamily: 'var(--font-mono)' }}>
+                    expected: video.mp4 · thumbnail.png
                   </div>
 
                   <div style={{ display: 'flex', gap: 8, marginTop: 6 }}>
@@ -377,7 +403,7 @@ export function RealPipelinePage() {
       </Card>
 
       {/* 6. Export Job Status */}
-      <Card title="Export Job (ZIP)" sub="ZIP generation needs real rendered video files, which don't exist until a render provider is connected — so this honestly reports zip_generation_not_implemented.">
+      <Card title="Export Job (ZIP)" sub="A ZIP is only built when every reel has a real video.mp4 and thumbnail.png on disk. Otherwise this honestly reports exactly which reels are missing which file — never a fake download.">
         <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
           {batchExportJob ? (
             <Pill tone={toneForStatus(batchExportJob.status)}>{batchExportJob.status}</Pill>
@@ -385,13 +411,41 @@ export function RealPipelinePage() {
             <span style={{ fontSize: 12, color: 'var(--text-dim)' }}>No export job for today's batch yet.</span>
           )}
         </div>
-        <ActionButton
-          label="Request export"
-          busyLabel="Requesting…"
-          busy={busy === 'export'}
-          disabled={!currentBatch}
-          onClick={handleExport}
-        />
+
+        {batchExportJob?.status === 'completed' && batchExportJob.zip_path && (
+          <div style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
+            {batchExportJob.zip_path.split('/').pop()}
+          </div>
+        )}
+
+        {missingVideoReels.length > 0 && (
+          <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+            Missing video.mp4 for reel(s): {missingVideoReels.map(r => `#${r.rank}`).join(', ')}
+          </div>
+        )}
+        {missingThumbnailReels.length > 0 && (
+          <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+            Missing thumbnail.png for reel(s): {missingThumbnailReels.map(r => `#${r.rank}`).join(', ')}
+          </div>
+        )}
+
+        <div style={{ display: 'flex', gap: 8 }}>
+          <ActionButton
+            label="Request export"
+            busyLabel="Requesting…"
+            busy={busy === 'export'}
+            disabled={!currentBatch}
+            onClick={handleExport}
+          />
+          {batchExportJob?.status === 'completed' && (
+            <ActionButton
+              label="Download ZIP"
+              busyLabel="Downloading…"
+              busy={busy === 'download'}
+              onClick={() => handleDownloadExport(batchExportJob)}
+            />
+          )}
+        </div>
       </Card>
 
       {/* 7. Publishing Job Status */}
