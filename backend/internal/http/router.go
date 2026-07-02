@@ -1,13 +1,16 @@
 package http
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"strings"
 	"trendcortex/api/internal/audit"
 	"trendcortex/api/internal/config"
+	"trendcortex/api/internal/content"
 	"trendcortex/api/internal/database"
 	"trendcortex/api/internal/oauth"
+	trenddiscovery "trendcortex/api/internal/trends"
 )
 
 // Server holds the shared dependencies injected into all HTTP handlers.
@@ -16,6 +19,8 @@ type Server struct {
 	db       *database.DB
 	registry oauth.Registry
 	audit    *audit.Logger
+	content  content.Generator
+	discover func(ctx context.Context, region, language string, limit int) (trenddiscovery.DiscoverResult, error)
 }
 
 // NewServer constructs the Server with all dependencies.
@@ -82,6 +87,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /api/reels/{id}/prepare-video-job", s.handlePrepareVideoJob)
 	mux.HandleFunc("POST /api/reels/{id}/render", s.handleRenderReel)
 	mux.HandleFunc("POST /api/reels/{id}/publish", s.handlePublishReel)
+	mux.HandleFunc("POST /api/reels/generate-script", s.handleGenerateReelContent)
 	mux.HandleFunc("POST /api/reels/export-test", s.handleRenderExportTest)
 	mux.HandleFunc("GET /api/reels/export-test/download/{filename}", s.handleDownloadRenderExportTest)
 

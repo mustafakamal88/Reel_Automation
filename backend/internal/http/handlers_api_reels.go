@@ -5,9 +5,94 @@ import (
 	"database/sql"
 	"errors"
 	"net/http"
+	"strings"
+	"time"
 
+	"trendcortex/api/internal/content"
 	"trendcortex/api/internal/models"
+	trenddiscovery "trendcortex/api/internal/trends"
 )
+
+// handleGenerateReelContent creates a script/caption package from a real
+// provider-sourced trend candidate. It does not discover trends, persist
+// output, or synthesize fallback content.
+//
+// POST /api/reels/generate-script
+func (s *Server) handleGenerateReelContent(w http.ResponseWriter, r *http.Request) {
+	var req models.ReelContentGenerationRequest
+	if err := decodeJSONBody(r, &req); err != nil {
+		jsonError(w, "invalid request body: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if err := s.resolveTrendCandidatePayload(r.Context(), &req); err != nil {
+		status := http.StatusBadRequest
+		if errors.Is(err, trenddiscovery.ErrProviderNotConfigured) {
+			status = http.StatusServiceUnavailable
+		}
+		jsonError(w, err.Error(), status)
+		return
+	}
+
+	genReq, err := content.ValidateRequest(req)
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	generator := s.content
+	if generator == nil {
+		generator = content.OpenAIGenerator{
+			APIKey: s.cfg.OpenAIAPIKey,
+			Model:  s.cfg.OpenAITextModel,
+		}
+	}
+
+	pkg, err := generator.Generate(r.Context(), genReq)
+	if errors.Is(err, content.ErrProviderNotConfigured) {
+		jsonError(w, err.Error(), http.StatusServiceUnavailable)
+		return
+	}
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+
+	jsonOK(w, models.ReelContentGenerationResponse{Package: pkg})
+}
+
+func (s *Server) resolveTrendCandidatePayload(ctx context.Context, req *models.ReelContentGenerationRequest) error {
+	if req.TrendCandidate != nil || strings.TrimSpace(req.TrendCandidateID) == "" {
+		return nil
+	}
+
+	discover := s.discover
+	if discover == nil {
+		timeout, err := time.ParseDuration(s.cfg.TrendDiscoveryTimeout)
+		if err != nil {
+			timeout = 10 * time.Second
+		}
+		discoverer := trenddiscovery.NewDiscoverer(trenddiscovery.Config{
+			Provider: s.cfg.TrendDiscoveryProvider,
+			BaseURL:  s.cfg.TrendDiscoveryBaseURL,
+			Timeout:  timeout,
+		}, nil)
+		discover = discoverer.Discover
+	}
+
+	result, err := discover(ctx, req.Region, req.Language, 100)
+	if err != nil {
+		return err
+	}
+	id := strings.TrimSpace(req.TrendCandidateID)
+	for i := range result.Candidates {
+		if result.Candidates[i].ID == id {
+			candidate := result.Candidates[i]
+			req.TrendCandidate = &candidate
+			return nil
+		}
+	}
+	return errors.New("real trend candidate id was not found in the configured provider response")
+}
 
 // handlePrepareVideoJob creates a video_job for a reel plan. No render
 // provider is connected yet, so the job always lands on

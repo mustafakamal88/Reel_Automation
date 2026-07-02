@@ -1,7 +1,14 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { Platform } from '../types';
 import { PLATFORMS } from '../data/platforms';
-import { ApiError, discoverTrendCandidates, type TrendCandidate, type TrendDiscoveryResponse } from '../lib/api/client';
+import {
+  ApiError,
+  discoverTrendCandidates,
+  generateReelScript,
+  type ReelContentPackage,
+  type TrendCandidate,
+  type TrendDiscoveryResponse,
+} from '../lib/api/client';
 
 const FILTERS: { id: Platform | 'all'; label: string; dot: string }[] = [
   { id: 'all', label: 'All sources', dot: '#a78bfa' },
@@ -16,13 +23,17 @@ const FILTERS: { id: Platform | 'all'; label: string; dot: string }[] = [
 interface Props {
   initialFilter?: Platform | 'all';
   onFilterChange?: (f: Platform | 'all') => void;
+  onStatusChange?: (status: string) => void;
 }
 
-export function SignalsPage({ initialFilter = 'all', onFilterChange }: Props) {
+export function SignalsPage({ initialFilter = 'all', onFilterChange, onStatusChange }: Props) {
   const [filter, setFilter] = useState<Platform | 'all'>(initialFilter);
   const [response, setResponse] = useState<TrendDiscoveryResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [generatingID, setGeneratingID] = useState<string | null>(null);
+  const [generated, setGenerated] = useState<Record<string, ReelContentPackage>>({});
+  const [generationErrors, setGenerationErrors] = useState<Record<string, string>>({});
 
   const handleFilter = (f: Platform | 'all') => {
     setFilter(f);
@@ -53,12 +64,55 @@ export function SignalsPage({ initialFilter = 'all', onFilterChange }: Props) {
     };
   }, []);
 
+  useEffect(() => {
+    if (!onStatusChange) return;
+    if (loading) {
+      onStatusChange('Checking live trend provider status');
+      return;
+    }
+    if (error) {
+      onStatusChange('Trend discovery unavailable');
+      return;
+    }
+    onStatusChange(statusSubtitle(response));
+  }, [error, loading, onStatusChange, response]);
+
   const filteredCandidates = useMemo(() => {
     const candidates = response?.candidates ?? [];
     if (filter === 'all') return candidates;
     if (filter === 'gt') return candidates.filter(c => c.source === 'google_trends_rss');
     return [];
   }, [filter, response]);
+
+  const handleGenerate = (candidate: TrendCandidate) => {
+    setGeneratingID(candidate.id);
+    setGenerationErrors(prev => {
+      const next = { ...prev };
+      delete next[candidate.id];
+      return next;
+    });
+    generateReelScript({
+      trend_candidate_id: candidate.id,
+      trend_candidate: candidate,
+      platform_targets: ['instagram', 'tiktok', 'youtube', 'facebook', 'x'],
+      duration_target: '30s',
+      language: candidate.language || 'en-US',
+      region: candidate.region || 'US',
+    })
+      .then(data => {
+        setGenerated(prev => ({ ...prev, [candidate.id]: data.package }));
+      })
+      .catch(err => {
+        if (err instanceof ApiError) {
+          setGenerationErrors(prev => ({ ...prev, [candidate.id]: err.message }));
+        } else {
+          setGenerationErrors(prev => ({ ...prev, [candidate.id]: 'Script generation request failed.' }));
+        }
+      })
+      .finally(() => {
+        setGeneratingID(current => (current === candidate.id ? null : current));
+      });
+  };
 
   return (
     <section className="page-section">
@@ -175,6 +229,39 @@ export function SignalsPage({ initialFilter = 'all', onFilterChange }: Props) {
                     Source evidence
                   </a>
                 )}
+                <div style={{ marginTop: 12, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                  <button
+                    type="button"
+                    onClick={() => handleGenerate(candidate)}
+                    disabled={generatingID === candidate.id}
+                    style={{
+                      border: '1px solid var(--border-card)',
+                      background: generatingID === candidate.id ? '#1c2026' : 'var(--accent)',
+                      color: generatingID === candidate.id ? 'var(--text-muted)' : '#07110d',
+                      borderRadius: 6,
+                      padding: '7px 10px',
+                      fontFamily: 'inherit',
+                      fontSize: 12,
+                      fontWeight: 700,
+                      cursor: generatingID === candidate.id ? 'wait' : 'pointer',
+                    }}
+                  >
+                    {generatingID === candidate.id ? 'Generating...' : 'Generate script'}
+                  </button>
+                  {generated[candidate.id] && (
+                    <span style={{ alignSelf: 'center', fontSize: 12, color: 'var(--green)' }}>
+                      Script package ready
+                    </span>
+                  )}
+                </div>
+                {generationErrors[candidate.id] && (
+                  <div style={{ marginTop: 10, fontSize: 12, color: 'var(--red)', overflowWrap: 'anywhere' }}>
+                    {generationErrors[candidate.id]}
+                  </div>
+                )}
+                {generated[candidate.id] && (
+                  <GeneratedPackageView pkg={generated[candidate.id]} />
+                )}
               </div>
               <div style={{ textAlign: 'right', minWidth: 88 }}>
                 <div style={{ fontFamily: 'var(--font-mono)', fontSize: 20, fontWeight: 700, color: 'var(--green)' }}>
@@ -196,4 +283,83 @@ function countForFilter(filter: Platform | 'all', candidates: TrendCandidate[]):
   if (filter === 'all') return candidates.length;
   if (filter === 'gt') return candidates.filter(c => c.source === 'google_trends_rss').length;
   return 0;
+}
+
+function statusSubtitle(response: TrendDiscoveryResponse | null): string {
+  if (!response) return 'No real trend data found';
+  if (response.provider_status === 'provider_not_configured') return 'No trend provider configured';
+  if (response.provider_status === 'provider_error') return 'Trend provider error';
+  if (response.provider_status === 'no_data') return 'No real trend data found';
+  if ((response.candidates?.length ?? 0) > 0) return 'Live Google Trends RSS data';
+  return 'No real trend data found';
+}
+
+function GeneratedPackageView({ pkg }: { pkg: ReelContentPackage }) {
+  return (
+    <div
+      style={{
+        marginTop: 12,
+        padding: 12,
+        border: '1px solid var(--border-card)',
+        borderRadius: 8,
+        background: '#10141a',
+        display: 'grid',
+        gap: 10,
+      }}
+    >
+      <div style={{ fontSize: 13, fontWeight: 800, color: 'var(--text-primary)', overflowWrap: 'anywhere' }}>
+        {pkg.title}
+      </div>
+      <TextBlock label="Hook" value={pkg.hook} />
+      <TextBlock label="Script" value={pkg.script} />
+      <TextBlock label="Caption" value={pkg.caption} />
+      {pkg.hashtags?.length > 0 && (
+        <div style={{ fontSize: 12, color: 'var(--text-muted)', overflowWrap: 'anywhere' }}>
+          <strong style={{ color: 'var(--text-primary)' }}>Hashtags:</strong> {pkg.hashtags.join(' ')}
+        </div>
+      )}
+      <div style={{ display: 'grid', gap: 6 }}>
+        <TextBlock label="Instagram" value={pkg.instagram_caption} />
+        <TextBlock label="TikTok" value={pkg.tiktok_caption} />
+        <TextBlock label="YouTube title" value={pkg.youtube_title} />
+        <TextBlock label="Facebook" value={pkg.facebook_caption} />
+        <TextBlock label="X" value={pkg.x_caption} />
+      </div>
+      <TextBlock label="Thumbnail brief" value={pkg.thumbnail_brief} />
+      {pkg.safety_grounding_notes?.length > 0 && (
+        <div style={{ fontSize: 12, color: 'var(--text-dim)', overflowWrap: 'anywhere' }}>
+          <strong>Grounding:</strong> {pkg.safety_grounding_notes.join(' ')}
+        </div>
+      )}
+      <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text-dim)', textTransform: 'uppercase' }}>
+        {pkg.provider_metadata.provider} · {pkg.provider_metadata.model} · {pkg.provider_metadata.source}
+      </div>
+      <button
+        type="button"
+        disabled
+        title="Prepared for Phase 4I/4J pipeline handoff"
+        style={{
+          justifySelf: 'start',
+          border: '1px solid var(--border-card)',
+          background: '#151a21',
+          color: 'var(--text-dim)',
+          borderRadius: 6,
+          padding: '7px 10px',
+          fontFamily: 'inherit',
+          fontSize: 12,
+        }}
+      >
+        Use in Pipeline
+      </button>
+    </div>
+  );
+}
+
+function TextBlock({ label, value }: { label: string; value?: string }) {
+  if (!value) return null;
+  return (
+    <div style={{ fontSize: 12, color: 'var(--text-muted)', overflowWrap: 'anywhere', lineHeight: 1.5 }}>
+      <strong style={{ color: 'var(--text-primary)' }}>{label}:</strong> {value}
+    </div>
+  );
 }

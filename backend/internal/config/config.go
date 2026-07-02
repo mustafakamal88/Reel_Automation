@@ -27,6 +27,7 @@ type Config struct {
 	RenderProvider   string
 	MediaOutputDir   string
 	OpenAIAPIKey     string
+	OpenAITextModel  string
 	OpenAITTSModel   string
 	OpenAIImageModel string
 	FFmpegPath       string
@@ -71,6 +72,7 @@ func Load() (*Config, error) {
 		RenderProvider:   getEnv("RENDER_PROVIDER", "ffmpeg"),
 		MediaOutputDir:   getEnv("MEDIA_OUTPUT_DIR", defaultArtifactDir("generated-media")),
 		OpenAIAPIKey:     os.Getenv("OPENAI_API_KEY"),
+		OpenAITextModel:  getEnv("OPENAI_TEXT_MODEL", "gpt-4o-mini"),
 		OpenAITTSModel:   getEnv("OPENAI_TTS_MODEL", "gpt-4o-mini-tts"),
 		OpenAIImageModel: getEnv("OPENAI_IMAGE_MODEL", "gpt-image-1"),
 		FFmpegPath:       getEnv("FFMPEG_PATH", "ffmpeg"),

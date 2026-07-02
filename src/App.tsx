@@ -23,6 +23,7 @@ export default function App() {
   const [approvals, setApprovals] = useState(() => storage.getApprovals());
   const [settings, setSettings] = useState(() => storage.getSettings());
   const [openTopicId, setOpenTopicId] = useState<string | null>(null);
+  const [signalsSubtitle, setSignalsSubtitle] = useState<string>('No live trend data connected yet');
 
   const navigate = useCallback((v: View) => {
     setView(v);
@@ -55,10 +56,11 @@ export default function App() {
         <Header
           view={view}
           region={settings.region}
+          subtitleOverride={view === 'signals' ? signalsSubtitle : undefined}
         />
 
         <div className="scroll-area">
-          {view === 'signals' && <SignalsPage />}
+          {view === 'signals' && <SignalsPage onStatusChange={setSignalsSubtitle} />}
           {view === 'scoring' && <ScoringPage />}
           {view === 'topics' && (
             <TopicsPage

@@ -20,9 +20,10 @@ const VIEW_META: Record<View, { title: string; sub: string }> = {
 interface Props {
   view: View;
   region?: string;
+  subtitleOverride?: string;
 }
 
-export function Header({ view, region = 'US · Global' }: Props) {
+export function Header({ view, region = 'US · Global', subtitleOverride }: Props) {
   const { title, sub } = VIEW_META[view];
   const [backendConnected, setBackendConnected] = useState(false);
 
@@ -42,7 +43,7 @@ export function Header({ view, region = 'US · Global' }: Props) {
     <header className="header">
       <div className="header-title-block">
         <div className="header-title">{title}</div>
-        <div className="header-subtitle">{sub}</div>
+        <div className="header-subtitle">{subtitleOverride || sub}</div>
       </div>
 
       <div className="header-chip">

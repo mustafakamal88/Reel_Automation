@@ -205,6 +205,46 @@ export interface TrendDiscoveryResponse {
   discovered_at: string;
 }
 
+export interface ReelContentGenerationRequest {
+  trend_candidate_id?: string;
+  trend_candidate?: TrendCandidate;
+  platform_targets: string[];
+  duration_target: string;
+  tone_style?: string;
+  language: string;
+  region: string;
+}
+
+export interface ReelContentPackage {
+  title: string;
+  hook: string;
+  script: string;
+  caption: string;
+  hashtags: string[];
+  thumbnail_brief: string;
+  instagram_caption: string;
+  tiktok_caption: string;
+  youtube_title: string;
+  youtube_description: string;
+  facebook_caption: string;
+  x_caption: string;
+  safety_grounding_notes: string[];
+  provider_metadata: {
+    provider: string;
+    model: string;
+    source_candidate_id: string;
+    source: string;
+    source_url?: string;
+    platform_targets: string[];
+    duration_target: string;
+    generated_at: string;
+  };
+}
+
+export interface ReelContentGenerationResponse {
+  package: ReelContentPackage;
+}
+
 export interface TopicScore {
   id: string;
   workspace_id: string;
@@ -351,6 +391,13 @@ export async function discoverTrendCandidates(params: { region?: string; languag
   if (params.limit) qs.set('limit', String(params.limit));
   const suffix = qs.toString() ? `?${qs.toString()}` : '';
   return apiFetch(`/api/trends/discover${suffix}`);
+}
+
+export async function generateReelScript(body: ReelContentGenerationRequest): Promise<ReelContentGenerationResponse> {
+  return apiFetch('/api/reels/generate-script', {
+    method: 'POST',
+    body: JSON.stringify(body),
+  });
 }
 
 export async function getTrends(status?: string): Promise<{ trend_items: TrendItem[] }> {
