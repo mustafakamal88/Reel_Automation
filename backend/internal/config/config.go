@@ -32,6 +32,12 @@ type Config struct {
 	FFmpegPath       string
 	FFprobePath      string
 
+	// Trend discovery. Provider credentials and provider selection stay
+	// server-side only; the browser receives status metadata and candidates.
+	TrendDiscoveryProvider string
+	TrendDiscoveryBaseURL  string
+	TrendDiscoveryTimeout  string
+
 	// Session / encryption
 	SessionSecret      string
 	TokenEncryptionKey string
@@ -69,6 +75,10 @@ func Load() (*Config, error) {
 		OpenAIImageModel: getEnv("OPENAI_IMAGE_MODEL", "gpt-image-1"),
 		FFmpegPath:       getEnv("FFMPEG_PATH", "ffmpeg"),
 		FFprobePath:      getEnv("FFPROBE_PATH", "ffprobe"),
+
+		TrendDiscoveryProvider: getEnv("TREND_DISCOVERY_PROVIDER", ""),
+		TrendDiscoveryBaseURL:  getEnv("TREND_DISCOVERY_BASE_URL", "https://trends.google.com/trending/rss"),
+		TrendDiscoveryTimeout:  getEnv("TREND_DISCOVERY_TIMEOUT", "10s"),
 
 		SessionSecret:      os.Getenv("SESSION_SECRET"),
 		TokenEncryptionKey: os.Getenv("TOKEN_ENCRYPTION_KEY"),

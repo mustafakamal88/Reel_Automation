@@ -179,6 +179,32 @@ export interface TrendItem {
   updated_at: string;
 }
 
+export interface TrendCandidate {
+  id: string;
+  source: string;
+  region: string;
+  language: string;
+  keyword: string;
+  title: string;
+  score: number;
+  velocity?: number;
+  discovered_at: string;
+  source_url?: string;
+  evidence?: string;
+  status: string;
+}
+
+export interface TrendDiscoveryResponse {
+  provider: string;
+  provider_url?: string;
+  provider_status: 'provider_not_configured' | 'ok' | 'no_data' | 'provider_error';
+  message?: string;
+  region: string;
+  language: string;
+  candidates: TrendCandidate[];
+  discovered_at: string;
+}
+
 export interface TopicScore {
   id: string;
   workspace_id: string;
@@ -316,6 +342,15 @@ export async function discoverTrends(trendSourceID: string): Promise<DiscoverTre
     method: 'POST',
     body: JSON.stringify({ trend_source_id: trendSourceID }),
   });
+}
+
+export async function discoverTrendCandidates(params: { region?: string; language?: string; limit?: number } = {}): Promise<TrendDiscoveryResponse> {
+  const qs = new URLSearchParams();
+  if (params.region) qs.set('region', params.region);
+  if (params.language) qs.set('language', params.language);
+  if (params.limit) qs.set('limit', String(params.limit));
+  const suffix = qs.toString() ? `?${qs.toString()}` : '';
+  return apiFetch(`/api/trends/discover${suffix}`);
 }
 
 export async function getTrends(status?: string): Promise<{ trend_items: TrendItem[] }> {

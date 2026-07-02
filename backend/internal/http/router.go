@@ -66,6 +66,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /api/trend-sources", s.handleListTrendSources)
 	mux.HandleFunc("POST /api/trend-sources", s.handleCreateTrendSource)
 
+	mux.HandleFunc("GET /api/trends/discover", s.handleDiscoverTrendCandidates)
 	mux.HandleFunc("POST /api/trends/discover", s.handleDiscoverTrends)
 	mux.HandleFunc("GET /api/trends", s.handleListTrends)
 

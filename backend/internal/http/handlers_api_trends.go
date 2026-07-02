@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"trendcortex/api/internal/models"
+	trenddiscovery "trendcortex/api/internal/trends"
 )
 
 // ── Trend sources ───────────────────────────────────────────────────────────
@@ -98,6 +99,38 @@ func (s *Server) handleCreateTrendSource(w http.ResponseWriter, r *http.Request)
 
 // ── Trend discovery ──────────────────────────────────────────────────────────
 
+// GET /api/trends/discover?region=US&language=en-US&limit=20
+func (s *Server) handleDiscoverTrendCandidates(w http.ResponseWriter, r *http.Request) {
+	limit := 20
+	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
+		if parsed, err := parsePositiveInt(raw); err == nil {
+			limit = parsed
+		}
+	}
+
+	timeout, err := time.ParseDuration(s.cfg.TrendDiscoveryTimeout)
+	if err != nil {
+		timeout = 10 * time.Second
+	}
+	discoverer := trenddiscovery.NewDiscoverer(trenddiscovery.Config{
+		Provider: s.cfg.TrendDiscoveryProvider,
+		BaseURL:  s.cfg.TrendDiscoveryBaseURL,
+		Timeout:  timeout,
+	}, nil)
+
+	result, err := discoverer.Discover(
+		r.Context(),
+		r.URL.Query().Get("region"),
+		r.URL.Query().Get("language"),
+		limit,
+	)
+	if err != nil && err != trenddiscovery.ErrProviderNotConfigured {
+		jsonOK(w, result)
+		return
+	}
+	jsonOK(w, result)
+}
+
 type discoverItemRequest struct {
 	Topic        string  `json:"topic"`
 	Description  string  `json:"description"`
@@ -106,8 +139,8 @@ type discoverItemRequest struct {
 }
 
 type discoverRequest struct {
-	TrendSourceID string                 `json:"trend_source_id"`
-	Items         []discoverItemRequest  `json:"items"`
+	TrendSourceID string                `json:"trend_source_id"`
+	Items         []discoverItemRequest `json:"items"`
 }
 
 // handleDiscoverTrends creates trend_items from explicit manual input only.
@@ -227,4 +260,18 @@ func (s *Server) handleListTrends(w http.ResponseWriter, r *http.Request) {
 	}
 
 	jsonOK(w, map[string]any{"trend_items": items})
+}
+
+func parsePositiveInt(raw string) (int, error) {
+	n := 0
+	for _, ch := range raw {
+		if ch < '0' || ch > '9' {
+			return 0, http.ErrNotSupported
+		}
+		n = n*10 + int(ch-'0')
+	}
+	if n <= 0 {
+		return 0, http.ErrNotSupported
+	}
+	return n, nil
 }
