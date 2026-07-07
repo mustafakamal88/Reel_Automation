@@ -83,6 +83,8 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /api/batches/{id}", s.handleGetDailyBatch)
 	mux.HandleFunc("GET /api/batches/{id}/reels", s.handleListBatchReels)
 	mux.HandleFunc("POST /api/batches/{id}/export", s.handleCreateExportJob)
+	mux.HandleFunc("POST /api/daily-package", s.handleCreateDailyPackage)
+	mux.HandleFunc("GET /api/daily-package/download", s.handleDownloadDailyPackage)
 
 	mux.HandleFunc("POST /api/reels/{id}/prepare-video-job", s.handlePrepareVideoJob)
 	mux.HandleFunc("POST /api/reels/{id}/render", s.handleRenderReel)

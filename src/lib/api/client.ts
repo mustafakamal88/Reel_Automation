@@ -429,6 +429,44 @@ export async function createDailyBatch(date?: string): Promise<CreateDailyBatchR
   });
 }
 
+export interface DailyPackageReelStatus {
+  rank: number;
+  candidate_id: string;
+  title: string;
+  source: string;
+  render_status: string;
+  render_notes?: string;
+  has_video: boolean;
+}
+
+export interface DailyPackageResponse {
+  status: 'ready' | 'ready_with_render_failures';
+  message: string;
+  date: string;
+  zip_filename: string;
+  download_url: string;
+  included_files: string[];
+  reels: DailyPackageReelStatus[];
+}
+
+export async function createDailyPackage(body: {
+  date?: string;
+  region?: string;
+  language?: string;
+  platform_targets?: string[];
+  duration_target?: string;
+  tone_style?: string;
+} = {}): Promise<DailyPackageResponse> {
+  return apiFetch('/api/daily-package', {
+    method: 'POST',
+    body: JSON.stringify(body),
+  });
+}
+
+export async function downloadDailyPackageZip(downloadURL: string, filename: string): Promise<void> {
+  return downloadZipPath(downloadURL, filename);
+}
+
 export async function getDailyBatches(): Promise<{ daily_batches: DailyBatchV2[] }> {
   return apiFetch('/api/batches');
 }

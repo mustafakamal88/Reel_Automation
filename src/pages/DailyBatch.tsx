@@ -1,208 +1,272 @@
 import { useState } from 'react';
-import { requestBatchZip, requestBatchPublish, ApiError } from '../lib/api/client';
+import {
+  ApiError,
+  createDailyPackage,
+  downloadDailyPackageZip,
+  type DailyPackageResponse,
+} from '../lib/api/client';
 
-type ActionState = 'idle' | 'pending' | 'done' | 'error';
+type ActionState = 'idle' | 'pending' | 'ready' | 'error';
+
+function errorMessage(err: unknown, fallback: string): string {
+  if (err instanceof ApiError) {
+    if (err.isBackendOffline) return 'Backend offline. Start the Go backend or check VITE_API_BASE_URL.';
+    return err.message;
+  }
+  if (err instanceof Error) return err.message;
+  return fallback;
+}
+
+function toneForRender(status: string): string {
+  if (status === 'completed') return 'var(--green)';
+  if (status === 'rendering') return 'var(--accent)';
+  if (status === 'provider_not_connected' || status === 'renderer_not_available') return '#eab86a';
+  return 'var(--red)';
+}
 
 export function DailyBatchPage() {
-  const [uploadState, setUploadState] = useState<ActionState>('idle');
-  const [uploadError, setUploadError] = useState<string | null>(null);
-  const [uploadJobIds, setUploadJobIds] = useState<string[]>([]);
-
-  const [zipState, setZipState] = useState<ActionState>('idle');
-  const [zipError, setZipError] = useState<string | null>(null);
-  const [zipJobId, setZipJobId] = useState<string | null>(null);
+  const [state, setState] = useState<ActionState>('idle');
+  const [downloadState, setDownloadState] = useState<ActionState>('idle');
+  const [error, setError] = useState<string | null>(null);
+  const [pkg, setPkg] = useState<DailyPackageResponse | null>(null);
 
   const today = new Date().toISOString().split('T')[0];
 
-  async function handleAutoUpload() {
-    setUploadState('pending');
-    setUploadError(null);
-    setUploadJobIds([]);
+  async function handleGenerateTodaySix() {
+    setState('pending');
+    setDownloadState('idle');
+    setError(null);
+    setPkg(null);
     try {
-      const res = await requestBatchPublish(today);
-      setUploadJobIds(res.job_ids ?? []);
-      setUploadState('done');
+      const res = await createDailyPackage({
+        date: today,
+        region: 'US',
+        language: 'en-US',
+        platform_targets: ['instagram', 'tiktok', 'youtube', 'facebook', 'x'],
+        duration_target: '30s',
+        tone_style: 'concise, factual, high-retention',
+      });
+      setPkg(res);
+      setState('ready');
     } catch (err) {
-      let msg = 'Publish request failed';
-      if (err instanceof ApiError) {
-        if (err.isBackendOffline) msg = 'Backend offline — run: cd backend && go run ./cmd/api';
-        else if (err.isNotImplemented) msg = 'Publish not yet implemented on backend (worker queue required).';
-        else msg = err.message;
-      } else if (err instanceof Error) {
-        msg = err.message;
-      }
-      setUploadError(msg);
-      setUploadState('error');
+      setError(errorMessage(err, 'Daily package generation failed'));
+      setState('error');
     }
   }
 
   async function handleDownloadZip() {
-    setZipState('pending');
-    setZipError(null);
-    setZipJobId(null);
+    if (!pkg) return;
+    setDownloadState('pending');
+    setError(null);
     try {
-      const res = await requestBatchZip(today);
-      setZipJobId(res.job_id ?? null);
-      setZipState('done');
+      await downloadDailyPackageZip(pkg.download_url, pkg.zip_filename);
+      setDownloadState('ready');
     } catch (err) {
-      let msg = 'ZIP request failed';
-      if (err instanceof ApiError) {
-        if (err.isBackendOffline) msg = 'Backend offline — run: cd backend && go run ./cmd/api';
-        else if (err.isNotImplemented) msg = 'ZIP creation not yet implemented on backend (worker queue required).';
-        else msg = err.message;
-      } else if (err instanceof Error) {
-        msg = err.message;
-      }
-      setZipError(msg);
-      setZipState('error');
+      setError(errorMessage(err, 'ZIP download failed'));
+      setDownloadState('error');
     }
   }
+
+  const renderFailures = pkg?.reels.filter((reel) => !reel.has_video) ?? [];
 
   return (
     <section className="page-section">
       <div className="int-section-header">
-        <div className="int-section-title">Daily Batch — {today}</div>
+        <div className="int-section-title">Today's 6 — {today}</div>
         <div className="int-section-sub">
-          Auto-upload to all connected platforms, or download a ZIP package for manual publishing.
+          Generate six real trend-backed reel packages and download one ZIP for manual publishing.
         </div>
       </div>
 
       <div className="security-inline-warning" style={{ marginBottom: 16 }}>
-        <span className="security-warning-icon">⚠</span>
+        <span className="security-warning-icon">!</span>
         <span>
-          <strong>Compliance required before publishing:</strong> AI-generated content disclosure,
-          no impersonation, no copyrighted music without rights, no fake engagement.
-          Human approval is required before auto-publish is enabled.
+          Platform auto-upload is disabled. Connect real OAuth accounts and add a human approval gate
+          before enabling publishing.
         </span>
       </div>
 
       <div style={{
         display: 'grid',
-        gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))',
-        gap: 14, marginBottom: 24,
+        gridTemplateColumns: 'minmax(320px, 420px) minmax(0, 1fr)',
+        gap: 14,
+        alignItems: 'start',
+        marginBottom: 24,
       }}>
-        {/* Auto-upload card */}
         <div className="settings-card" style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
           <div style={{ fontWeight: 700, fontSize: 15, color: 'var(--text-primary)' }}>
-            Auto-upload
+            Real daily package
           </div>
           <div style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.6 }}>
-            No uploads have been attempted. Connect accounts, configure provider keys,
-            and create real approved reels before requesting publish jobs.
+            Uses the configured real trend discovery provider, OpenAI script generation, and the real renderer
+            when available. No mock trends, fake videos, uploads, or seeded content are created.
           </div>
           <div style={{ fontSize: 11, color: 'var(--text-dim)', fontFamily: 'var(--font-mono)' }}>
-            POST /batches/{today}/publish
+            POST /api/daily-package
           </div>
           <button
-            className={`generate-btn${uploadState === 'done' ? ' done' : ' idle'}`}
-            onClick={handleAutoUpload}
-            disabled={uploadState === 'pending'}
+            className={`generate-btn${state === 'ready' ? ' done' : ' idle'}`}
+            onClick={handleGenerateTodaySix}
+            disabled={state === 'pending'}
             style={{ width: '100%' }}
           >
             <span className="generate-btn-dot" style={{
-              background: uploadState === 'done' ? 'var(--green)'
-                : uploadState === 'error' ? 'var(--red)'
+              background: state === 'ready' ? 'var(--green)'
+                : state === 'error' ? 'var(--red)'
                 : '#15121f',
             }} />
-            {uploadState === 'idle'    && 'Request upload jobs'}
-            {uploadState === 'pending' && 'Queuing jobs…'}
-            {uploadState === 'done'    && `Backend returned ${uploadJobIds.length} job(s)`}
-            {uploadState === 'error'   && 'Request failed'}
+            {state === 'idle' && "Generate Today's 6"}
+            {state === 'pending' && 'Generating 6 reels...'}
+            {state === 'ready' && 'Package ready'}
+            {state === 'error' && 'Generation failed'}
           </button>
-          {uploadError && (
-            <div style={{
-              fontSize: 11, color: 'var(--red)', lineHeight: 1.6,
-              background: 'rgba(232,115,107,0.08)', border: '1px solid rgba(232,115,107,0.25)',
-              borderRadius: 6, padding: '8px 10px',
-            }}>
-              {uploadError}
-            </div>
-          )}
-          {uploadState === 'done' && uploadJobIds.length > 0 && (
-            <div style={{ fontSize: 11, color: 'var(--green)', fontFamily: 'var(--font-mono)' }}>
-              Job IDs: {uploadJobIds.join(', ')}
-            </div>
-          )}
-          <div style={{ fontSize: 11, color: 'var(--text-dim)', lineHeight: 1.5 }}>
-            Requires: connected platform accounts · human approval gate · Go backend running
-          </div>
-        </div>
-
-        {/* Download ZIP card */}
-        <div className="settings-card" style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-          <div style={{ fontWeight: 700, fontSize: 15, color: 'var(--text-primary)' }}>
-            Download ZIP
-          </div>
-          <div style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.6 }}>
-            Build a ZIP only from real backend batch artifacts. If no real batch exists,
-            the backend returns an error instead of a fake package.
-          </div>
-          <div style={{ fontSize: 11, color: 'var(--text-dim)', fontFamily: 'var(--font-mono)' }}>
-            POST /batches/{today}/zip → poll GET /jobs/{'{jobID}'}
-          </div>
           <button
-            className={`generate-btn${zipState === 'done' ? ' done' : ' idle'}`}
+            className={`generate-btn${downloadState === 'ready' ? ' done' : ' idle'}`}
             onClick={handleDownloadZip}
-            disabled={zipState === 'pending'}
-            style={{ width: '100%' }}
+            disabled={!pkg || downloadState === 'pending'}
+            style={{
+              width: '100%',
+              opacity: pkg ? 1 : 0.55,
+              cursor: pkg ? 'pointer' : 'not-allowed',
+            }}
           >
             <span className="generate-btn-dot" style={{
-              background: zipState === 'done' ? 'var(--green)'
-                : zipState === 'error' ? 'var(--red)'
+              background: downloadState === 'ready' ? 'var(--green)'
+                : downloadState === 'error' ? 'var(--red)'
                 : '#15121f',
             }} />
-            {zipState === 'idle'    && 'Build ZIP package'}
-            {zipState === 'pending' && 'Building ZIP…'}
-            {zipState === 'done'    && 'ZIP job queued'}
-            {zipState === 'error'   && 'Request failed'}
+            {downloadState === 'pending' ? 'Downloading...' : 'Download ZIP'}
           </button>
-          {zipError && (
-            <div style={{
-              fontSize: 11, color: 'var(--red)', lineHeight: 1.6,
-              background: 'rgba(232,115,107,0.08)', border: '1px solid rgba(232,115,107,0.25)',
-              borderRadius: 6, padding: '8px 10px',
-            }}>
-              {zipError}
-            </div>
-          )}
-          {zipState === 'done' && zipJobId && (
+          {pkg && (
             <div style={{ fontSize: 11, color: 'var(--green)', fontFamily: 'var(--font-mono)' }}>
-              Job ID: {zipJobId} — poll GET /jobs/{zipJobId}
+              {pkg.zip_filename} · {pkg.included_files.length} file(s)
             </div>
           )}
-          <div style={{ fontSize: 11, color: 'var(--text-dim)', lineHeight: 1.5 }}>
-            ZIP includes: video.mp4 · thumbnail.jpg · title.txt · description.txt ·
-            hashtags.txt · captions.srt · platforms.json · compliance-checklist.json
+          {error && (
+            <div style={{
+              fontSize: 11,
+              color: 'var(--red)',
+              lineHeight: 1.6,
+              background: 'rgba(232,115,107,0.08)',
+              border: '1px solid rgba(232,115,107,0.25)',
+              borderRadius: 6,
+              padding: '8px 10px',
+            }}>
+              {error}
+            </div>
+          )}
+        </div>
+
+        <div className="settings-card" style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'center' }}>
+            <div style={{ fontWeight: 700, fontSize: 15, color: 'var(--text-primary)' }}>
+              Package status
+            </div>
+            <span style={{
+              fontSize: 10,
+              fontFamily: 'var(--font-mono)',
+              color: pkg?.status === 'ready' ? 'var(--green)' : 'var(--text-dim)',
+            }}>
+              {pkg?.status ?? (state === 'pending' ? 'generating' : 'not_started')}
+            </span>
           </div>
-        </div>
-      </div>
 
-      {/* Video list — empty state pending backend batch pipeline */}
-      <div className="settings-card" style={{ padding: 0, overflow: 'hidden' }}>
-        <div style={{
-          padding: '12px 16px', borderBottom: '1px solid var(--border-card)',
-          fontWeight: 600, fontSize: 13, color: 'var(--text-secondary)',
-          display: 'flex', alignItems: 'center', gap: 10,
-        }}>
-          Today's videos
-          <span style={{ fontSize: 10, fontFamily: 'var(--font-mono)', color: 'var(--text-dim)' }}>0 real videos</span>
-        </div>
-        <div className="empty-state" style={{ margin: 0, borderRadius: 0 }}>
-          <div className="empty-icon">BP</div>
-          <div className="empty-title">No batch runs yet.</div>
-          <div className="empty-desc">No uploads have been attempted. Connect accounts and configure provider keys first.</div>
-        </div>
-      </div>
+          {state === 'pending' && (
+            <div style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.6 }}>
+              Generating OpenAI script packages, attempting real renders, and writing the ZIP.
+            </div>
+          )}
 
-      <div style={{ marginTop: 16 }}>
-        <div style={{
-          fontSize: 11, color: 'var(--text-dim)', fontFamily: 'var(--font-mono)',
-          display: 'inline-flex', alignItems: 'center', gap: 6,
-          background: 'var(--bg-subtle)', border: '1px solid var(--border-strong)',
-          borderRadius: 4, padding: '3px 8px',
-        }}>
-          <span style={{ width: 5, height: 5, borderRadius: '50%', background: 'var(--text-dim)', display: 'inline-block' }} />
-          No batch ready — start the Go backend and run the batch generation pipeline
+          {!pkg && state !== 'pending' && (
+            <div className="empty-state" style={{ margin: 0 }}>
+              <div className="empty-icon">6</div>
+              <div className="empty-title">No daily ZIP generated yet.</div>
+              <div className="empty-desc">Run Generate Today's 6 to build the real package.</div>
+            </div>
+          )}
+
+          {pkg && (
+            <>
+              <div style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.6 }}>
+                {pkg.message}
+              </div>
+              {renderFailures.length > 0 && (
+                <div style={{
+                  fontSize: 11,
+                  color: '#eab86a',
+                  lineHeight: 1.6,
+                  background: 'rgba(234,184,106,0.08)',
+                  border: '1px solid rgba(234,184,106,0.25)',
+                  borderRadius: 6,
+                  padding: '8px 10px',
+                }}>
+                  Video rendering did not complete for reel(s): {renderFailures.map((reel) => reel.rank).join(', ')}.
+                  Text assets and trend evidence are included without fake video files.
+                </div>
+              )}
+              <div style={{ display: 'grid', gap: 8 }}>
+                {pkg.reels.map((reel) => (
+                  <div
+                    key={`${reel.rank}-${reel.candidate_id}`}
+                    style={{
+                      display: 'grid',
+                      gridTemplateColumns: '34px minmax(0, 1fr) auto',
+                      gap: 10,
+                      alignItems: 'center',
+                      border: '1px solid var(--border-card)',
+                      borderRadius: 6,
+                      padding: '9px 10px',
+                      background: 'var(--bg-subtle)',
+                    }}
+                  >
+                    <div style={{
+                      width: 24,
+                      height: 24,
+                      borderRadius: 6,
+                      display: 'grid',
+                      placeItems: 'center',
+                      fontFamily: 'var(--font-mono)',
+                      fontSize: 11,
+                      color: 'var(--text-primary)',
+                      background: '#15121f',
+                    }}>
+                      {reel.rank}
+                    </div>
+                    <div style={{ minWidth: 0 }}>
+                      <div style={{
+                        fontSize: 12,
+                        fontWeight: 650,
+                        color: 'var(--text-primary)',
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap',
+                      }}>
+                        {reel.title}
+                      </div>
+                      <div style={{
+                        fontSize: 10,
+                        color: 'var(--text-dim)',
+                        fontFamily: 'var(--font-mono)',
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap',
+                      }}>
+                        {reel.source} · {reel.candidate_id}
+                      </div>
+                    </div>
+                    <div style={{
+                      fontSize: 10,
+                      fontFamily: 'var(--font-mono)',
+                      color: toneForRender(reel.render_status),
+                      whiteSpace: 'nowrap',
+                    }}>
+                      {reel.has_video ? 'video.mp4' : reel.render_status}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
         </div>
       </div>
     </section>
