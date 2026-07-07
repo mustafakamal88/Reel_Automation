@@ -1,4 +1,5 @@
 import type { ApprovalStatus } from '../types';
+import { DailyBatchPage } from './DailyBatch';
 
 interface Props {
   generated: boolean;
@@ -9,13 +10,5 @@ interface Props {
 }
 
 export function TopicsPage(_props: Props) {
-  return (
-    <section className="page-section">
-      <div className="empty-state">
-        <div className="empty-icon">T6</div>
-        <div className="empty-title">No real reels generated yet.</div>
-        <div className="empty-desc">Run the Phase 4D render + ZIP test to generate the first local export.</div>
-      </div>
-    </section>
-  );
+  return <DailyBatchPage />;
 }
