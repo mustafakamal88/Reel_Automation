@@ -2,10 +2,13 @@ package storage
 
 import (
 	"archive/zip"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 )
 
 const DailyReelsPackageFilename = "daily-reels-package.zip"
@@ -32,8 +35,11 @@ type DailyPackageReelMetadata struct {
 	SourceURL       string   `json:"source_url,omitempty"`
 	RenderStatus    string   `json:"render_status"`
 	RenderNotes     string   `json:"render_notes,omitempty"`
+	RenderError     string   `json:"render_error,omitempty"`
 	HasVideo        bool     `json:"has_video"`
 	HasThumbnail    bool     `json:"has_thumbnail"`
+	VideoFile       string   `json:"video_file,omitempty"`
+	ThumbnailFile   string   `json:"thumbnail_file,omitempty"`
 	PlatformTargets []string `json:"platform_targets"`
 	GeneratedAt     string   `json:"generated_at"`
 	Provider        string   `json:"provider,omitempty"`
@@ -41,6 +47,9 @@ type DailyPackageReelMetadata struct {
 	VideoFormat     string   `json:"video_format,omitempty"`
 	VideoWidth      int      `json:"video_width,omitempty"`
 	VideoHeight     int      `json:"video_height,omitempty"`
+	DurationSeconds *float64 `json:"duration_seconds,omitempty"`
+	Resolution      string   `json:"resolution,omitempty"`
+	RendererVersion string   `json:"renderer_version,omitempty"`
 	ThumbnailFormat string   `json:"thumbnail_format,omitempty"`
 	ThumbnailWidth  int      `json:"thumbnail_width,omitempty"`
 	ThumbnailHeight int      `json:"thumbnail_height,omitempty"`
@@ -61,13 +70,19 @@ type DailyPackageReelContent struct {
 }
 
 type DailyPackageManifestReel struct {
-	Rank         int    `json:"rank"`
-	CandidateID  string `json:"candidate_id"`
-	Title        string `json:"title"`
-	Source       string `json:"source"`
-	RenderStatus string `json:"render_status"`
-	RenderNotes  string `json:"render_notes,omitempty"`
-	HasVideo     bool   `json:"has_video"`
+	Rank            int      `json:"rank"`
+	CandidateID     string   `json:"candidate_id"`
+	Title           string   `json:"title"`
+	Source          string   `json:"source"`
+	RenderStatus    string   `json:"render_status"`
+	RenderNotes     string   `json:"render_notes,omitempty"`
+	RenderError     string   `json:"render_error,omitempty"`
+	HasVideo        bool     `json:"has_video"`
+	VideoFile       string   `json:"video_file,omitempty"`
+	ThumbnailFile   string   `json:"thumbnail_file,omitempty"`
+	DurationSeconds *float64 `json:"duration_seconds,omitempty"`
+	Resolution      string   `json:"resolution,omitempty"`
+	RendererVersion string   `json:"renderer_version,omitempty"`
 }
 
 type DailyPackageManifest struct {
@@ -138,6 +153,13 @@ func BuildDailyReelsPackageZip(exportDir string, reels []DailyPackageReelContent
 			}
 			includedFiles = append(includedFiles, prefix+"video.mp4")
 		}
+		if reel.ThumbnailSrcPath != "" {
+			if err = addDailyPackageFileToZip(zw, reel.ThumbnailSrcPath, prefix+"thumbnail.png"); err != nil {
+				err = fmt.Errorf("add thumbnail for reel %02d: %w", reel.Rank, err)
+				return
+			}
+			includedFiles = append(includedFiles, prefix+"thumbnail.png")
+		}
 	}
 
 	manifest.IncludedFiles = append(append([]string{}, includedFiles...), "manifest.json")
@@ -146,6 +168,73 @@ func BuildDailyReelsPackageZip(exportDir string, reels []DailyPackageReelContent
 	}
 	includedFiles = append(includedFiles, "manifest.json")
 	return
+}
+
+func ReadDailyReelsPackageZip(zipPath string) ([]DailyPackageReelContent, DailyPackageManifest, error) {
+	zr, err := zip.OpenReader(zipPath)
+	if err != nil {
+		return nil, DailyPackageManifest{}, err
+	}
+	defer zr.Close()
+
+	reelsByRank := map[int]*DailyPackageReelContent{}
+	var manifest DailyPackageManifest
+	for _, f := range zr.File {
+		if f.Name == "manifest.json" {
+			if err := readZipJSON(f, &manifest); err != nil {
+				return nil, DailyPackageManifest{}, fmt.Errorf("read manifest.json: %w", err)
+			}
+			continue
+		}
+		if !strings.HasPrefix(f.Name, "reel-") {
+			continue
+		}
+		parts := strings.SplitN(f.Name, "/", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		rank, err := strconv.Atoi(strings.TrimPrefix(parts[0], "reel-"))
+		if err != nil || rank <= 0 {
+			continue
+		}
+		reel := reelsByRank[rank]
+		if reel == nil {
+			reel = &DailyPackageReelContent{Rank: rank}
+			reelsByRank[rank] = reel
+		}
+		switch parts[1] {
+		case "script.txt":
+			reel.Script, err = readZipText(f)
+		case "caption.txt":
+			reel.Caption, err = readZipText(f)
+		case "description.txt":
+			reel.Description, err = readZipText(f)
+		case "hashtags.txt":
+			reel.Hashtags, err = readZipText(f)
+		case "thumbnail_brief.txt":
+			reel.ThumbnailBrief, err = readZipText(f)
+		case "platform_posts.json":
+			err = readZipJSON(f, &reel.PlatformPosts)
+		case "trend_evidence.json":
+			err = readZipJSON(f, &reel.TrendEvidence)
+		case "metadata.json":
+			err = readZipJSON(f, &reel.Metadata)
+		}
+		if err != nil {
+			return nil, DailyPackageManifest{}, fmt.Errorf("read %s: %w", f.Name, err)
+		}
+	}
+
+	reels := make([]DailyPackageReelContent, 0, len(reelsByRank))
+	for rank := 1; rank <= len(reelsByRank); rank++ {
+		if reel := reelsByRank[rank]; reel != nil {
+			if reel.Metadata.Rank == 0 {
+				reel.Metadata.Rank = rank
+			}
+			reels = append(reels, *reel)
+		}
+	}
+	return reels, manifest, nil
 }
 
 func addDailyPackageFileToZip(zw *zip.Writer, srcPath, name string) error {
@@ -160,4 +249,23 @@ func addDailyPackageFileToZip(zw *zip.Writer, srcPath, name string) error {
 	}
 	_, err = io.Copy(fw, src)
 	return err
+}
+
+func readZipText(f *zip.File) (string, error) {
+	rc, err := f.Open()
+	if err != nil {
+		return "", err
+	}
+	defer rc.Close()
+	b, err := io.ReadAll(rc)
+	return string(b), err
+}
+
+func readZipJSON(f *zip.File, dst any) error {
+	rc, err := f.Open()
+	if err != nil {
+		return err
+	}
+	defer rc.Close()
+	return json.NewDecoder(rc).Decode(dst)
 }

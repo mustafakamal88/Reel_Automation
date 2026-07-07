@@ -3,6 +3,7 @@ package renderer
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 )
@@ -93,6 +94,45 @@ func TestRenderReel_NoFakeThumbnailWhenProviderMissing(t *testing.T) {
 		t.Fatalf("status = %q, want %q", res.Status, StatusProviderNotConnected)
 	}
 	assertNoFakeMedia(t, base)
+}
+
+func TestRenderSimpleTextReelProducesArtifacts(t *testing.T) {
+	if _, err := exec.LookPath("ffmpeg"); err != nil {
+		t.Skip("ffmpeg not available")
+	}
+	if _, err := exec.LookPath("ffprobe"); err != nil {
+		t.Skip("ffprobe not available")
+	}
+
+	base := t.TempDir()
+	res := RenderSimpleTextReel(context.Background(), Config{
+		OutputDir:   base,
+		FFmpegPath:  "ffmpeg",
+		FFprobePath: "ffprobe",
+	}, ReelInput{
+		WorkspaceID:    "workspace-1",
+		ReelPlanID:     "daily-package-reel-01",
+		Title:          "A Real Renderer Test",
+		Script:         "This is a controlled single reel render with readable overlay text.",
+		Description:    "No stock footage is used.",
+		ThumbnailBrief: "Simple generated visual background",
+	})
+
+	if res.Status != StatusCompleted {
+		t.Fatalf("status = %q notes = %q", res.Status, res.Notes)
+	}
+	if !fileExists(res.VideoPath) {
+		t.Fatalf("video artifact missing: %s", res.VideoPath)
+	}
+	if !fileExists(res.ThumbnailPath) {
+		t.Fatalf("thumbnail artifact missing: %s", res.ThumbnailPath)
+	}
+	if res.VideoWidth != VideoWidth || res.VideoHeight != VideoHeight {
+		t.Fatalf("resolution = %dx%d, want %dx%d", res.VideoWidth, res.VideoHeight, VideoWidth, VideoHeight)
+	}
+	if res.RendererVersion != SimpleRendererVersion {
+		t.Fatalf("renderer version = %q, want %q", res.RendererVersion, SimpleRendererVersion)
+	}
 }
 
 func assertNoFakeMedia(t *testing.T, base string) {

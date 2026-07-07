@@ -1,8 +1,11 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   ApiError,
   createDailyPackage,
   downloadDailyPackageZip,
+  getDailyPackageRenderJob,
+  renderDailyPackageReel,
+  type DailyPackageRenderJob,
   type DailyPackageResponse,
 } from '../lib/api/client';
 
@@ -18,7 +21,7 @@ function errorMessage(err: unknown, fallback: string): string {
 }
 
 function toneForRender(status: string): string {
-  if (status === 'completed') return 'var(--green)';
+  if (status === 'completed' || status === 'rendered') return 'var(--green)';
   if (status === 'rendering') return 'var(--accent)';
   if (status === 'provider_not_connected' || status === 'renderer_not_available') return '#eab86a';
   return 'var(--red)';
@@ -29,12 +32,16 @@ export function DailyBatchPage() {
   const [downloadState, setDownloadState] = useState<ActionState>('idle');
   const [error, setError] = useState<string | null>(null);
   const [pkg, setPkg] = useState<DailyPackageResponse | null>(null);
+  const [renderJob, setRenderJob] = useState<DailyPackageRenderJob | null>(null);
+  const [renderState, setRenderState] = useState<ActionState>('idle');
 
   const today = new Date().toISOString().split('T')[0];
 
   async function handleGenerateTodaySix() {
     setState('pending');
     setDownloadState('idle');
+    setRenderState('idle');
+    setRenderJob(null);
     setError(null);
     setPkg(null);
     try {
@@ -67,7 +74,52 @@ export function DailyBatchPage() {
     }
   }
 
+  async function handleRenderReel01() {
+    if (!pkg) return;
+    setRenderState('pending');
+    setError(null);
+    try {
+      const job = await renderDailyPackageReel('reel-01');
+      setRenderJob(job);
+    } catch (err) {
+      setError(errorMessage(err, 'Render failed to start'));
+      setRenderState('error');
+    }
+  }
+
+  useEffect(() => {
+    if (!renderJob || renderJob.status !== 'rendering') return undefined;
+    let cancelled = false;
+    const timer = window.setInterval(async () => {
+      try {
+        const job = await getDailyPackageRenderJob(renderJob.id);
+        if (cancelled) return;
+        setRenderJob(job);
+        if (job.status === 'completed') {
+          if (job.package) setPkg(job.package);
+          setRenderState('ready');
+          window.clearInterval(timer);
+        }
+        if (job.status === 'failed') {
+          setRenderState('error');
+          setError(job.render_error || job.message);
+          window.clearInterval(timer);
+        }
+      } catch (err) {
+        if (cancelled) return;
+        setRenderState('error');
+        setError(errorMessage(err, 'Render status check failed'));
+        window.clearInterval(timer);
+      }
+    }, 2500);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [renderJob]);
+
   const renderFailures = pkg?.reels.filter((reel) => !reel.has_video) ?? [];
+  const reel01 = pkg?.reels.find((reel) => reel.rank === 1);
 
   return (
     <section className="page-section">
@@ -137,6 +189,32 @@ export function DailyBatchPage() {
             }} />
             {downloadState === 'pending' ? 'Downloading...' : 'Download ZIP'}
           </button>
+          <button
+            className={`generate-btn${renderState === 'ready' ? ' done' : ' idle'}`}
+            onClick={handleRenderReel01}
+            disabled={!pkg || renderState === 'pending' || reel01?.has_video}
+            style={{
+              width: '100%',
+              opacity: pkg && !reel01?.has_video ? 1 : 0.55,
+              cursor: pkg && !reel01?.has_video ? 'pointer' : 'not-allowed',
+            }}
+          >
+            <span className="generate-btn-dot" style={{
+              background: renderState === 'ready' ? 'var(--green)'
+                : renderState === 'error' ? 'var(--red)'
+                : renderState === 'pending' ? 'var(--accent)'
+                : '#15121f',
+            }} />
+            {renderState === 'pending' && 'Rendering reel-01...'}
+            {renderState === 'ready' && 'reel-01 rendered'}
+            {renderState === 'error' && 'Render failed'}
+            {renderState === 'idle' && (reel01?.has_video ? 'reel-01 rendered' : 'Render reel-01')}
+          </button>
+          {renderJob && (
+            <div style={{ fontSize: 11, color: renderState === 'error' ? 'var(--red)' : 'var(--text-dim)', fontFamily: 'var(--font-mono)', lineHeight: 1.5 }}>
+              {renderJob.status} · {renderJob.message}
+            </div>
+          )}
           {pkg && (
             <div style={{ fontSize: 11, color: 'var(--green)', fontFamily: 'var(--font-mono)' }}>
               {pkg.zip_filename} · {pkg.included_files.length} file(s)
@@ -173,7 +251,7 @@ export function DailyBatchPage() {
 
           {state === 'pending' && (
             <div style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.6 }}>
-              Generating OpenAI script packages, attempting real renders, and writing the ZIP.
+              Generating OpenAI script packages and writing the ZIP. Rendering stays deferred until you start reel-01.
             </div>
           )}
 
@@ -251,7 +329,10 @@ export function DailyBatchPage() {
                         textOverflow: 'ellipsis',
                         whiteSpace: 'nowrap',
                       }}>
-                        {reel.source} · {reel.candidate_id}
+                      {reel.source} · {reel.candidate_id}
+                        {reel.has_video && reel.resolution && (
+                          <> · {reel.resolution}{reel.duration_seconds ? ` · ${Math.round(reel.duration_seconds)}s` : ''}</>
+                        )}
                       </div>
                     </div>
                     <div style={{
@@ -260,7 +341,7 @@ export function DailyBatchPage() {
                       color: toneForRender(reel.render_status),
                       whiteSpace: 'nowrap',
                     }}>
-                      {reel.has_video ? 'video.mp4' : reel.render_status}
+                      {reel.has_video ? (reel.video_file ?? 'video.mp4') : reel.render_status}
                     </div>
                   </div>
                 ))}

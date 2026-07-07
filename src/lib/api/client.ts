@@ -436,7 +436,13 @@ export interface DailyPackageReelStatus {
   source: string;
   render_status: string;
   render_notes?: string;
+  render_error?: string;
   has_video: boolean;
+  video_file?: string;
+  thumbnail_file?: string;
+  duration_seconds?: number;
+  resolution?: string;
+  renderer_version?: string;
 }
 
 export interface DailyPackageResponse {
@@ -465,6 +471,26 @@ export async function createDailyPackage(body: {
 
 export async function downloadDailyPackageZip(downloadURL: string, filename: string): Promise<void> {
   return downloadZipPath(downloadURL, filename);
+}
+
+export interface DailyPackageRenderJob {
+  id: string;
+  reel_id: string;
+  status: 'rendering' | 'completed' | 'failed';
+  render_status: 'rendered' | 'failed' | 'not_attempted' | string;
+  render_error?: string;
+  message: string;
+  started_at: string;
+  completed_at?: string;
+  package?: DailyPackageResponse;
+}
+
+export async function renderDailyPackageReel(reelID: string): Promise<DailyPackageRenderJob> {
+  return apiFetch(`/api/daily-package/reels/${encodeURIComponent(reelID)}/render`, { method: 'POST' });
+}
+
+export async function getDailyPackageRenderJob(jobID: string): Promise<DailyPackageRenderJob> {
+  return apiFetch(`/api/daily-package/render-jobs/${encodeURIComponent(jobID)}`);
 }
 
 export async function getDailyBatches(): Promise<{ daily_batches: DailyBatchV2[] }> {

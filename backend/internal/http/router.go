@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
+	"sync"
 	"trendcortex/api/internal/audit"
 	"trendcortex/api/internal/config"
 	"trendcortex/api/internal/content"
@@ -21,11 +22,14 @@ type Server struct {
 	audit    *audit.Logger
 	content  content.Generator
 	discover func(ctx context.Context, region, language string, limit int) (trenddiscovery.DiscoverResult, error)
+
+	dailyRenderMu   sync.Mutex
+	dailyRenderJobs map[string]dailyPackageRenderJob
 }
 
 // NewServer constructs the Server with all dependencies.
 func NewServer(cfg *config.Config, db *database.DB, reg oauth.Registry, al *audit.Logger) *Server {
-	return &Server{cfg: cfg, db: db, registry: reg, audit: al}
+	return &Server{cfg: cfg, db: db, registry: reg, audit: al, dailyRenderJobs: map[string]dailyPackageRenderJob{}}
 }
 
 // Routes returns the root http.Handler with all routes registered.
@@ -85,6 +89,8 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /api/batches/{id}/export", s.handleCreateExportJob)
 	mux.HandleFunc("POST /api/daily-package", s.handleCreateDailyPackage)
 	mux.HandleFunc("GET /api/daily-package/download", s.handleDownloadDailyPackage)
+	mux.HandleFunc("POST /api/daily-package/reels/{id}/render", s.handleRenderDailyPackageReel)
+	mux.HandleFunc("GET /api/daily-package/render-jobs/{id}", s.handleGetDailyPackageRenderJob)
 
 	mux.HandleFunc("POST /api/reels/{id}/prepare-video-job", s.handlePrepareVideoJob)
 	mux.HandleFunc("POST /api/reels/{id}/render", s.handleRenderReel)
