@@ -1,6 +1,8 @@
 package content
 
 import (
+	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -80,6 +82,79 @@ func TestBuildPromptNoMockDemoSeededTrendStrings(t *testing.T) {
 	for _, forbidden := range []string{"demo trend", "mock trend", "seeded trend"} {
 		if strings.Contains(strings.ToLower(prompt), forbidden) {
 			t.Fatalf("prompt contains forbidden fixture string %q", forbidden)
+		}
+	}
+}
+
+func TestParseReelContentPackageAcceptsHashtagArray(t *testing.T) {
+	pkg, err := parseReelContentPackage(`{
+		"title": "Title",
+		"hook": "Hook",
+		"script": "Script",
+		"caption": "Caption",
+		"hashtags": [" #One ", "#two,#three", "two"],
+		"thumbnail_brief": "Thumbnail",
+		"instagram_caption": "Instagram",
+		"tiktok_caption": "TikTok",
+		"youtube_title": "YouTube",
+		"youtube_description": "Description",
+		"facebook_caption": "Facebook",
+		"x_caption": "X",
+		"safety_grounding_notes": ["Grounded"]
+	}`)
+	if err != nil {
+		t.Fatalf("parseReelContentPackage returned error: %v", err)
+	}
+	want := []string{"#One", "#two", "#three"}
+	if !reflect.DeepEqual(pkg.Hashtags, want) {
+		t.Fatalf("hashtags = %#v, want %#v", pkg.Hashtags, want)
+	}
+}
+
+func TestParseReelContentPackageAcceptsHashtagString(t *testing.T) {
+	pkg, err := parseReelContentPackage(`{
+		"title": "Title",
+		"hook": "Hook",
+		"script": "Script",
+		"caption": "Caption",
+		"hashtags": "#one #two #three",
+		"thumbnail_brief": "Thumbnail",
+		"instagram_caption": "Instagram",
+		"tiktok_caption": "TikTok",
+		"youtube_title": "YouTube",
+		"youtube_description": "Description",
+		"facebook_caption": "Facebook",
+		"x_caption": "X",
+		"safety_grounding_notes": ["Grounded"]
+	}`)
+	if err != nil {
+		t.Fatalf("parseReelContentPackage returned error: %v", err)
+	}
+	want := []string{"#one", "#two", "#three"}
+	if !reflect.DeepEqual(pkg.Hashtags, want) {
+		t.Fatalf("hashtags = %#v, want %#v", pkg.Hashtags, want)
+	}
+}
+
+func TestParseReelContentPackageRejectsInvalidJSON(t *testing.T) {
+	_, err := parseReelContentPackage(`{"title":`)
+	if err == nil {
+		t.Fatal("expected invalid JSON error")
+	}
+}
+
+func TestReelContentResponseFormatRequiresHashtagArray(t *testing.T) {
+	body := map[string]any{
+		"response_format": reelContentResponseFormat(),
+	}
+	payload, err := json.Marshal(body)
+	if err != nil {
+		t.Fatalf("Marshal returned error: %v", err)
+	}
+	schema := string(payload)
+	for _, want := range []string{`"type":"json_schema"`, `"hashtags":{"items":{"type":"string"},"type":"array"}`} {
+		if !strings.Contains(schema, want) {
+			t.Fatalf("schema %s does not contain %s", schema, want)
 		}
 	}
 }

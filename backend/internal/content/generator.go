@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strings"
 	"time"
+	"unicode"
 
 	"trendcortex/api/internal/models"
 )
@@ -65,10 +66,8 @@ func (g OpenAIGenerator) Generate(ctx context.Context, req GenerateRequest) (mod
 			},
 			{"role": "user", "content": prompt},
 		},
-		"temperature": 0.6,
-		"response_format": map[string]string{
-			"type": "json_object",
-		},
+		"temperature":     0.6,
+		"response_format": reelContentResponseFormat(),
 	}
 
 	payload, err := json.Marshal(body)
@@ -113,8 +112,8 @@ func (g OpenAIGenerator) Generate(ctx context.Context, req GenerateRequest) (mod
 		return models.ReelContentPackage{}, errors.New("OpenAI text generation response did not include message content")
 	}
 
-	var pkg models.ReelContentPackage
-	if err := json.Unmarshal([]byte(parsed.Choices[0].Message.Content), &pkg); err != nil {
+	pkg, err := parseReelContentPackage(parsed.Choices[0].Message.Content)
+	if err != nil {
 		return models.ReelContentPackage{}, fmt.Errorf("OpenAI text generation JSON parse failed: %w", err)
 	}
 	pkg.ProviderMetadata = metadata(req, model)
@@ -181,6 +180,9 @@ func buildPrompt(req GenerateRequest) (string, error) {
 			"instagram_caption", "tiktok_caption", "youtube_title", "youtube_description",
 			"facebook_caption", "x_caption", "safety_grounding_notes",
 		},
+		"field_contract": map[string]string{
+			"hashtags": "JSON array of hashtag strings only, never a single string. Example: [\"#one\", \"#two\", \"#three\"]",
+		},
 		"grounding_rules": []string{
 			"Treat the candidate title/keyword as the topic.",
 			"Use candidate evidence and source_url only as the cited grounding context.",
@@ -194,6 +196,138 @@ func buildPrompt(req GenerateRequest) (string, error) {
 		return "", err
 	}
 	return string(out), nil
+}
+
+type reelContentPackageOpenAI struct {
+	Title              string                      `json:"title"`
+	Hook               string                      `json:"hook"`
+	Script             string                      `json:"script"`
+	Caption            string                      `json:"caption"`
+	Hashtags           flexibleHashtags            `json:"hashtags"`
+	ThumbnailBrief     string                      `json:"thumbnail_brief"`
+	InstagramCaption   string                      `json:"instagram_caption"`
+	TikTokCaption      string                      `json:"tiktok_caption"`
+	YouTubeTitle       string                      `json:"youtube_title"`
+	YouTubeDescription string                      `json:"youtube_description"`
+	FacebookCaption    string                      `json:"facebook_caption"`
+	XCaption           string                      `json:"x_caption"`
+	SafetyGrounding    []string                    `json:"safety_grounding_notes"`
+	ProviderMetadata   models.ReelProviderMetadata `json:"provider_metadata"`
+}
+
+type flexibleHashtags []string
+
+func (h *flexibleHashtags) UnmarshalJSON(data []byte) error {
+	var tags []string
+	if err := json.Unmarshal(data, &tags); err == nil {
+		*h = normalizeHashtags(tags)
+		return nil
+	}
+
+	var tagString string
+	if err := json.Unmarshal(data, &tagString); err != nil {
+		return err
+	}
+	*h = normalizeHashtagString(tagString)
+	return nil
+}
+
+func parseReelContentPackage(content string) (models.ReelContentPackage, error) {
+	var openAI reelContentPackageOpenAI
+	if err := json.Unmarshal([]byte(content), &openAI); err != nil {
+		return models.ReelContentPackage{}, err
+	}
+	return models.ReelContentPackage{
+		Title:              openAI.Title,
+		Hook:               openAI.Hook,
+		Script:             openAI.Script,
+		Caption:            openAI.Caption,
+		Hashtags:           []string(openAI.Hashtags),
+		ThumbnailBrief:     openAI.ThumbnailBrief,
+		InstagramCaption:   openAI.InstagramCaption,
+		TikTokCaption:      openAI.TikTokCaption,
+		YouTubeTitle:       openAI.YouTubeTitle,
+		YouTubeDescription: openAI.YouTubeDescription,
+		FacebookCaption:    openAI.FacebookCaption,
+		XCaption:           openAI.XCaption,
+		SafetyGrounding:    openAI.SafetyGrounding,
+		ProviderMetadata:   openAI.ProviderMetadata,
+	}, nil
+}
+
+func normalizeHashtags(tags []string) []string {
+	out := make([]string, 0, len(tags))
+	seen := map[string]bool{}
+	for _, tag := range tags {
+		out = appendHashtags(out, seen, tag)
+	}
+	return out
+}
+
+func normalizeHashtagString(tags string) []string {
+	return appendHashtags(nil, map[string]bool{}, tags)
+}
+
+func appendHashtags(out []string, seen map[string]bool, tags string) []string {
+	fields := strings.FieldsFunc(tags, func(r rune) bool {
+		return unicode.IsSpace(r) || r == ','
+	})
+	for _, field := range fields {
+		tag := strings.Trim(field, "\"'`[](){}.,;:")
+		if tag == "" {
+			continue
+		}
+		if !strings.HasPrefix(tag, "#") {
+			tag = "#" + tag
+		}
+		key := strings.ToLower(tag)
+		if seen[key] {
+			continue
+		}
+		out = append(out, tag)
+		seen[key] = true
+	}
+	return out
+}
+
+func reelContentResponseFormat() map[string]any {
+	stringSchema := map[string]any{"type": "string"}
+	stringArraySchema := map[string]any{
+		"type":  "array",
+		"items": stringSchema,
+	}
+	properties := map[string]any{
+		"title":                  stringSchema,
+		"hook":                   stringSchema,
+		"script":                 stringSchema,
+		"caption":                stringSchema,
+		"hashtags":               stringArraySchema,
+		"thumbnail_brief":        stringSchema,
+		"instagram_caption":      stringSchema,
+		"tiktok_caption":         stringSchema,
+		"youtube_title":          stringSchema,
+		"youtube_description":    stringSchema,
+		"facebook_caption":       stringSchema,
+		"x_caption":              stringSchema,
+		"safety_grounding_notes": stringArraySchema,
+	}
+	return map[string]any{
+		"type": "json_schema",
+		"json_schema": map[string]any{
+			"name":   "reel_content_package",
+			"strict": true,
+			"schema": map[string]any{
+				"type":                 "object",
+				"additionalProperties": false,
+				"properties":           properties,
+				"required": []string{
+					"title", "hook", "script", "caption", "hashtags", "thumbnail_brief",
+					"instagram_caption", "tiktok_caption", "youtube_title", "youtube_description",
+					"facebook_caption", "x_caption", "safety_grounding_notes",
+				},
+			},
+		},
+	}
 }
 
 func metadata(req GenerateRequest, model string) models.ReelProviderMetadata {
