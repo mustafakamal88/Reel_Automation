@@ -213,6 +213,12 @@ export function DailyBatchPage() {
           {renderJob && (
             <div style={{ fontSize: 11, color: renderState === 'error' ? 'var(--red)' : 'var(--text-dim)', fontFamily: 'var(--font-mono)', lineHeight: 1.5 }}>
               {renderJob.status} · {renderJob.message}
+              {renderJob.render_error && (
+                <>
+                  <br />
+                  render_error: {renderJob.render_error}
+                </>
+              )}
             </div>
           )}
           {pkg && (
@@ -334,6 +340,18 @@ export function DailyBatchPage() {
                           <> · {reel.resolution}{reel.duration_seconds ? ` · ${Math.round(reel.duration_seconds)}s` : ''}</>
                         )}
                       </div>
+                      {reel.render_error && (
+                        <div style={{
+                          fontSize: 10,
+                          color: 'var(--red)',
+                          fontFamily: 'var(--font-mono)',
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          whiteSpace: 'nowrap',
+                        }}>
+                          render_error: {reel.render_error}
+                        </div>
+                      )}
                     </div>
                     <div style={{
                       fontSize: 10,

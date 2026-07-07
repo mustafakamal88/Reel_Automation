@@ -101,18 +101,28 @@ func BuildDailyReelsPackageZip(exportDir string, reels []DailyPackageReelContent
 	}
 	zipPath = filepath.Join(exportDir, DailyReelsPackageFilename)
 
-	f, err := os.Create(zipPath)
+	f, err := os.CreateTemp(exportDir, "daily-reels-package-*.zip.tmp")
 	if err != nil {
-		return "", nil, fmt.Errorf("storage: create daily package zip: %w", err)
+		return "", nil, fmt.Errorf("storage: create daily package zip temp file: %w", err)
 	}
+	tmpPath := f.Name()
 	zw := zip.NewWriter(f)
 	defer func() {
 		if closeErr := zw.Close(); err == nil {
 			err = closeErr
 		}
-		f.Close()
+		if closeErr := f.Close(); err == nil {
+			err = closeErr
+		}
 		if err != nil {
-			os.Remove(zipPath)
+			os.Remove(tmpPath)
+			zipPath = ""
+			includedFiles = nil
+			return
+		}
+		if renameErr := os.Rename(tmpPath, zipPath); renameErr != nil {
+			os.Remove(tmpPath)
+			err = fmt.Errorf("storage: replace daily package zip: %w", renameErr)
 			zipPath = ""
 			includedFiles = nil
 		}
