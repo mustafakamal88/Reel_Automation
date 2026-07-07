@@ -549,9 +549,9 @@ func renderSimpleTextPNG(path string, input ReelInput) error {
 
 	drawBitmapText(img, 96, 104, "GENERATED VISUAL BACKGROUND", 4, color.RGBA{147, 164, 184, 255})
 	drawMultilineBitmapText(img, 112, 245, wrapOverlayText(firstNonEmpty(input.Title, "Daily reel"), 18, 4), 11, 18, color.RGBA{255, 255, 255, 255})
-	drawMultilineBitmapText(img, 112, 650, wrapOverlayText(firstNonEmpty(input.Description, input.ThumbnailBrief, input.Title), 25, 4), 7, 14, color.RGBA{186, 230, 253, 255})
-	drawMultilineBitmapText(img, 112, 940, wrapOverlayText(input.Script, 32, 8), 6, 12, color.RGBA{226, 232, 240, 255})
-	drawBitmapText(img, 112, 1708, "30S SHORT-FORM DRAFT - REVIEW BEFORE PUBLISHING", 4, color.RGBA{148, 163, 184, 255})
+	drawMultilineBitmapText(img, 112, 650, wrapOverlayText(firstNonEmpty(input.Description, input.ThumbnailBrief, input.Title), 20, 4), 7, 14, color.RGBA{186, 230, 253, 255})
+	drawMultilineBitmapText(img, 112, 940, wrapOverlayText(input.Script, 24, 8), 6, 12, color.RGBA{226, 232, 240, 255})
+	drawBitmapText(img, 112, 1708, "30S DRAFT - REVIEW BEFORE PUBLISHING", 4, color.RGBA{148, 163, 184, 255})
 
 	f, err := os.Create(path)
 	if err != nil {
