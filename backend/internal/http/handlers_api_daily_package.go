@@ -12,7 +12,6 @@ import (
 
 	"trendcortex/api/internal/content"
 	"trendcortex/api/internal/models"
-	"trendcortex/api/internal/renderer"
 	"trendcortex/api/internal/storage"
 	trenddiscovery "trendcortex/api/internal/trends"
 )
@@ -102,7 +101,6 @@ func (s *Server) handleCreateDailyPackage(w http.ResponseWriter, r *http.Request
 	now := time.Now().UTC().Format(time.RFC3339)
 	reels := make([]storage.DailyPackageReelContent, 0, 6)
 	manifestReels := make([]storage.DailyPackageManifestReel, 0, 6)
-	allRendered := true
 
 	for i, candidate := range candidates[:6] {
 		genReq, err := content.ValidateRequest(models.ReelContentGenerationRequest{
@@ -127,29 +125,8 @@ func (s *Server) handleCreateDailyPackage(w http.ResponseWriter, r *http.Request
 			return
 		}
 
-		renderResult := renderer.RenderReel(ctx, renderer.Config{
-			Provider:     s.cfg.RenderProvider,
-			OutputDir:    s.cfg.MediaOutputDir,
-			OpenAIAPIKey: s.cfg.OpenAIAPIKey,
-			TTSModel:     s.cfg.OpenAITTSModel,
-			ImageModel:   s.cfg.OpenAIImageModel,
-			FFmpegPath:   s.cfg.FFmpegPath,
-			FFprobePath:  s.cfg.FFprobePath,
-		}, renderer.ReelInput{
-			WorkspaceID:    workspaceID,
-			ReelPlanID:     fmt.Sprintf("daily-package-%s-reel-%02d-%s", date, i+1, candidate.ID),
-			Rank:           i + 1,
-			Title:          pkg.Title,
-			Script:         pkg.Script,
-			Description:    firstNonEmptyString(pkg.YouTubeDescription, pkg.Caption),
-			Hashtags:       strings.Join(pkg.Hashtags, " "),
-			ThumbnailBrief: pkg.ThumbnailBrief,
-		})
-		hasVideo := renderResult.Status == renderer.StatusCompleted && fileExists(renderResult.VideoPath)
-		hasThumbnail := renderResult.Status == renderer.StatusCompleted && fileExists(renderResult.ThumbnailPath)
-		if !hasVideo {
-			allRendered = false
-		}
+		renderStatus := "not_attempted"
+		renderNotes := "Daily package builder generated real text/evidence assets only. Video rendering is intentionally deferred to the renderer quality phase; no fake video was created."
 
 		posts := dailyPackagePlatformPosts(pkg)
 		description := firstNonEmptyString(pkg.YouTubeDescription, pkg.Caption)
@@ -169,27 +146,15 @@ func (s *Server) handleCreateDailyPackage(w http.ResponseWriter, r *http.Request
 				CandidateID:     candidate.ID,
 				Source:          candidate.Source,
 				SourceURL:       candidate.SourceURL,
-				RenderStatus:    renderResult.Status,
-				RenderNotes:     renderResult.Notes,
-				HasVideo:        hasVideo,
-				HasThumbnail:    hasThumbnail,
+				RenderStatus:    renderStatus,
+				RenderNotes:     renderNotes,
+				HasVideo:        false,
+				HasThumbnail:    false,
 				PlatformTargets: pkg.ProviderMetadata.PlatformTargets,
 				GeneratedAt:     now,
 				Provider:        pkg.ProviderMetadata.Provider,
 				ProviderModel:   pkg.ProviderMetadata.Model,
-				VideoFormat:     renderResult.VideoFormat,
-				VideoWidth:      renderResult.VideoWidth,
-				VideoHeight:     renderResult.VideoHeight,
-				ThumbnailFormat: renderResult.ThumbnailFormat,
-				ThumbnailWidth:  renderResult.ThumbnailWidth,
-				ThumbnailHeight: renderResult.ThumbnailHeight,
 			},
-		}
-		if hasVideo {
-			reel.VideoSrcPath = renderResult.VideoPath
-		}
-		if hasThumbnail {
-			reel.ThumbnailSrcPath = renderResult.ThumbnailPath
 		}
 		reels = append(reels, reel)
 		manifestReels = append(manifestReels, storage.DailyPackageManifestReel{
@@ -197,18 +162,14 @@ func (s *Server) handleCreateDailyPackage(w http.ResponseWriter, r *http.Request
 			CandidateID:  candidate.ID,
 			Title:        pkg.Title,
 			Source:       candidate.Source,
-			RenderStatus: renderResult.Status,
-			RenderNotes:  renderResult.Notes,
-			HasVideo:     hasVideo,
+			RenderStatus: renderStatus,
+			RenderNotes:  renderNotes,
+			HasVideo:     false,
 		})
 	}
 
 	status := "ready_with_render_failures"
-	message := "Daily package ready with text/evidence assets; one or more reels did not render video.mp4."
-	if allRendered {
-		status = "ready"
-		message = "Daily package ready with rendered video.mp4 for all 6 reels."
-	}
+	message := "Daily package ready with real text/evidence assets. Video rendering was not attempted, so no video.mp4 files were included."
 
 	manifest := storage.DailyPackageManifest{
 		Date:        date,
