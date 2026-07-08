@@ -8,7 +8,7 @@ const VIEW_META: Record<View, { title: string; sub: string }> = {
   topics:      { title: "Today's 6",         sub: 'No real reels generated yet' },
   workflow:    { title: 'Daily Workflow',    sub: 'No automation run yet' },
   batch:       { title: 'Batch & Publish',  sub: 'No uploads have been attempted' },
-  clipStudio:  { title: 'Clip Studio',      sub: 'Repurpose rights-confirmed source videos into branded short-form clips' },
+  clipStudio:  { title: 'Clip Generator',   sub: 'Paste URL or upload video, prompt, generate clips' },
   realPipeline: { title: 'Real Automation Pipeline', sub: 'Trend discovery → scoring → daily batch → video/export/publish jobs — backed by Postgres' },
   connections: { title: 'Social Connections', sub: 'Connect platform accounts via OAuth — no passwords, official APIs only' },
   competitors: { title: 'Competitor Tracker', sub: 'No competitor tracking configured' },

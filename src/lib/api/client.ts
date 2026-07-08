@@ -586,6 +586,7 @@ export interface ClipBrandingSettings {
 
 export interface ClipStudioRenderRequest {
   source_model: ClipSourceModel;
+  source_id?: string;
   source_video_path: string;
   rights: ClipRightsMetadata;
   branding: ClipBrandingSettings;
@@ -616,6 +617,113 @@ export interface ClipStudioRenderResponse {
 
 export async function renderClipStudio(body: ClipStudioRenderRequest): Promise<ClipStudioRenderResponse> {
   return apiFetch('/api/clip-studio/render', { method: 'POST', body: JSON.stringify(body) });
+}
+
+export interface ClipStudioSourceMetadata {
+  source_id: string;
+  kind: 'upload' | 'url';
+  original_name?: string;
+  url?: string;
+  file_path?: string;
+  content_type?: string;
+  size_bytes?: number;
+  source_model?: ClipSourceModel;
+  rights: ClipRightsMetadata;
+  status: string;
+  message?: string;
+  created_at: string;
+  direct_video: boolean;
+  supported_type: boolean;
+}
+
+export interface ClipStudioSourceResponse {
+  source_id: string;
+  status: string;
+  message?: string;
+  metadata: ClipStudioSourceMetadata;
+  can_render: boolean;
+  direct_video: boolean;
+  download_ready: boolean;
+}
+
+export interface ClipStudioGenerateRequest {
+  source_id?: string;
+  source_url?: string;
+  prompt: string;
+  clip_length: 'auto' | '15s' | '30s' | '60s' | '3min';
+  clip_count: 1 | 3 | 6;
+  branding: ClipBrandingSettings;
+  rights: ClipRightsMetadata;
+  rights_confirmed: boolean;
+  advanced: {
+    source_model?: ClipSourceModel;
+    source_title?: string;
+    source_creator?: string;
+    source_license?: string;
+    attribution_text?: string;
+    copyright_overlay_text?: string;
+    platform_source?: string;
+  };
+}
+
+export interface ClipStudioGeneratedJob {
+  clip_id: string;
+  render_status: string;
+  notes?: string;
+  manual_range: {
+    start_seconds: number;
+    end_seconds: number;
+  };
+  video_path?: string;
+  thumbnail_path?: string;
+}
+
+export interface ClipStudioGenerateResponse {
+  success: boolean;
+  render_status: string;
+  notes?: string;
+  source_id?: string;
+  highlight_detection: 'not_run';
+  generated_clip_jobs: ClipStudioGeneratedJob[];
+  zip_filename?: string;
+  download_url?: string;
+  included_files: string[];
+}
+
+export async function uploadClipStudioSource(file: File): Promise<ClipStudioSourceResponse> {
+  const form = new FormData();
+  form.append('video', file);
+  let res: Response;
+  try {
+    res = await fetch(apiUrl('/api/clip-studio/upload'), {
+      method: 'POST',
+      credentials: 'include',
+      body: form,
+    });
+  } catch {
+    throw new ApiError(0, 'network_error', 'Cannot reach the Go backend. Check VITE_API_BASE_URL or run: cd backend && go run ./cmd/api');
+  }
+  if (!res.ok) {
+    let message = `HTTP ${res.status}`;
+    try {
+      const body = await res.json() as { error?: string };
+      if (body.error) message = body.error;
+    } catch { /* non-JSON error body */ }
+    throw new ApiError(res.status, 'upload_failed', message);
+  }
+  return res.json() as Promise<ClipStudioSourceResponse>;
+}
+
+export async function createClipStudioSource(body: {
+  source_url: string;
+  rights_confirmed: boolean;
+  rights: ClipRightsMetadata;
+}): Promise<ClipStudioSourceResponse> {
+  return apiFetch('/api/clip-studio/source', { method: 'POST', body: JSON.stringify(body) });
+}
+
+export async function generateClipStudio(body: ClipStudioGenerateRequest): Promise<ClipStudioGenerateResponse> {
+  return apiFetch('/api/clip-studio/generate', { method: 'POST', body: JSON.stringify(body) });
 }
 
 export async function downloadClipStudioZip(downloadURL: string, filename: string): Promise<void> {

@@ -718,6 +718,10 @@ func probeDuration(ctx context.Context, ffprobePath, videoPath string) *float64 
 	return &duration
 }
 
+func ProbeDuration(ctx context.Context, ffprobePath, videoPath string) *float64 {
+	return probeDuration(ctx, ffprobePath, videoPath)
+}
+
 func fileExists(path string) bool {
 	info, err := os.Stat(path)
 	return err == nil && !info.IsDir()

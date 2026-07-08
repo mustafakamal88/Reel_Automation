@@ -19,7 +19,7 @@ export const NAV_ITEMS: NavItem[] = [
   { id: 'topics',      n: '03', label: "Today's 6" },
   { id: 'workflow',    n: '04', label: 'Daily Workflow' },
   { id: 'batch',       n: '05', label: 'Batch & Publish' },
-  { id: 'clipStudio',  n: '06', label: 'Clip Studio' },
+  { id: 'clipStudio',  n: '06', label: 'Clip Generator' },
   { id: 'realPipeline', n: '07', label: 'Real Pipeline' },
   { id: 'connections', n: '08', label: 'Connections' },
   { id: 'competitors', n: '09', label: 'Competitors' },

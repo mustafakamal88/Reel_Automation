@@ -15,6 +15,10 @@ import (
 // TODO(auth): once login/session handling lands, derive workspace_id from
 // the authenticated session instead of a single shared default workspace.
 func (s *Server) defaultWorkspaceID(ctx context.Context) (string, error) {
+	if s.db == nil {
+		return "default-workspace", nil
+	}
+
 	var id string
 	err := s.db.QueryRowContext(ctx, `SELECT id FROM workspaces ORDER BY created_at ASC LIMIT 1`).Scan(&id)
 	if err == nil {

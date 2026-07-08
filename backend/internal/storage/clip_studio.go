@@ -27,6 +27,23 @@ type ClipStudioExportContent struct {
 	Metadata         ClipStudioExportMetadata
 }
 
+type ClipStudioGeneratedClip struct {
+	ClipID           string                   `json:"clip_id"`
+	Folder           string                   `json:"folder"`
+	VideoSrcPath     string                   `json:"-"`
+	ThumbnailSrcPath string                   `json:"-"`
+	Metadata         ClipStudioExportMetadata `json:"metadata"`
+}
+
+type ClipStudioGeneratedManifest struct {
+	SourceID           string                    `json:"source_id,omitempty"`
+	Prompt             string                    `json:"prompt,omitempty"`
+	ClipLength         string                    `json:"clip_length"`
+	ClipCount          int                       `json:"clip_count"`
+	HighlightDetection string                    `json:"highlight_detection"`
+	Clips              []ClipStudioGeneratedClip `json:"clips"`
+}
+
 func ClipStudioExportZipFilename(clipID string) string {
 	if clipID == "" {
 		clipID = "clip-studio"
@@ -89,5 +106,72 @@ func BuildClipStudioExportZip(exportDir string, content ClipStudioExportContent)
 		}
 		includedFiles = append(includedFiles, "attribution.txt")
 	}
+	return
+}
+
+func BuildClipStudioGeneratedExportZip(exportDir, zipID string, manifest ClipStudioGeneratedManifest) (zipPath string, includedFiles []string, err error) {
+	if err = os.MkdirAll(exportDir, 0750); err != nil {
+		return "", nil, fmt.Errorf("storage: mkdir clip studio export dir: %w", err)
+	}
+	zipPath = filepath.Join(exportDir, ClipStudioExportZipFilename(zipID))
+
+	f, err := os.Create(zipPath)
+	if err != nil {
+		return "", nil, fmt.Errorf("storage: create clip studio zip: %w", err)
+	}
+	zw := zip.NewWriter(f)
+	defer func() {
+		if closeErr := zw.Close(); err == nil {
+			err = closeErr
+		}
+		if closeErr := f.Close(); err == nil {
+			err = closeErr
+		}
+		if err != nil {
+			os.Remove(zipPath)
+			zipPath = ""
+			includedFiles = nil
+		}
+	}()
+
+	if manifest.HighlightDetection == "" {
+		manifest.HighlightDetection = "not_run"
+	}
+	for i := range manifest.Clips {
+		clip := &manifest.Clips[i]
+		if clip.Folder == "" {
+			clip.Folder = fmt.Sprintf("clip-%02d", i+1)
+		}
+		if clip.Metadata.AIHighlights.TranscriptionStatus == "" {
+			clip.Metadata.AIHighlights = renderer.DefaultClipAIHighlightMetadata()
+		}
+		if clip.VideoSrcPath != "" {
+			name := filepath.ToSlash(filepath.Join(clip.Folder, "video.mp4"))
+			if err = addFileToZip(zw, clip.VideoSrcPath, name); err != nil {
+				err = fmt.Errorf("add generated clip video: %w", err)
+				return
+			}
+			includedFiles = append(includedFiles, name)
+			clip.Metadata.VideoFile = name
+		}
+		if clip.ThumbnailSrcPath != "" {
+			name := filepath.ToSlash(filepath.Join(clip.Folder, "thumbnail.png"))
+			if err = addFileToZip(zw, clip.ThumbnailSrcPath, name); err != nil {
+				err = fmt.Errorf("add generated clip thumbnail: %w", err)
+				return
+			}
+			includedFiles = append(includedFiles, name)
+			clip.Metadata.ThumbnailFile = name
+		}
+		metaName := filepath.ToSlash(filepath.Join(clip.Folder, "attribution.json"))
+		if err = writeExportJSONToZip(zw, metaName, clip.Metadata); err != nil {
+			return
+		}
+		includedFiles = append(includedFiles, metaName)
+	}
+	if err = writeExportJSONToZip(zw, "manifest.json", manifest); err != nil {
+		return
+	}
+	includedFiles = append(includedFiles, "manifest.json")
 	return
 }

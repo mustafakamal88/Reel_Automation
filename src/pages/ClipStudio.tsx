@@ -1,10 +1,13 @@
 import { useMemo, useState } from 'react';
 import {
   ApiError,
+  createClipStudioSource,
   downloadClipStudioZip,
-  renderClipStudio,
+  generateClipStudio,
+  uploadClipStudioSource,
   type ClipSourceModel,
-  type ClipStudioRenderResponse,
+  type ClipStudioGenerateResponse,
+  type ClipStudioSourceResponse,
 } from '../lib/api/client';
 
 const SOURCE_MODELS: { value: ClipSourceModel; label: string }[] = [
@@ -25,6 +28,18 @@ function errMsg(err: unknown, fallback: string): string {
   return fallback;
 }
 
+function inputStyle(): React.CSSProperties {
+  return {
+    width: '100%',
+    border: '1px solid var(--border-strong)',
+    background: 'var(--bg-subtle)',
+    color: 'var(--text-primary)',
+    borderRadius: 6,
+    padding: '10px 11px',
+    fontSize: 12,
+  };
+}
+
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <label style={{ display: 'flex', flexDirection: 'column', gap: 5, fontSize: 11, color: 'var(--text-muted)' }}>
@@ -34,19 +49,7 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
   );
 }
 
-function inputStyle(): React.CSSProperties {
-  return {
-    width: '100%',
-    border: '1px solid var(--border-strong)',
-    background: 'var(--bg-subtle)',
-    color: 'var(--text-primary)',
-    borderRadius: 6,
-    padding: '9px 10px',
-    fontSize: 12,
-  };
-}
-
-function Pill({ children }: { children: React.ReactNode }) {
+function StatusPill({ children }: { children: React.ReactNode }) {
   return (
     <span style={{
       fontSize: 10,
@@ -64,83 +67,114 @@ function Pill({ children }: { children: React.ReactNode }) {
 }
 
 export function ClipStudioPage() {
-  const [sourceModel, setSourceModel] = useState<ClipSourceModel>('user_upload');
-  const [sourceVideoPath, setSourceVideoPath] = useState('');
   const [sourceUrl, setSourceUrl] = useState('');
+  const [source, setSource] = useState<ClipStudioSourceResponse | null>(null);
+  const [prompt, setPrompt] = useState('make funny 3-minute clips with top and bottom branding');
+  const [clipLength, setClipLength] = useState<'auto' | '15s' | '30s' | '60s' | '3min'>('auto');
+  const [clipCount, setClipCount] = useState<1 | 3 | 6>(3);
+  const [topText, setTopText] = useState('TREND CLIP');
+  const [bottomText, setBottomText] = useState('FOLLOW FOR THE FULL STORY');
+  const [watermark, setWatermark] = useState('@trendcortex');
+  const [rightsConfirmed, setRightsConfirmed] = useState(false);
+
+  const [sourceModel, setSourceModel] = useState<ClipSourceModel>('user_upload');
   const [sourceTitle, setSourceTitle] = useState('');
   const [sourceCreator, setSourceCreator] = useState('');
   const [sourceLicense, setSourceLicense] = useState('');
   const [attributionText, setAttributionText] = useState('');
   const [copyrightOverlayText, setCopyrightOverlayText] = useState('');
   const [platformSource, setPlatformSource] = useState('');
-  const [userConfirmedRights, setUserConfirmedRights] = useState(false);
-
-  const [topBannerText, setTopBannerText] = useState('TREND CLIP');
-  const [bottomBannerText, setBottomBannerText] = useState('FOLLOW FOR THE FULL STORY');
-  const [watermarkText, setWatermarkText] = useState('@trendcortex');
-  const [ctaText, setCtaText] = useState('Save this clip');
-  const [fontStylePreset, setFontStylePreset] = useState('bold_editorial');
-  const [topBannerColor, setTopBannerColor] = useState('#111827');
-  const [bottomBannerColor, setBottomBannerColor] = useState('#0f766e');
-  const [captions, setCaptions] = useState('');
-  const [includeCaptions, setIncludeCaptions] = useState(true);
-  const [startSeconds, setStartSeconds] = useState(0);
-  const [endSeconds, setEndSeconds] = useState(15);
 
   const [busy, setBusy] = useState(false);
+  const [uploadBusy, setUploadBusy] = useState(false);
   const [downloadBusy, setDownloadBusy] = useState(false);
-  const [result, setResult] = useState<ClipStudioRenderResponse | null>(null);
+  const [result, setResult] = useState<ClipStudioGenerateResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const canRender = useMemo(() => (
-    sourceVideoPath.trim() !== '' &&
-    endSeconds > startSeconds &&
-    (sourceModel === 'public_domain' || userConfirmedRights)
-  ), [endSeconds, sourceModel, sourceVideoPath, startSeconds, userConfirmedRights]);
+  const hasSource = useMemo(() => Boolean(source?.source_id || sourceUrl.trim()), [source, sourceUrl]);
+  const canGenerate = hasSource && prompt.trim() !== '' && rightsConfirmed && !busy && !uploadBusy;
 
-  async function handleRender() {
+  async function handleUpload(file: File | undefined) {
+    if (!file) return;
+    setUploadBusy(true);
+    setError(null);
+    setResult(null);
+    try {
+      const uploaded = await uploadClipStudioSource(file);
+      setSource(uploaded);
+      setSourceUrl('');
+      setSourceModel('user_upload');
+    } catch (err) {
+      setError(errMsg(err, 'Upload failed'));
+    } finally {
+      setUploadBusy(false);
+    }
+  }
+
+  async function handleGenerate() {
     setBusy(true);
     setError(null);
     setResult(null);
     try {
-      const res = await renderClipStudio({
-        source_model: sourceModel,
-        source_video_path: sourceVideoPath,
+      let activeSource = source;
+      if (!activeSource && sourceUrl.trim()) {
+        activeSource = await createClipStudioSource({
+          source_url: sourceUrl.trim(),
+          rights_confirmed: rightsConfirmed,
+          rights: {
+            source_url: sourceUrl.trim(),
+            source_title: sourceTitle,
+            source_creator: sourceCreator,
+            source_license: sourceLicense,
+            attribution_text: attributionText,
+            user_confirmed_rights: rightsConfirmed,
+            copyright_overlay_text: copyrightOverlayText,
+            platform_source: platformSource,
+          },
+        });
+        setSource(activeSource);
+      }
+
+      const generated = await generateClipStudio({
+        source_id: activeSource?.source_id,
+        source_url: activeSource ? undefined : sourceUrl.trim(),
+        prompt,
+        clip_length: clipLength,
+        clip_count: clipCount,
+        branding: {
+          top_banner_text: topText,
+          bottom_banner_text: bottomText,
+          watermark_text: watermark,
+          cta_text: bottomText,
+          font_style_preset: 'bold_editorial',
+          top_banner_color: '#111827',
+          bottom_banner_color: '#0f766e',
+        },
         rights: {
-          source_url: sourceUrl,
+          source_url: sourceUrl.trim() || activeSource?.metadata.url,
           source_title: sourceTitle,
           source_creator: sourceCreator,
           source_license: sourceLicense,
           attribution_text: attributionText,
-          user_confirmed_rights: userConfirmedRights,
+          user_confirmed_rights: rightsConfirmed,
           copyright_overlay_text: copyrightOverlayText,
           platform_source: platformSource,
         },
-        branding: {
-          top_banner_text: topBannerText,
-          bottom_banner_text: bottomBannerText,
-          watermark_text: watermarkText,
-          cta_text: ctaText,
-          font_style_preset: fontStylePreset,
-          top_banner_color: topBannerColor,
-          bottom_banner_color: bottomBannerColor,
-        },
-        manual_range: {
-          start_seconds: startSeconds,
-          end_seconds: endSeconds,
-        },
-        captions,
-        include_captions: includeCaptions,
-        ai_highlights: {
-          transcription_status: 'not_run',
-          suggested_clips_status: 'not_run',
-          hook_score_status: 'not_run',
+        rights_confirmed: rightsConfirmed,
+        advanced: {
+          source_model: sourceModel,
+          source_title: sourceTitle,
+          source_creator: sourceCreator,
+          source_license: sourceLicense,
+          attribution_text: attributionText,
+          copyright_overlay_text: copyrightOverlayText,
+          platform_source: platformSource,
         },
       });
-      setResult(res);
-      if (!res.success) setError(res.notes || 'Clip render did not complete');
+      setResult(generated);
+      if (!generated.success) setError(generated.notes || activeSource?.message || 'Clip generation did not complete');
     } catch (err) {
-      setError(errMsg(err, 'Clip render failed'));
+      setError(errMsg(err, 'Clip generation failed'));
     } finally {
       setBusy(false);
     }
@@ -153,7 +187,7 @@ export function ClipStudioPage() {
     try {
       await downloadClipStudioZip(result.download_url, result.zip_filename);
     } catch (err) {
-      setError(errMsg(err, 'Clip Studio ZIP download failed'));
+      setError(errMsg(err, 'Clip ZIP download failed'));
     } finally {
       setDownloadBusy(false);
     }
@@ -162,9 +196,9 @@ export function ClipStudioPage() {
   return (
     <section className="page-section">
       <div className="empty-state" style={{ marginBottom: 16 }}>
-        <div className="empty-icon">CS</div>
-        <div className="empty-title">Clip Studio</div>
-        <div className="empty-desc">Manual clip repurposing for owned, licensed, Creative Commons, public-domain, or rights-confirmed source media.</div>
+        <div className="empty-icon">CG</div>
+        <div className="empty-title">Clip Generator</div>
+        <div className="empty-desc">Paste a video URL or upload a source, describe the clips, then generate a downloadable package.</div>
       </div>
 
       {error && (
@@ -182,137 +216,134 @@ export function ClipStudioPage() {
         </div>
       )}
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 16, alignItems: 'start' }}>
-        <div className="settings-card" style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-          <div>
-            <div style={{ fontWeight: 700, fontSize: 14, color: 'var(--text-primary)' }}>Source & Rights</div>
-            <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>External URLs are metadata only until rights are confirmed and a local source file is provided.</div>
+      <div className="settings-card" style={{ display: 'flex', flexDirection: 'column', gap: 14, maxWidth: 920 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) auto', gap: 10, alignItems: 'end' }}>
+          <Field label="Paste video URL">
+            <input
+              value={sourceUrl}
+              onChange={event => {
+                setSourceUrl(event.target.value);
+                setSource(null);
+              }}
+              placeholder="https://example.com/source.mp4"
+              style={inputStyle()}
+            />
+          </Field>
+          <Field label="Upload video">
+            <input
+              type="file"
+              accept="video/mp4,video/quicktime,video/webm,.mp4,.mov,.webm"
+              onChange={event => void handleUpload(event.target.files?.[0])}
+              style={{ ...inputStyle(), width: 230 }}
+            />
+          </Field>
+        </div>
+
+        {(source || uploadBusy) && (
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+            {uploadBusy && <StatusPill>uploading</StatusPill>}
+            {source?.source_id && <StatusPill>{source.source_id}</StatusPill>}
+            {source?.status && <StatusPill>{source.status}</StatusPill>}
+            {source?.message && <StatusPill>{source.message}</StatusPill>}
           </div>
-          <Field label="Source model">
-            <select value={sourceModel} onChange={event => setSourceModel(event.target.value as ClipSourceModel)} style={inputStyle()}>
-              {SOURCE_MODELS.map(item => <option key={item.value} value={item.value}>{item.label}</option>)}
+        )}
+
+        <Field label="Prompt / instruction">
+          <textarea
+            value={prompt}
+            onChange={event => setPrompt(event.target.value)}
+            rows={4}
+            placeholder="make funny 3-minute clips with top and bottom branding"
+            style={{ ...inputStyle(), resize: 'vertical', minHeight: 112, fontSize: 13 }}
+          />
+        </Field>
+
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 10 }}>
+          <Field label="Clip length">
+            <select value={clipLength} onChange={event => setClipLength(event.target.value as typeof clipLength)} style={inputStyle()}>
+              <option value="auto">Auto</option>
+              <option value="15s">15s</option>
+              <option value="30s">30s</option>
+              <option value="60s">60s</option>
+              <option value="3min">3min</option>
             </select>
           </Field>
-          <Field label="Source video path">
-            <input value={sourceVideoPath} onChange={event => setSourceVideoPath(event.target.value)} placeholder="/absolute/path/to/source.mp4" style={inputStyle()} />
+          <Field label="Number of clips">
+            <select value={clipCount} onChange={event => setClipCount(Number(event.target.value) as 1 | 3 | 6)} style={inputStyle()}>
+              <option value={1}>1</option>
+              <option value={3}>3</option>
+              <option value={6}>6</option>
+            </select>
           </Field>
-          <Field label="Source URL">
-            <input value={sourceUrl} onChange={event => setSourceUrl(event.target.value)} placeholder="https://..." style={inputStyle()} />
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 10 }}>
+          <Field label="Top text">
+            <input value={topText} onChange={event => setTopText(event.target.value)} style={inputStyle()} />
           </Field>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+          <Field label="Bottom text">
+            <input value={bottomText} onChange={event => setBottomText(event.target.value)} style={inputStyle()} />
+          </Field>
+          <Field label="Watermark / channel name">
+            <input value={watermark} onChange={event => setWatermark(event.target.value)} style={inputStyle()} />
+          </Field>
+        </div>
+
+        <details style={{ borderTop: '1px solid var(--border)', paddingTop: 12 }}>
+          <summary style={{ cursor: 'pointer', fontSize: 12, fontWeight: 700, color: 'var(--text-secondary)' }}>
+            Advanced / Rights & Attribution
+          </summary>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 10, marginTop: 12 }}>
+            <Field label="Source model">
+              <select value={sourceModel} onChange={event => setSourceModel(event.target.value as ClipSourceModel)} style={inputStyle()}>
+                {SOURCE_MODELS.map(item => <option key={item.value} value={item.value}>{item.label}</option>)}
+              </select>
+            </Field>
             <Field label="Source title">
               <input value={sourceTitle} onChange={event => setSourceTitle(event.target.value)} style={inputStyle()} />
             </Field>
             <Field label="Source creator">
               <input value={sourceCreator} onChange={event => setSourceCreator(event.target.value)} style={inputStyle()} />
             </Field>
-          </div>
-          <Field label="Source license">
-            <input value={sourceLicense} onChange={event => setSourceLicense(event.target.value)} placeholder="CC BY 4.0, public domain, paid license ID..." style={inputStyle()} />
-          </Field>
-          <Field label="Attribution text">
-            <textarea value={attributionText} onChange={event => setAttributionText(event.target.value)} rows={3} style={inputStyle()} />
-          </Field>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+            <Field label="License">
+              <input value={sourceLicense} onChange={event => setSourceLicense(event.target.value)} style={inputStyle()} />
+            </Field>
+            <Field label="Attribution text">
+              <input value={attributionText} onChange={event => setAttributionText(event.target.value)} style={inputStyle()} />
+            </Field>
             <Field label="Copyright overlay">
               <input value={copyrightOverlayText} onChange={event => setCopyrightOverlayText(event.target.value)} style={inputStyle()} />
             </Field>
             <Field label="Platform source">
-              <input value={platformSource} onChange={event => setPlatformSource(event.target.value)} placeholder="YouTube, TikTok, local archive..." style={inputStyle()} />
+              <input value={platformSource} onChange={event => setPlatformSource(event.target.value)} style={inputStyle()} />
             </Field>
           </div>
-          <label style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 12, color: 'var(--text-secondary)' }}>
-            <input type="checkbox" checked={userConfirmedRights} onChange={event => setUserConfirmedRights(event.target.checked)} />
-            I confirm I have rights to render and export this source.
-          </label>
+        </details>
+
+        <label style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 12, color: 'var(--text-secondary)' }}>
+          <input type="checkbox" checked={rightsConfirmed} onChange={event => setRightsConfirmed(event.target.checked)} />
+          I confirm I have rights or permission to use this source.
+        </label>
+
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <button className="generate-btn idle" onClick={handleGenerate} disabled={!canGenerate} type="button">
+            <span className="generate-btn-dot" style={{ background: '#15121f' }} />
+            {busy ? 'Generating clips...' : 'Generate Clips'}
+          </button>
+          <button className="generate-btn idle" onClick={handleDownload} disabled={downloadBusy || !result?.download_url || !result.zip_filename} type="button">
+            <span className="generate-btn-dot" style={{ background: '#15121f' }} />
+            {downloadBusy ? 'Downloading...' : 'Download ZIP'}
+          </button>
         </div>
 
-        <div className="settings-card" style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-          <div>
-            <div style={{ fontWeight: 700, fontSize: 14, color: 'var(--text-primary)' }}>Layout & Manual Clip</div>
-            <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>Exports vertical 1080x1920 H.264/AAC MP4 with safe banner zones.</div>
-          </div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-            <Field label="Start seconds">
-              <input type="number" min={0} step={0.1} value={startSeconds} onChange={event => setStartSeconds(Number(event.target.value))} style={inputStyle()} />
-            </Field>
-            <Field label="End seconds">
-              <input type="number" min={0} step={0.1} value={endSeconds} onChange={event => setEndSeconds(Number(event.target.value))} style={inputStyle()} />
-            </Field>
-          </div>
-          <Field label="Top banner text">
-            <input value={topBannerText} onChange={event => setTopBannerText(event.target.value)} style={inputStyle()} />
-          </Field>
-          <Field label="Bottom banner text">
-            <input value={bottomBannerText} onChange={event => setBottomBannerText(event.target.value)} style={inputStyle()} />
-          </Field>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-            <Field label="Top banner color">
-              <input type="color" value={topBannerColor} onChange={event => setTopBannerColor(event.target.value)} style={{ ...inputStyle(), height: 40, padding: 4 }} />
-            </Field>
-            <Field label="Bottom banner color">
-              <input type="color" value={bottomBannerColor} onChange={event => setBottomBannerColor(event.target.value)} style={{ ...inputStyle(), height: 40, padding: 4 }} />
-            </Field>
-          </div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-            <Field label="Watermark text">
-              <input value={watermarkText} onChange={event => setWatermarkText(event.target.value)} style={inputStyle()} />
-            </Field>
-            <Field label="CTA text">
-              <input value={ctaText} onChange={event => setCtaText(event.target.value)} style={inputStyle()} />
-            </Field>
-          </div>
-          <Field label="Font/style preset">
-            <select value={fontStylePreset} onChange={event => setFontStylePreset(event.target.value)} style={inputStyle()}>
-              <option value="bold_editorial">Bold editorial</option>
-              <option value="clean_news">Clean news</option>
-              <option value="creator_caption">Creator caption</option>
-            </select>
-          </Field>
-          <Field label="Logo upload">
-            <input disabled placeholder="Placeholder - upload pipeline not wired yet" style={{ ...inputStyle(), opacity: 0.6 }} />
-          </Field>
-          <Field label="Captions">
-            <textarea value={captions} onChange={event => setCaptions(event.target.value)} rows={3} style={inputStyle()} />
-          </Field>
-          <label style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 12, color: 'var(--text-secondary)' }}>
-            <input type="checkbox" checked={includeCaptions} onChange={event => setIncludeCaptions(event.target.checked)} />
-            Include captions overlay
-          </label>
-        </div>
-      </div>
-
-      <div className="settings-card" style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 16 }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
-          <div>
-            <div style={{ fontWeight: 700, fontSize: 14, color: 'var(--text-primary)' }}>AI Highlight Model</div>
-            <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>Placeholders only; no transcription, suggested clips, or hook scores are generated.</div>
-          </div>
-          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-            <Pill>transcription: not_run</Pill>
-            <Pill>suggested_clips: not_run</Pill>
-            <Pill>hook_score: not_run</Pill>
-          </div>
-        </div>
         {result && (
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-            <Pill>render: {result.render_status}</Pill>
-            {result.zip_filename && <Pill>{result.zip_filename}</Pill>}
-            {result.included_files.map(name => <Pill key={name}>{name}</Pill>)}
+            <StatusPill>render: {result.render_status}</StatusPill>
+            <StatusPill>highlight_detection: {result.highlight_detection}</StatusPill>
+            {result.zip_filename && <StatusPill>{result.zip_filename}</StatusPill>}
+            {result.generated_clip_jobs?.map(job => <StatusPill key={job.clip_id}>{job.clip_id}: {job.render_status}</StatusPill>)}
           </div>
         )}
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          <button className="generate-btn idle" onClick={handleRender} disabled={busy || !canRender} type="button">
-            <span className="generate-btn-dot" style={{ background: '#15121f' }} />
-            {busy ? 'Rendering clip...' : 'Render manual clip'}
-          </button>
-          {result?.download_url && result.zip_filename && (
-            <button className="generate-btn idle" onClick={handleDownload} disabled={downloadBusy} type="button">
-              <span className="generate-btn-dot" style={{ background: '#15121f' }} />
-              {downloadBusy ? 'Downloading...' : 'Download ZIP'}
-            </button>
-          )}
-        </div>
       </div>
     </section>
   );
