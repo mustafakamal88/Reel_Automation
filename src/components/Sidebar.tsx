@@ -19,20 +19,21 @@ export const NAV_ITEMS: NavItem[] = [
   { id: 'topics',      n: '03', label: "Today's 6" },
   { id: 'workflow',    n: '04', label: 'Daily Workflow' },
   { id: 'batch',       n: '05', label: 'Batch & Publish' },
-  { id: 'realPipeline', n: '06', label: 'Real Pipeline' },
-  { id: 'connections', n: '07', label: 'Connections' },
-  { id: 'competitors', n: '08', label: 'Competitors' },
-  { id: 'approvals',   n: '09', label: 'Approvals' },
-  { id: 'performance', n: '10', label: 'Performance' },
-  { id: 'pipeline',    n: '11', label: 'Pipeline' },
-  { id: 'settings',    n: '12', label: 'Settings' },
+  { id: 'clipStudio',  n: '06', label: 'Clip Studio' },
+  { id: 'realPipeline', n: '07', label: 'Real Pipeline' },
+  { id: 'connections', n: '08', label: 'Connections' },
+  { id: 'competitors', n: '09', label: 'Competitors' },
+  { id: 'approvals',   n: '10', label: 'Approvals' },
+  { id: 'performance', n: '11', label: 'Performance' },
+  { id: 'pipeline',    n: '12', label: 'Pipeline' },
+  { id: 'settings',    n: '13', label: 'Settings' },
 ];
 
 const MOBILE_NAV_ITEMS: NavItem[] = [
   { id: 'topics',      n: '01', label: "Today's 6" },
   { id: 'batch',       n: '02', label: 'Publish' },
-  { id: 'signals',     n: '03', label: 'Signals' },
-  { id: 'connections', n: '04', label: 'Connect' },
+  { id: 'clipStudio',  n: '03', label: 'Clips' },
+  { id: 'signals',     n: '04', label: 'Signals' },
   { id: 'settings',    n: '05', label: 'Settings' },
 ];
 

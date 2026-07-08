@@ -2,6 +2,7 @@ package renderer
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -44,6 +45,138 @@ func TestPrerequisiteStatus(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestRenderManualClipStoresRightsMetadata(t *testing.T) {
+	if _, err := exec.LookPath("ffmpeg"); err != nil {
+		t.Skip("ffmpeg not available")
+	}
+	if _, err := exec.LookPath("ffprobe"); err != nil {
+		t.Skip("ffprobe not available")
+	}
+
+	base := t.TempDir()
+	source := buildClipSourceFixture(t, base)
+	input := testClipInput(source)
+	res := RenderManualClip(context.Background(), Config{OutputDir: base, FFmpegPath: "ffmpeg", FFprobePath: "ffprobe"}, input)
+	if res.Status != StatusCompleted {
+		t.Fatalf("status = %q notes = %q", res.Status, res.Notes)
+	}
+
+	metaPath := filepath.Join(base, input.WorkspaceID, input.ClipID, "clip-metadata.json")
+	f, err := os.Open(metaPath)
+	if err != nil {
+		t.Fatalf("open clip metadata: %v", err)
+	}
+	defer f.Close()
+	var got ClipInput
+	if err := json.NewDecoder(f).Decode(&got); err != nil {
+		t.Fatalf("decode clip metadata: %v", err)
+	}
+	if got.Rights.SourceURL != input.Rights.SourceURL || got.Rights.AttributionText != input.Rights.AttributionText {
+		t.Fatalf("rights metadata not stored: %+v", got.Rights)
+	}
+	if !got.Rights.UserConfirmedRights {
+		t.Fatal("user_confirmed_rights was not stored")
+	}
+}
+
+func TestRenderManualClipRefusesUnconfirmedExternalSource(t *testing.T) {
+	base := t.TempDir()
+	input := testClipInput(filepath.Join(base, "not-needed.mp4"))
+	input.SourceModel = ClipSourceExternalURLPendingRightsConfirmation
+	input.Rights.UserConfirmedRights = false
+	input.Rights.SourceURL = "https://example.com/watch?v=random"
+
+	res := RenderManualClip(context.Background(), Config{OutputDir: base, FFmpegPath: "ffmpeg", FFprobePath: "ffprobe"}, input)
+	if res.Status != StatusFailed {
+		t.Fatalf("status = %q, want failed", res.Status)
+	}
+	if res.Notes != "external URL source requires user rights confirmation before rendering" {
+		t.Fatalf("notes = %q", res.Notes)
+	}
+	assertNoFakeMedia(t, base)
+}
+
+func TestRenderManualClipProducesVideoAndThumbnail(t *testing.T) {
+	if _, err := exec.LookPath("ffmpeg"); err != nil {
+		t.Skip("ffmpeg not available")
+	}
+	if _, err := exec.LookPath("ffprobe"); err != nil {
+		t.Skip("ffprobe not available")
+	}
+
+	base := t.TempDir()
+	source := buildClipSourceFixture(t, base)
+	res := RenderManualClip(context.Background(), Config{OutputDir: base, FFmpegPath: "ffmpeg", FFprobePath: "ffprobe"}, testClipInput(source))
+	if res.Status != StatusCompleted {
+		t.Fatalf("status = %q notes = %q", res.Status, res.Notes)
+	}
+	if !fileExists(res.VideoPath) {
+		t.Fatalf("video.mp4 missing: %s", res.VideoPath)
+	}
+	if !fileExists(res.ThumbnailPath) {
+		t.Fatalf("thumbnail.png missing: %s", res.ThumbnailPath)
+	}
+	if res.VideoWidth != VideoWidth || res.VideoHeight != VideoHeight {
+		t.Fatalf("resolution = %dx%d, want %dx%d", res.VideoWidth, res.VideoHeight, VideoWidth, VideoHeight)
+	}
+	if res.RendererVersion != ClipRendererVersion {
+		t.Fatalf("renderer version = %q, want %q", res.RendererVersion, ClipRendererVersion)
+	}
+}
+
+func testClipInput(source string) ClipInput {
+	return ClipInput{
+		WorkspaceID:     "workspace-1",
+		ClipID:          "clip-1",
+		SourceModel:     ClipSourceCreativeCommons,
+		SourceVideoPath: source,
+		Rights: ClipRightsMetadata{
+			SourceURL:            "https://example.com/source",
+			SourceTitle:          "Source Clip",
+			SourceCreator:        "Creator",
+			SourceLicense:        "CC BY 4.0",
+			AttributionText:      "Source Clip by Creator, CC BY 4.0",
+			UserConfirmedRights:  true,
+			CopyrightOverlayText: "Creator / CC BY 4.0",
+			PlatformSource:       "manual",
+		},
+		Branding: ClipBrandingSettings{
+			TopBannerText:     "TREND CLIP",
+			BottomBannerText:  "FOLLOW FOR THE FULL STORY",
+			WatermarkText:     "@trendcortex",
+			CTAText:           "Save this",
+			FontStylePreset:   "bold_editorial",
+			TopBannerColor:    "#111827",
+			BottomBannerColor: "#0f766e",
+		},
+		ManualRange:     ClipManualRange{StartSeconds: 0, EndSeconds: 1.5},
+		Captions:        "A short licensed clip.",
+		IncludeCaptions: true,
+		AIHighlights:    DefaultClipAIHighlightMetadata(),
+	}
+}
+
+func buildClipSourceFixture(t *testing.T, dir string) string {
+	t.Helper()
+	path := filepath.Join(dir, "source.mp4")
+	cmd := exec.Command("ffmpeg",
+		"-y",
+		"-f", "lavfi",
+		"-i", "testsrc=size=640x360:rate=30:duration=2",
+		"-f", "lavfi",
+		"-i", "sine=frequency=440:duration=2",
+		"-c:v", "libx264",
+		"-pix_fmt", "yuv420p",
+		"-c:a", "aac",
+		"-shortest",
+		path,
+	)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("build clip fixture: %v: %s", err, string(out))
+	}
+	return path
 }
 
 func TestSafeOutputDirConfinesToBase(t *testing.T) {

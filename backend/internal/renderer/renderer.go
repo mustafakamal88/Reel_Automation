@@ -725,8 +725,8 @@ func fileExists(path string) bool {
 
 func trimForLog(b []byte) string {
 	s := strings.TrimSpace(string(b))
-	if len(s) > 500 {
-		return s[:500]
+	if len(s) > 2000 {
+		return s[:2000]
 	}
 	return s
 }

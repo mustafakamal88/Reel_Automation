@@ -554,6 +554,74 @@ export async function runRenderExportTest(body: RenderExportTestRequest): Promis
   return apiFetch('/api/reels/export-test', { method: 'POST', body: JSON.stringify(body) });
 }
 
+export type ClipSourceModel =
+  | 'user_upload'
+  | 'own_channel_source'
+  | 'creative_commons'
+  | 'public_domain'
+  | 'licensed_source'
+  | 'external_url_pending_rights_confirmation';
+
+export interface ClipRightsMetadata {
+  source_url?: string;
+  source_title?: string;
+  source_creator?: string;
+  source_license?: string;
+  attribution_text?: string;
+  user_confirmed_rights: boolean;
+  copyright_overlay_text?: string;
+  platform_source?: string;
+}
+
+export interface ClipBrandingSettings {
+  top_banner_text?: string;
+  bottom_banner_text?: string;
+  logo_path?: string;
+  watermark_text?: string;
+  cta_text?: string;
+  font_style_preset?: string;
+  top_banner_color?: string;
+  bottom_banner_color?: string;
+}
+
+export interface ClipStudioRenderRequest {
+  source_model: ClipSourceModel;
+  source_video_path: string;
+  rights: ClipRightsMetadata;
+  branding: ClipBrandingSettings;
+  manual_range: {
+    start_seconds: number;
+    end_seconds: number;
+  };
+  captions?: string;
+  include_captions: boolean;
+  ai_highlights: {
+    transcription_status: 'not_run';
+    suggested_clips_status: 'not_run';
+    hook_score_status: 'not_run';
+  };
+}
+
+export interface ClipStudioRenderResponse {
+  success: boolean;
+  render_status: string;
+  notes?: string;
+  clip_id: string;
+  zip_filename?: string;
+  download_url?: string;
+  included_files: string[];
+  video_path?: string;
+  thumbnail_path?: string;
+}
+
+export async function renderClipStudio(body: ClipStudioRenderRequest): Promise<ClipStudioRenderResponse> {
+  return apiFetch('/api/clip-studio/render', { method: 'POST', body: JSON.stringify(body) });
+}
+
+export async function downloadClipStudioZip(downloadURL: string, filename: string): Promise<void> {
+  return downloadZipPath(downloadURL, filename);
+}
+
 export interface CreateExportJobResponse {
   export_job: ExportJob;
   missing_video_reels: number[];

@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"testing"
+	"trendcortex/api/internal/renderer"
 )
 
 func TestExportZipFilename(t *testing.T) {
@@ -205,6 +206,81 @@ func TestBuildReelBatchZip_NoFakeMediaWhenAllArtifactsMissing(t *testing.T) {
 		if filepath.Base(f.Name) == "video.mp4" || filepath.Base(f.Name) == "thumbnail.png" {
 			t.Errorf("no video.mp4/thumbnail.png should exist when no real artifact was provided, found %q", f.Name)
 		}
+	}
+}
+
+func TestBuildClipStudioExportZipIncludesAttributionMetadata(t *testing.T) {
+	tmp := t.TempDir()
+	videoSrc := filepath.Join(tmp, "video.mp4")
+	thumbSrc := filepath.Join(tmp, "thumbnail.png")
+	if err := os.WriteFile(videoSrc, []byte("mp4"), 0644); err != nil {
+		t.Fatalf("write video: %v", err)
+	}
+	if err := os.WriteFile(thumbSrc, []byte("png"), 0644); err != nil {
+		t.Fatalf("write thumbnail: %v", err)
+	}
+
+	meta := ClipStudioExportMetadata{
+		ClipID:      "clip-1",
+		SourceModel: renderer.ClipSourceLicensedSource,
+		Rights: renderer.ClipRightsMetadata{
+			SourceURL:           "https://example.com/licensed",
+			SourceTitle:         "Licensed source",
+			SourceCreator:       "Original Creator",
+			SourceLicense:       "Paid license",
+			AttributionText:     "Licensed source by Original Creator",
+			UserConfirmedRights: true,
+			PlatformSource:      "uploaded",
+		},
+		Branding:        renderer.ClipBrandingSettings{TopBannerText: "TOP", BottomBannerText: "BOTTOM"},
+		ManualRange:     renderer.ClipManualRange{StartSeconds: 3, EndSeconds: 9},
+		AIHighlights:    renderer.DefaultClipAIHighlightMetadata(),
+		RendererVersion: renderer.ClipRendererVersion,
+	}
+	zipPath, included, err := BuildClipStudioExportZip(filepath.Join(tmp, "exports"), ClipStudioExportContent{
+		ClipID:           "clip-1",
+		VideoSrcPath:     videoSrc,
+		ThumbnailSrcPath: thumbSrc,
+		Metadata:         meta,
+	})
+	if err != nil {
+		t.Fatalf("BuildClipStudioExportZip: %v", err)
+	}
+	for _, want := range []string{"video.mp4", "thumbnail.png", "attribution.json", "attribution.txt"} {
+		if !containsString(included, want) {
+			t.Fatalf("included files missing %q: %v", want, included)
+		}
+	}
+
+	zr, err := zip.OpenReader(zipPath)
+	if err != nil {
+		t.Fatalf("open zip: %v", err)
+	}
+	defer zr.Close()
+	var got ClipStudioExportMetadata
+	found := false
+	for _, f := range zr.File {
+		if f.Name != "attribution.json" {
+			continue
+		}
+		found = true
+		rc, err := f.Open()
+		if err != nil {
+			t.Fatalf("open attribution.json: %v", err)
+		}
+		defer rc.Close()
+		if err := json.NewDecoder(rc).Decode(&got); err != nil {
+			t.Fatalf("decode attribution.json: %v", err)
+		}
+	}
+	if !found {
+		t.Fatal("attribution.json missing")
+	}
+	if got.Rights.AttributionText != meta.Rights.AttributionText || !got.Rights.UserConfirmedRights {
+		t.Fatalf("attribution metadata mismatch: %+v", got.Rights)
+	}
+	if got.VideoFile != "video.mp4" || got.ThumbnailFile != "thumbnail.png" {
+		t.Fatalf("artifact names not recorded: video=%q thumbnail=%q", got.VideoFile, got.ThumbnailFile)
 	}
 }
 

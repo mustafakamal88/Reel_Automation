@@ -101,6 +101,8 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /api/reels/generate-script", s.handleGenerateReelContent)
 	mux.HandleFunc("POST /api/reels/export-test", s.handleRenderExportTest)
 	mux.HandleFunc("GET /api/reels/export-test/download/{filename}", s.handleDownloadRenderExportTest)
+	mux.HandleFunc("POST /api/clip-studio/render", s.handleRenderClipStudio)
+	mux.HandleFunc("GET /api/clip-studio/download/{filename}", s.handleDownloadClipStudio)
 
 	mux.HandleFunc("GET /api/video-jobs", s.handleListVideoJobs)
 	mux.HandleFunc("GET /api/video-jobs/{id}", s.handleGetVideoJob)

@@ -14,6 +14,7 @@ export type View =
   | 'pipeline'
   | 'workflow'
   | 'batch'
+  | 'clipStudio'
   | 'realPipeline'
   | 'connections'
   | 'settings';
