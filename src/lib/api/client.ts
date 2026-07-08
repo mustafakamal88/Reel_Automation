@@ -730,6 +730,71 @@ export async function downloadClipStudioZip(downloadURL: string, filename: strin
   return downloadZipPath(downloadURL, filename);
 }
 
+export interface AIScenePlan {
+  scene_id: string;
+  duration_seconds: number;
+  narration_text: string;
+  visual_prompt: string;
+  negative_prompt: string;
+  style_preset: string;
+  aspect_ratio: '9:16';
+  model_hint: 'ltx' | 'wan' | 'auto';
+}
+
+export interface AISceneWorkerStatusResponse {
+  configured: boolean;
+  status: string;
+  message: string;
+}
+
+export interface AIScenePlanResponse {
+  renderer_version: 'local_ai_scene_v1';
+  scenes: AIScenePlan[];
+  model_hint: string;
+}
+
+export interface AISceneGenerateResponse {
+  success: boolean;
+  render_status: string;
+  notes?: string;
+  renderer_version: 'local_ai_scene_v1';
+  clip_id: string;
+  worker_url_configured: boolean;
+  model_hint: string;
+  scene_prompts: AIScenePlan[];
+  scene_job_ids: string[];
+  generation_status: string;
+  fallback_reason?: string;
+  zip_filename?: string;
+  download_url?: string;
+  included_files: string[];
+  video_path?: string;
+  thumbnail_path?: string;
+}
+
+export async function getAISceneWorkerStatus(): Promise<AISceneWorkerStatusResponse> {
+  return apiFetch('/api/clip-studio/ai-scenes/worker-status');
+}
+
+export async function planAIScenes(body: {
+  topic?: string;
+  prompt: string;
+  style_preset: string;
+  target_length_seconds: number;
+}): Promise<AIScenePlanResponse> {
+  return apiFetch('/api/clip-studio/ai-scenes/plan', { method: 'POST', body: JSON.stringify(body) });
+}
+
+export async function generateAIScenes(body: {
+  topic?: string;
+  prompt: string;
+  style_preset: string;
+  target_length_seconds: number;
+  branding: ClipBrandingSettings;
+}): Promise<AISceneGenerateResponse> {
+  return apiFetch('/api/clip-studio/ai-scenes/generate', { method: 'POST', body: JSON.stringify(body) });
+}
+
 export interface CreateExportJobResponse {
   export_job: ExportJob;
   missing_video_reels: number[];

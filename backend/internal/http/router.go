@@ -105,6 +105,9 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /api/clip-studio/source", s.handleCreateClipStudioSource)
 	mux.HandleFunc("POST /api/clip-studio/generate", s.handleGenerateClipStudio)
 	mux.HandleFunc("POST /api/clip-studio/render", s.handleRenderClipStudio)
+	mux.HandleFunc("GET /api/clip-studio/ai-scenes/worker-status", s.handleAISceneWorkerStatus)
+	mux.HandleFunc("POST /api/clip-studio/ai-scenes/plan", s.handlePlanAIScenes)
+	mux.HandleFunc("POST /api/clip-studio/ai-scenes/generate", s.handleGenerateAIScenes)
 	mux.HandleFunc("GET /api/clip-studio/download/{filename}", s.handleDownloadClipStudio)
 
 	mux.HandleFunc("GET /api/video-jobs", s.handleListVideoJobs)

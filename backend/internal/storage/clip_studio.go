@@ -44,6 +44,18 @@ type ClipStudioGeneratedManifest struct {
 	Clips              []ClipStudioGeneratedClip `json:"clips"`
 }
 
+type LocalAISceneExportManifest struct {
+	ClipID              string                        `json:"clip_id"`
+	Prompt              string                        `json:"prompt"`
+	StylePreset         string                        `json:"style_preset"`
+	TargetLengthSeconds int                           `json:"target_length_seconds"`
+	Branding            renderer.ClipBrandingSettings `json:"branding"`
+	Metadata            renderer.LocalAISceneMetadata `json:"metadata"`
+	VideoFile           string                        `json:"video_file,omitempty"`
+	ThumbnailFile       string                        `json:"thumbnail_file,omitempty"`
+	SceneMetadataFile   string                        `json:"scene_metadata_file,omitempty"`
+}
+
 func ClipStudioExportZipFilename(clipID string) string {
 	if clipID == "" {
 		clipID = "clip-studio"
@@ -168,6 +180,62 @@ func BuildClipStudioGeneratedExportZip(exportDir, zipID string, manifest ClipStu
 			return
 		}
 		includedFiles = append(includedFiles, metaName)
+	}
+	if err = writeExportJSONToZip(zw, "manifest.json", manifest); err != nil {
+		return
+	}
+	includedFiles = append(includedFiles, "manifest.json")
+	return
+}
+
+func BuildLocalAISceneExportZip(exportDir, zipID, videoSrcPath, thumbnailSrcPath, sceneMetadataPath string, manifest LocalAISceneExportManifest) (zipPath string, includedFiles []string, err error) {
+	if err = os.MkdirAll(exportDir, 0750); err != nil {
+		return "", nil, fmt.Errorf("storage: mkdir local ai scene export dir: %w", err)
+	}
+	zipPath = filepath.Join(exportDir, ClipStudioExportZipFilename(zipID))
+
+	f, err := os.Create(zipPath)
+	if err != nil {
+		return "", nil, fmt.Errorf("storage: create local ai scene zip: %w", err)
+	}
+	zw := zip.NewWriter(f)
+	defer func() {
+		if closeErr := zw.Close(); err == nil {
+			err = closeErr
+		}
+		if closeErr := f.Close(); err == nil {
+			err = closeErr
+		}
+		if err != nil {
+			os.Remove(zipPath)
+			zipPath = ""
+			includedFiles = nil
+		}
+	}()
+
+	if videoSrcPath != "" {
+		if err = addFileToZip(zw, videoSrcPath, "video.mp4"); err != nil {
+			err = fmt.Errorf("add local ai final video: %w", err)
+			return
+		}
+		includedFiles = append(includedFiles, "video.mp4")
+		manifest.VideoFile = "video.mp4"
+	}
+	if thumbnailSrcPath != "" {
+		if err = addFileToZip(zw, thumbnailSrcPath, "thumbnail.png"); err != nil {
+			err = fmt.Errorf("add local ai thumbnail: %w", err)
+			return
+		}
+		includedFiles = append(includedFiles, "thumbnail.png")
+		manifest.ThumbnailFile = "thumbnail.png"
+	}
+	if sceneMetadataPath != "" {
+		if err = addFileToZip(zw, sceneMetadataPath, "scene-metadata.json"); err != nil {
+			err = fmt.Errorf("add local ai scene metadata: %w", err)
+			return
+		}
+		includedFiles = append(includedFiles, "scene-metadata.json")
+		manifest.SceneMetadataFile = "scene-metadata.json"
 	}
 	if err = writeExportJSONToZip(zw, "manifest.json", manifest); err != nil {
 		return

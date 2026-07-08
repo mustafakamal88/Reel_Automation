@@ -121,6 +121,52 @@ type clipStudioGenerateResponse struct {
 	IncludedFiles      []string                 `json:"included_files"`
 }
 
+type aiSceneWorkerStatusResponse struct {
+	Configured bool   `json:"configured"`
+	Status     string `json:"status"`
+	Message    string `json:"message"`
+}
+
+type aiScenePlanRequest struct {
+	Topic               string `json:"topic"`
+	Prompt              string `json:"prompt"`
+	StylePreset         string `json:"style_preset"`
+	TargetLengthSeconds int    `json:"target_length_seconds"`
+}
+
+type aiScenePlanResponse struct {
+	RendererVersion string               `json:"renderer_version"`
+	Scenes          []renderer.ScenePlan `json:"scenes"`
+	ModelHint       string               `json:"model_hint"`
+}
+
+type aiSceneGenerateRequest struct {
+	Topic               string                        `json:"topic"`
+	Prompt              string                        `json:"prompt"`
+	StylePreset         string                        `json:"style_preset"`
+	TargetLengthSeconds int                           `json:"target_length_seconds"`
+	Branding            renderer.ClipBrandingSettings `json:"branding"`
+}
+
+type aiSceneGenerateResponse struct {
+	Success          bool                 `json:"success"`
+	RenderStatus     string               `json:"render_status"`
+	Notes            string               `json:"notes,omitempty"`
+	RendererVersion  string               `json:"renderer_version"`
+	ClipID           string               `json:"clip_id"`
+	WorkerConfigured bool                 `json:"worker_url_configured"`
+	ModelHint        string               `json:"model_hint"`
+	ScenePrompts     []renderer.ScenePlan `json:"scene_prompts"`
+	SceneJobIDs      []string             `json:"scene_job_ids"`
+	GenerationStatus string               `json:"generation_status"`
+	FallbackReason   string               `json:"fallback_reason,omitempty"`
+	ZipFilename      string               `json:"zip_filename,omitempty"`
+	DownloadURL      string               `json:"download_url,omitempty"`
+	IncludedFiles    []string             `json:"included_files"`
+	VideoPath        string               `json:"video_path,omitempty"`
+	ThumbnailPath    string               `json:"thumbnail_path,omitempty"`
+}
+
 var clipStudioHTTPClient = http.DefaultClient
 
 func (s *Server) handleRenderClipStudio(w http.ResponseWriter, r *http.Request) {
@@ -514,6 +560,120 @@ func (s *Server) handleGenerateClipStudio(w http.ResponseWriter, r *http.Request
 		DownloadURL:        "/api/clip-studio/download/" + filepath.Base(zipPath),
 		IncludedFiles:      included,
 	})
+}
+
+func (s *Server) handleAISceneWorkerStatus(w http.ResponseWriter, r *http.Request) {
+	if !renderer.WorkerConfigured(s.cfg.LocalAIWorkerURL) {
+		jsonOK(w, aiSceneWorkerStatusResponse{
+			Configured: false,
+			Status:     "not_connected",
+			Message:    "Local AI worker not connected",
+		})
+		return
+	}
+	client := renderer.WorkerClient{BaseURL: s.cfg.LocalAIWorkerURL, Token: s.cfg.LocalAIWorkerToken}
+	health, err := client.Health(r.Context())
+	if err != nil {
+		jsonOK(w, aiSceneWorkerStatusResponse{
+			Configured: true,
+			Status:     "error",
+			Message:    err.Error(),
+		})
+		return
+	}
+	jsonOK(w, aiSceneWorkerStatusResponse{
+		Configured: true,
+		Status:     firstNonEmpty(health.Status, "ok"),
+		Message:    firstNonEmpty(health.Message, "Local AI worker connected"),
+	})
+}
+
+func (s *Server) handlePlanAIScenes(w http.ResponseWriter, r *http.Request) {
+	var req aiScenePlanRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, "invalid request body: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	scenes := renderer.PlanLocalAIScenes(req.Topic, "", req.Prompt, req.StylePreset, req.TargetLengthSeconds)
+	jsonOK(w, aiScenePlanResponse{
+		RendererVersion: renderer.LocalAISceneRendererVersion,
+		Scenes:          scenes,
+		ModelHint:       "auto",
+	})
+}
+
+func (s *Server) handleGenerateAIScenes(w http.ResponseWriter, r *http.Request) {
+	var req aiSceneGenerateRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, "invalid request body: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	workspaceID, err := s.defaultWorkspaceID(r.Context())
+	if err != nil {
+		jsonError(w, "workspace lookup failed: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	clipID := "ai-scenes-" + time.Now().UTC().Format("20060102-150405")
+	result := renderer.RenderLocalAISceneReel(r.Context(), renderer.Config{
+		OutputDir:          s.cfg.MediaOutputDir,
+		FFmpegPath:         s.cfg.FFmpegPath,
+		FFprobePath:        s.cfg.FFprobePath,
+		LocalAIWorkerURL:   s.cfg.LocalAIWorkerURL,
+		LocalAIWorkerToken: s.cfg.LocalAIWorkerToken,
+	}, renderer.LocalAISceneInput{
+		WorkspaceID:         workspaceID,
+		ClipID:              clipID,
+		Topic:               req.Topic,
+		Prompt:              req.Prompt,
+		StylePreset:         req.StylePreset,
+		TargetLengthSeconds: req.TargetLengthSeconds,
+		Branding:            req.Branding,
+	})
+	response := aiSceneGenerateResponse{
+		Success:          result.Status == renderer.StatusCompleted,
+		RenderStatus:     result.Status,
+		Notes:            result.Notes,
+		RendererVersion:  renderer.LocalAISceneRendererVersion,
+		ClipID:           clipID,
+		WorkerConfigured: result.WorkerURLConfigured,
+		ModelHint:        result.ModelHint,
+		ScenePrompts:     result.ScenePrompts,
+		SceneJobIDs:      result.SceneJobIDs,
+		GenerationStatus: result.GenerationStatus,
+		FallbackReason:   result.FallbackReason,
+		VideoPath:        result.VideoPath,
+		ThumbnailPath:    result.ThumbnailPath,
+	}
+	if result.Status != renderer.StatusCompleted {
+		jsonOK(w, response)
+		return
+	}
+	sceneMetadataPath := filepath.Join(filepath.Dir(result.VideoPath), "scene-metadata.json")
+	exportDir := filepath.Join(s.cfg.ExportDir, workspaceID, "clip-studio")
+	zipPath, included, err := storage.BuildLocalAISceneExportZip(exportDir, clipID, result.VideoPath, result.ThumbnailPath, sceneMetadataPath, storage.LocalAISceneExportManifest{
+		ClipID:              clipID,
+		Prompt:              req.Prompt,
+		StylePreset:         req.StylePreset,
+		TargetLengthSeconds: req.TargetLengthSeconds,
+		Branding:            req.Branding,
+		Metadata: renderer.LocalAISceneMetadata{
+			RendererVersion:     renderer.LocalAISceneRendererVersion,
+			WorkerURLConfigured: result.WorkerURLConfigured,
+			ModelHint:           result.ModelHint,
+			ScenePrompts:        result.ScenePrompts,
+			SceneJobIDs:         result.SceneJobIDs,
+			GenerationStatus:    result.GenerationStatus,
+			FallbackReason:      result.FallbackReason,
+		},
+	})
+	if err != nil {
+		jsonError(w, "local AI scene export failed: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	response.ZipFilename = filepath.Base(zipPath)
+	response.DownloadURL = "/api/clip-studio/download/" + filepath.Base(zipPath)
+	response.IncludedFiles = included
+	jsonOK(w, response)
 }
 
 func (s *Server) handleDownloadClipStudio(w http.ResponseWriter, r *http.Request) {

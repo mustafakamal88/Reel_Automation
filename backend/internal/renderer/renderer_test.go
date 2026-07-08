@@ -3,6 +3,8 @@ package renderer
 import (
 	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -266,14 +268,135 @@ func TestRenderSimpleTextReelProducesArtifacts(t *testing.T) {
 	if res.RendererVersion != SimpleRendererVersion {
 		t.Fatalf("renderer version = %q, want %q", res.RendererVersion, SimpleRendererVersion)
 	}
-	if res.RendererVersion != "quality_v1" {
-		t.Fatalf("renderer version = %q, want quality_v1", res.RendererVersion)
+	if res.RendererVersion != "fallback_text_v1" {
+		t.Fatalf("renderer version = %q, want fallback_text_v1", res.RendererVersion)
 	}
 	if res.VideoDurationSeconds == nil {
 		t.Fatal("duration missing")
 	}
 	if *res.VideoDurationSeconds < 25 || *res.VideoDurationSeconds > 45 {
 		t.Fatalf("duration = %.2fs, want 25-45s", *res.VideoDurationSeconds)
+	}
+}
+
+func TestPlanLocalAIScenesReturnsValidScenes(t *testing.T) {
+	scenes := PlanLocalAIScenes("AI video", "This is a script with enough words to split across multiple scenes for a short reel.", "", "realistic_editorial", 60)
+	if len(scenes) < 4 || len(scenes) > 12 {
+		t.Fatalf("scene count = %d, want 4-12", len(scenes))
+	}
+	for _, scene := range scenes {
+		if scene.SceneID == "" || scene.DurationSeconds <= 0 || scene.VisualPrompt == "" || scene.NegativePrompt == "" {
+			t.Fatalf("invalid scene: %+v", scene)
+		}
+		if scene.AspectRatio != "9:16" {
+			t.Fatalf("aspect ratio = %q, want 9:16", scene.AspectRatio)
+		}
+		if scene.ModelHint != "auto" && scene.ModelHint != "ltx" && scene.ModelHint != "wan" {
+			t.Fatalf("model hint = %q", scene.ModelHint)
+		}
+	}
+}
+
+func TestRenderLocalAISceneReelMissingWorkerIsHonest(t *testing.T) {
+	res := RenderLocalAISceneReel(context.Background(), Config{OutputDir: t.TempDir()}, LocalAISceneInput{
+		WorkspaceID: "workspace-1",
+		ClipID:      "ai-1",
+		Prompt:      "Make a realistic reel",
+	})
+	if res.Status != StatusLocalAIWorkerNotConnected {
+		t.Fatalf("status = %q, want %q", res.Status, StatusLocalAIWorkerNotConnected)
+	}
+	if res.WorkerURLConfigured {
+		t.Fatal("worker_url_configured = true, want false")
+	}
+	if res.FallbackReason == "" {
+		t.Fatal("fallback_reason missing")
+	}
+	assertNoFakeMedia(t, t.TempDir())
+}
+
+func TestRenderLocalAISceneReelWorkerFailureSurfacesError(t *testing.T) {
+	worker := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/health":
+			_, _ = w.Write([]byte(`{"status":"ok"}`))
+		case "/generate-scene":
+			_, _ = w.Write([]byte(`{"id":"job-1","status":"queued"}`))
+		case "/jobs/job-1":
+			_, _ = w.Write([]byte(`{"id":"job-1","status":"failed","error":"gpu out of memory"}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer worker.Close()
+
+	res := RenderLocalAISceneReel(context.Background(), Config{
+		OutputDir:        t.TempDir(),
+		FFmpegPath:       "ffmpeg",
+		FFprobePath:      "ffprobe",
+		LocalAIWorkerURL: worker.URL,
+	}, LocalAISceneInput{WorkspaceID: "w", ClipID: "c", Prompt: "prompt", TargetLengthSeconds: 30})
+	if res.Status != StatusFailed {
+		t.Fatalf("status = %q, want failed", res.Status)
+	}
+	if res.GenerationStatus != "failed" || res.Notes == "" {
+		t.Fatalf("failure not surfaced honestly: %+v", res)
+	}
+}
+
+func TestRenderLocalAISceneReelStitchesWorkerClips(t *testing.T) {
+	if _, err := exec.LookPath("ffmpeg"); err != nil {
+		t.Skip("ffmpeg not available")
+	}
+	if _, err := exec.LookPath("ffprobe"); err != nil {
+		t.Skip("ffprobe not available")
+	}
+	clip := buildClipSourceFixture(t, t.TempDir())
+	clipBytes, err := os.ReadFile(clip)
+	if err != nil {
+		t.Fatalf("read clip: %v", err)
+	}
+	worker := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/health":
+			_, _ = w.Write([]byte(`{"status":"ok"}`))
+		case r.URL.Path == "/generate-scene":
+			_, _ = w.Write([]byte(`{"id":"job-1","status":"queued"}`))
+		case r.URL.Path == "/jobs/job-1":
+			_, _ = w.Write([]byte(`{"id":"job-1","status":"completed"}`))
+		case r.URL.Path == "/jobs/job-1/output":
+			w.Header().Set("Content-Type", "video/mp4")
+			_, _ = w.Write(clipBytes)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer worker.Close()
+
+	base := t.TempDir()
+	res := RenderLocalAISceneReel(context.Background(), Config{
+		OutputDir:        base,
+		FFmpegPath:       "ffmpeg",
+		FFprobePath:      "ffprobe",
+		LocalAIWorkerURL: worker.URL,
+	}, LocalAISceneInput{
+		WorkspaceID:         "workspace-1",
+		ClipID:              "ai-scenes",
+		Prompt:              "realistic trend explainer",
+		TargetLengthSeconds: 30,
+		Branding:            ClipBrandingSettings{TopBannerText: "TREND", BottomBannerText: "FOLLOW", WatermarkText: "@test"},
+	})
+	if res.Status != StatusCompleted {
+		t.Fatalf("status = %q notes = %q", res.Status, res.Notes)
+	}
+	if !fileExists(res.VideoPath) || !fileExists(res.ThumbnailPath) {
+		t.Fatalf("missing stitched artifacts: %+v", res)
+	}
+	if res.RendererVersion != LocalAISceneRendererVersion {
+		t.Fatalf("renderer version = %q", res.RendererVersion)
+	}
+	if len(res.SceneJobIDs) == 0 || len(res.ScenePrompts) == 0 {
+		t.Fatalf("scene metadata missing: %+v", res)
 	}
 }
 

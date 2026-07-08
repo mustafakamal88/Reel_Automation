@@ -1,9 +1,15 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   ApiError,
   createClipStudioSource,
   downloadClipStudioZip,
+  generateAIScenes,
   generateClipStudio,
+  getAISceneWorkerStatus,
+  planAIScenes,
+  type AISceneGenerateResponse,
+  type AIScenePlanResponse,
+  type AISceneWorkerStatusResponse,
   uploadClipStudioSource,
   type ClipSourceModel,
   type ClipStudioGenerateResponse,
@@ -90,9 +96,93 @@ export function ClipStudioPage() {
   const [downloadBusy, setDownloadBusy] = useState(false);
   const [result, setResult] = useState<ClipStudioGenerateResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [aiTopic, setAiTopic] = useState('');
+  const [aiPrompt, setAiPrompt] = useState('Realistic vertical scenes for a fast-paced trend explainer');
+  const [aiStyle, setAiStyle] = useState('realistic_editorial');
+  const [aiLength, setAiLength] = useState<30 | 60 | 180>(60);
+  const [aiBranding, setAiBranding] = useState('TREND CORTEX');
+  const [workerStatus, setWorkerStatus] = useState<AISceneWorkerStatusResponse | null>(null);
+  const [aiPlan, setAiPlan] = useState<AIScenePlanResponse | null>(null);
+  const [aiResult, setAiResult] = useState<AISceneGenerateResponse | null>(null);
+  const [aiBusy, setAiBusy] = useState(false);
+  const [aiDownloadBusy, setAiDownloadBusy] = useState(false);
 
   const hasSource = useMemo(() => Boolean(source?.source_id || sourceUrl.trim()), [source, sourceUrl]);
   const canGenerate = hasSource && prompt.trim() !== '' && rightsConfirmed && !busy && !uploadBusy;
+
+  useEffect(() => {
+    void refreshWorkerStatus();
+  }, []);
+
+  async function refreshWorkerStatus() {
+    try {
+      setWorkerStatus(await getAISceneWorkerStatus());
+    } catch (err) {
+      setWorkerStatus({ configured: false, status: 'error', message: errMsg(err, 'Worker status unavailable') });
+    }
+  }
+
+  async function handlePlanAIScenes() {
+    setAiBusy(true);
+    setError(null);
+    setAiResult(null);
+    try {
+      const planned = await planAIScenes({
+        topic: aiTopic,
+        prompt: aiPrompt,
+        style_preset: aiStyle,
+        target_length_seconds: aiLength,
+      });
+      setAiPlan(planned);
+      await refreshWorkerStatus();
+    } catch (err) {
+      setError(errMsg(err, 'Scene planning failed'));
+    } finally {
+      setAiBusy(false);
+    }
+  }
+
+  async function handleGenerateAIScenes() {
+    setAiBusy(true);
+    setError(null);
+    try {
+      const generated = await generateAIScenes({
+        topic: aiTopic,
+        prompt: aiPrompt,
+        style_preset: aiStyle,
+        target_length_seconds: aiLength,
+        branding: {
+          top_banner_text: aiBranding,
+          bottom_banner_text: 'FOLLOW FOR MORE',
+          watermark_text: watermark,
+          cta_text: 'FOLLOW FOR MORE',
+          font_style_preset: 'bold_editorial',
+          top_banner_color: '#101828',
+          bottom_banner_color: '#0f766e',
+        },
+      });
+      setAiResult(generated);
+      if (!generated.success) setError(generated.notes || 'Connect local AI worker to generate AI scenes.');
+      await refreshWorkerStatus();
+    } catch (err) {
+      setError(errMsg(err, 'AI scene generation failed'));
+    } finally {
+      setAiBusy(false);
+    }
+  }
+
+  async function handleDownloadAIScenes() {
+    if (!aiResult?.download_url || !aiResult.zip_filename) return;
+    setAiDownloadBusy(true);
+    setError(null);
+    try {
+      await downloadClipStudioZip(aiResult.download_url, aiResult.zip_filename);
+    } catch (err) {
+      setError(errMsg(err, 'AI scene ZIP download failed'));
+    } finally {
+      setAiDownloadBusy(false);
+    }
+  }
 
   async function handleUpload(file: File | undefined) {
     if (!file) return;
@@ -215,6 +305,90 @@ export function ClipStudioPage() {
           {error}
         </div>
       )}
+
+      <div className="settings-card" style={{ display: 'flex', flexDirection: 'column', gap: 14, maxWidth: 920, marginBottom: 16 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+          <div>
+            <div style={{ fontSize: 14, fontWeight: 800, color: 'var(--text-primary)' }}>AI Scene Generator</div>
+            <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 3 }}>
+              {workerStatus?.message || 'Connect local AI worker to generate AI scenes.'}
+            </div>
+          </div>
+          <button className="generate-btn idle" onClick={refreshWorkerStatus} type="button">
+            <span className="generate-btn-dot" style={{ background: workerStatus?.configured ? '#0f766e' : '#991b1b' }} />
+            Worker Status
+          </button>
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 10 }}>
+          <Field label="Topic">
+            <input value={aiTopic} onChange={event => setAiTopic(event.target.value)} placeholder="AI search trend, finance news, creator drama..." style={inputStyle()} />
+          </Field>
+          <Field label="Style preset">
+            <select value={aiStyle} onChange={event => setAiStyle(event.target.value)} style={inputStyle()}>
+              <option value="realistic_editorial">Realistic editorial</option>
+              <option value="cinematic_documentary">Cinematic documentary</option>
+              <option value="ugc_phone_camera">UGC phone camera</option>
+            </select>
+          </Field>
+          <Field label="Target length">
+            <select value={aiLength} onChange={event => setAiLength(Number(event.target.value) as 30 | 60 | 180)} style={inputStyle()}>
+              <option value={30}>30s</option>
+              <option value={60}>60s</option>
+              <option value={180}>3min</option>
+            </select>
+          </Field>
+          <Field label="Branding text">
+            <input value={aiBranding} onChange={event => setAiBranding(event.target.value)} style={inputStyle()} />
+          </Field>
+        </div>
+
+        <Field label="Prompt">
+          <textarea
+            value={aiPrompt}
+            onChange={event => setAiPrompt(event.target.value)}
+            rows={4}
+            style={{ ...inputStyle(), resize: 'vertical', minHeight: 104, fontSize: 13 }}
+          />
+        </Field>
+
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <button className="generate-btn idle" onClick={handlePlanAIScenes} disabled={aiBusy || !aiPrompt.trim()} type="button">
+            <span className="generate-btn-dot" style={{ background: '#15121f' }} />
+            Generate scene plan
+          </button>
+          <button className="generate-btn idle" onClick={handleGenerateAIScenes} disabled={aiBusy || !aiPrompt.trim()} type="button">
+            <span className="generate-btn-dot" style={{ background: workerStatus?.configured ? '#0f766e' : '#991b1b' }} />
+            {aiBusy ? 'Generating...' : 'Generate video using local worker'}
+          </button>
+          <button className="generate-btn idle" onClick={handleDownloadAIScenes} disabled={aiDownloadBusy || !aiResult?.download_url || !aiResult.zip_filename} type="button">
+            <span className="generate-btn-dot" style={{ background: '#15121f' }} />
+            {aiDownloadBusy ? 'Downloading...' : 'Download AI ZIP'}
+          </button>
+        </div>
+
+        {(aiPlan || aiResult) && (
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+            <StatusPill>{aiResult?.renderer_version || aiPlan?.renderer_version}</StatusPill>
+            <StatusPill>worker: {String(aiResult?.worker_url_configured ?? workerStatus?.configured ?? false)}</StatusPill>
+            <StatusPill>status: {aiResult?.generation_status || workerStatus?.status || 'planned'}</StatusPill>
+            <StatusPill>model: {aiResult?.model_hint || aiPlan?.model_hint || 'auto'}</StatusPill>
+            {aiResult?.zip_filename && <StatusPill>{aiResult.zip_filename}</StatusPill>}
+            {aiResult?.fallback_reason && <StatusPill>{aiResult.fallback_reason}</StatusPill>}
+          </div>
+        )}
+
+        {aiPlan?.scenes && (
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 8 }}>
+            {aiPlan.scenes.map(scene => (
+              <div key={scene.scene_id} style={{ border: '1px solid var(--border)', borderRadius: 6, padding: 10, background: 'var(--bg-subtle)' }}>
+                <div style={{ fontSize: 11, fontFamily: 'var(--font-mono)', color: 'var(--text-dim)' }}>{scene.scene_id} · {scene.duration_seconds.toFixed(1)}s · {scene.model_hint}</div>
+                <div style={{ fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.5, marginTop: 6 }}>{scene.visual_prompt}</div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
 
       <div className="settings-card" style={{ display: 'flex', flexDirection: 'column', gap: 14, maxWidth: 920 }}>
         <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) auto', gap: 10, alignItems: 'end' }}>

@@ -218,6 +218,92 @@ func TestClipStudioGenerateZipContainsClipsAndAttributionMetadata(t *testing.T) 
 	}
 }
 
+func TestAISceneMissingWorkerReturnsNotConnected(t *testing.T) {
+	s := testClipStudioServer(t)
+	body := strings.NewReader(`{"prompt":"realistic scenes","style_preset":"realistic_editorial","target_length_seconds":30}`)
+	req := httptest.NewRequest(stdhttp.MethodPost, "/api/clip-studio/ai-scenes/generate", body)
+	rec := httptest.NewRecorder()
+	s.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != stdhttp.StatusOK {
+		t.Fatalf("generate status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var got aiSceneGenerateResponse
+	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if got.Success || got.RenderStatus != renderer.StatusLocalAIWorkerNotConnected || got.WorkerConfigured {
+		t.Fatalf("unexpected not-connected response: %+v", got)
+	}
+	if !strings.Contains(got.Notes, "Connect local AI worker") {
+		t.Fatalf("notes = %q", got.Notes)
+	}
+}
+
+func TestAISceneGenerateZipIncludesFinalVideoThumbnailManifestAndSceneMetadata(t *testing.T) {
+	requireFFmpeg(t)
+	s := testClipStudioServer(t)
+	sourcePath := buildClipStudioSourceFixture(t, t.TempDir())
+	sourceBytes, err := os.ReadFile(sourcePath)
+	if err != nil {
+		t.Fatalf("read source fixture: %v", err)
+	}
+	worker := httptest.NewServer(stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+		switch {
+		case r.URL.Path == "/health":
+			_, _ = w.Write([]byte(`{"status":"ok"}`))
+		case r.URL.Path == "/generate-scene":
+			_, _ = w.Write([]byte(`{"id":"job-1","status":"queued"}`))
+		case r.URL.Path == "/jobs/job-1":
+			_, _ = w.Write([]byte(`{"id":"job-1","status":"completed"}`))
+		case r.URL.Path == "/jobs/job-1/output":
+			w.Header().Set("Content-Type", "video/mp4")
+			_, _ = w.Write(sourceBytes)
+		default:
+			stdhttp.NotFound(w, r)
+		}
+	}))
+	defer worker.Close()
+	s.cfg.LocalAIWorkerURL = worker.URL
+
+	body := strings.NewReader(`{
+		"topic":"AI video",
+		"prompt":"realistic scenes",
+		"style_preset":"realistic_editorial",
+		"target_length_seconds":30,
+		"branding":{"top_banner_text":"TOP","bottom_banner_text":"BOTTOM","watermark_text":"@test"}
+	}`)
+	req := httptest.NewRequest(stdhttp.MethodPost, "/api/clip-studio/ai-scenes/generate", body)
+	rec := httptest.NewRecorder()
+	s.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != stdhttp.StatusOK {
+		t.Fatalf("generate status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var got aiSceneGenerateResponse
+	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if !got.Success || got.ZipFilename == "" {
+		t.Fatalf("generate did not succeed: %+v", got)
+	}
+	zipPath := filepath.Join(s.cfg.ExportDir, "default-workspace", "clip-studio", got.ZipFilename)
+	zr, err := zip.OpenReader(zipPath)
+	if err != nil {
+		t.Fatalf("open ai scene zip: %v", err)
+	}
+	defer zr.Close()
+	names := map[string]bool{}
+	for _, f := range zr.File {
+		names[f.Name] = true
+	}
+	for _, name := range []string{"video.mp4", "thumbnail.png", "manifest.json", "scene-metadata.json"} {
+		if !names[name] {
+			t.Fatalf("expected zip entry %q; entries=%v", name, names)
+		}
+	}
+}
+
 func testClipStudioServer(t *testing.T) *Server {
 	t.Helper()
 	tmp := t.TempDir()

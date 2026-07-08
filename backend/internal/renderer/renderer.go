@@ -31,21 +31,23 @@ const (
 	VideoWidth  = 1080
 	VideoHeight = 1920
 
-	SimpleRendererVersion = "quality_v1"
+	SimpleRendererVersion = "fallback_text_v1"
 	qualitySceneDuration  = 7
 	qualitySceneCount     = 4
 	qualityVideoDuration  = qualitySceneDuration * qualitySceneCount
 )
 
 type Config struct {
-	Provider     string
-	OutputDir    string
-	OpenAIAPIKey string
-	TTSModel     string
-	ImageModel   string
-	FFmpegPath   string
-	FFprobePath  string
-	HTTPClient   *http.Client
+	Provider           string
+	OutputDir          string
+	OpenAIAPIKey       string
+	TTSModel           string
+	ImageModel         string
+	FFmpegPath         string
+	FFprobePath        string
+	LocalAIWorkerURL   string
+	LocalAIWorkerToken string
+	HTTPClient         *http.Client
 }
 
 type ReelInput struct {
@@ -74,6 +76,12 @@ type Result struct {
 	ThumbnailWidth       int
 	ThumbnailHeight      int
 	RendererVersion      string
+	WorkerURLConfigured  bool
+	ModelHint            string
+	ScenePrompts         []ScenePlan
+	SceneJobIDs          []string
+	GenerationStatus     string
+	FallbackReason       string
 }
 
 type openAIClient struct {

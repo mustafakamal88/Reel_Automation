@@ -24,14 +24,16 @@ type Config struct {
 
 	// Real media rendering. Provider credentials are loaded server-side only;
 	// never expose these values to the frontend.
-	RenderProvider   string
-	MediaOutputDir   string
-	OpenAIAPIKey     string
-	OpenAITextModel  string
-	OpenAITTSModel   string
-	OpenAIImageModel string
-	FFmpegPath       string
-	FFprobePath      string
+	RenderProvider     string
+	MediaOutputDir     string
+	OpenAIAPIKey       string
+	OpenAITextModel    string
+	OpenAITTSModel     string
+	OpenAIImageModel   string
+	FFmpegPath         string
+	FFprobePath        string
+	LocalAIWorkerURL   string
+	LocalAIWorkerToken string
 
 	// Trend discovery. Provider credentials and provider selection stay
 	// server-side only; the browser receives status metadata and candidates.
@@ -69,14 +71,16 @@ func Load() (*Config, error) {
 		DatabaseURL: os.Getenv("DATABASE_URL"),
 		ExportDir:   getEnv("EXPORT_DIR", defaultArtifactDir("exports")),
 
-		RenderProvider:   getEnv("RENDER_PROVIDER", "ffmpeg"),
-		MediaOutputDir:   getEnv("MEDIA_OUTPUT_DIR", defaultArtifactDir("generated-media")),
-		OpenAIAPIKey:     os.Getenv("OPENAI_API_KEY"),
-		OpenAITextModel:  getEnv("OPENAI_TEXT_MODEL", "gpt-4o-mini"),
-		OpenAITTSModel:   getEnv("OPENAI_TTS_MODEL", "gpt-4o-mini-tts"),
-		OpenAIImageModel: getEnv("OPENAI_IMAGE_MODEL", "gpt-image-1"),
-		FFmpegPath:       getEnv("FFMPEG_PATH", "ffmpeg"),
-		FFprobePath:      getEnv("FFPROBE_PATH", "ffprobe"),
+		RenderProvider:     getEnv("RENDER_PROVIDER", "ffmpeg"),
+		MediaOutputDir:     getEnv("MEDIA_OUTPUT_DIR", defaultArtifactDir("generated-media")),
+		OpenAIAPIKey:       os.Getenv("OPENAI_API_KEY"),
+		OpenAITextModel:    getEnv("OPENAI_TEXT_MODEL", "gpt-4o-mini"),
+		OpenAITTSModel:     getEnv("OPENAI_TTS_MODEL", "gpt-4o-mini-tts"),
+		OpenAIImageModel:   getEnv("OPENAI_IMAGE_MODEL", "gpt-image-1"),
+		FFmpegPath:         getEnv("FFMPEG_PATH", "ffmpeg"),
+		FFprobePath:        getEnv("FFPROBE_PATH", "ffprobe"),
+		LocalAIWorkerURL:   os.Getenv("LOCAL_AI_WORKER_URL"),
+		LocalAIWorkerToken: os.Getenv("LOCAL_AI_WORKER_TOKEN"),
 
 		TrendDiscoveryProvider: getEnv("TREND_DISCOVERY_PROVIDER", ""),
 		TrendDiscoveryBaseURL:  getEnv("TREND_DISCOVERY_BASE_URL", "https://trends.google.com/trending/rss"),
