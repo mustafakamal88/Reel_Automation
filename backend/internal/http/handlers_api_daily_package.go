@@ -21,15 +21,20 @@ import (
 )
 
 type dailyPackageRenderJob struct {
-	ID              string                `json:"id"`
-	ReelID          string                `json:"reel_id"`
-	Status          string                `json:"status"`
-	RenderStatus    string                `json:"render_status"`
-	RenderError     string                `json:"render_error,omitempty"`
-	Message         string                `json:"message"`
-	StartedAt       string                `json:"started_at"`
-	CompletedAt     string                `json:"completed_at,omitempty"`
-	PackageResponse *dailyPackageResponse `json:"package,omitempty"`
+	ID              string                             `json:"id"`
+	ReelID          string                             `json:"reel_id"`
+	Status          string                             `json:"status"`
+	RenderStatus    string                             `json:"render_status"`
+	RenderError     string                             `json:"render_error,omitempty"`
+	Message         string                             `json:"message"`
+	TotalReels      int                                `json:"total_reels"`
+	CurrentReel     string                             `json:"current_reel,omitempty"`
+	CompletedCount  int                                `json:"completed_count"`
+	FailedCount     int                                `json:"failed_count"`
+	Reels           []storage.DailyPackageManifestReel `json:"reels,omitempty"`
+	StartedAt       string                             `json:"started_at"`
+	CompletedAt     string                             `json:"completed_at,omitempty"`
+	PackageResponse *dailyPackageResponse              `json:"package,omitempty"`
 }
 
 type createDailyPackageRequest struct {
@@ -300,11 +305,58 @@ func (s *Server) handleRenderDailyPackageReel(w http.ResponseWriter, r *http.Req
 		Status:       "rendering",
 		RenderStatus: "not_attempted",
 		Message:      "Render started for reel-01.",
+		TotalReels:   1,
+		CurrentReel:  fmt.Sprintf("reel-%02d", rank),
+		Reels:        manifestReelsSnapshotFromZip(zipPath),
 		StartedAt:    time.Now().UTC().Format(time.RFC3339),
 	}
 	s.setDailyPackageRenderJob(job)
 
 	go s.runDailyPackageReelRender(workspaceID, exportDir, zipPath, rank, job.ID)
+
+	w.WriteHeader(http.StatusAccepted)
+	jsonOK(w, job)
+}
+
+// POST /api/daily-package/render-all
+func (s *Server) handleRenderAllDailyPackageReels(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	workspaceID, err := s.defaultWorkspaceID(ctx)
+	if err != nil {
+		jsonError(w, "workspace lookup failed: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	exportDir := filepath.Join(s.cfg.ExportDir, workspaceID, "daily-package")
+	zipPath := filepath.Join(exportDir, storage.DailyReelsPackageFilename)
+	if !fileExists(zipPath) {
+		jsonError(w, "daily package ZIP is not available yet — generate today's 6 first", http.StatusNotFound)
+		return
+	}
+
+	reels, manifest, err := storage.ReadDailyReelsPackageZip(zipPath)
+	if err != nil {
+		jsonError(w, "read latest daily package: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if len(reels) == 0 {
+		jsonError(w, "daily package has no reels to render", http.StatusConflict)
+		return
+	}
+
+	job := dailyPackageRenderJob{
+		ID:           newDailyPackageRenderJobID(),
+		ReelID:       "all",
+		Status:       "rendering",
+		RenderStatus: "rendering",
+		Message:      "Batch render started for daily package reels.",
+		TotalReels:   len(reels),
+		Reels:        append([]storage.DailyPackageManifestReel{}, manifest.Reels...),
+		StartedAt:    time.Now().UTC().Format(time.RFC3339),
+	}
+	s.setDailyPackageRenderJob(job)
+
+	go s.runDailyPackageBatchRender(workspaceID, exportDir, zipPath, job.ID)
 
 	w.WriteHeader(http.StatusAccepted)
 	jsonOK(w, job)
@@ -344,8 +396,76 @@ func (s *Server) runDailyPackageReelRender(workspaceID, exportDir, zipPath strin
 		return
 	}
 
-	title := dailyManifestTitle(manifest, rank)
-	result := renderer.RenderSimpleTextReel(ctx, renderer.Config{
+	result := s.renderDailyPackageRank(ctx, workspaceID, rank, reels[idx], manifest)
+	ok := applyDailyPackageRenderResult(&reels[idx], &manifest, rank, result, "Single-reel")
+
+	_, included, err := storage.BuildDailyReelsPackageZip(exportDir, reels, manifest)
+	if err != nil {
+		s.finishDailyPackageRenderJob(jobID, "failed", "failed", "render finished but ZIP rebuild failed: "+err.Error(), nil)
+		return
+	}
+	manifest.IncludedFiles = included
+	pkg := dailyPackageResponseFromManifest(manifest)
+	if !ok {
+		msg := reels[idx].Metadata.RenderError
+		if msg == "" {
+			msg = "render failed"
+		}
+		s.finishDailyPackageRenderJob(jobID, "failed", "failed", msg, &pkg)
+		return
+	}
+	s.finishDailyPackageRenderJob(jobID, "completed", "rendered", "reel-01 rendered and added to the latest daily package ZIP.", &pkg)
+}
+
+func (s *Server) runDailyPackageBatchRender(workspaceID, exportDir, zipPath, jobID string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	defer cancel()
+
+	reels, manifest, err := storage.ReadDailyReelsPackageZip(zipPath)
+	if err != nil {
+		s.finishDailyPackageRenderJob(jobID, "failed", "failed", "read latest daily package: "+err.Error(), nil)
+		return
+	}
+	total := len(reels)
+	for i := range reels {
+		rank := reels[i].Rank
+		reels[i].Metadata.RenderStatus = "rendering"
+		reels[i].Metadata.RenderError = ""
+		updateDailyManifestReel(&manifest, rank, reels[i].Metadata)
+		s.updateDailyPackageRenderProgress(jobID, total, fmt.Sprintf("reel-%02d", rank), manifest.Reels, "Rendering reel.")
+
+		result := s.renderDailyPackageRank(ctx, workspaceID, rank, reels[i], manifest)
+		applyDailyPackageRenderResult(&reels[i], &manifest, rank, result, "Batch")
+
+		if result.Status == renderer.StatusCompleted {
+			_, included, rebuildErr := storage.BuildDailyReelsPackageZip(exportDir, reels, manifest)
+			if rebuildErr != nil {
+				s.finishDailyPackageRenderJob(jobID, "failed", "failed", "render completed but ZIP rebuild failed: "+rebuildErr.Error(), nil)
+				return
+			}
+			manifest.IncludedFiles = included
+		}
+		s.updateDailyPackageRenderProgress(jobID, total, "", manifest.Reels, "Batch render is continuing sequentially.")
+	}
+
+	_, included, err := storage.BuildDailyReelsPackageZip(exportDir, reels, manifest)
+	if err != nil {
+		s.finishDailyPackageRenderJob(jobID, "failed", "failed", "final ZIP rebuild failed: "+err.Error(), nil)
+		return
+	}
+	manifest.IncludedFiles = included
+	pkg := dailyPackageResponseFromManifest(manifest)
+	completed, failed := dailyPackageRenderCounts(manifest.Reels)
+	msg := fmt.Sprintf("Batch render finished: %d rendered, %d failed.", completed, failed)
+	s.completeDailyPackageBatchJob(jobID, msg, &pkg)
+}
+
+func (s *Server) renderDailyPackageRank(ctx context.Context, workspaceID string, rank int, reel storage.DailyPackageReelContent, manifest storage.DailyPackageManifest) renderer.Result {
+	renderFn := s.renderDailyPackageReel
+	if renderFn == nil {
+		renderFn = renderer.RenderSimpleTextReel
+	}
+	return renderFn(ctx, renderer.Config{
 		OutputDir:   s.cfg.MediaOutputDir,
 		FFmpegPath:  s.cfg.FFmpegPath,
 		FFprobePath: s.cfg.FFprobePath,
@@ -353,75 +473,12 @@ func (s *Server) runDailyPackageReelRender(workspaceID, exportDir, zipPath strin
 		WorkspaceID:    workspaceID,
 		ReelPlanID:     fmt.Sprintf("daily-package-reel-%02d", rank),
 		Rank:           rank,
-		Title:          title,
-		Script:         reels[idx].Script,
-		Description:    reels[idx].Description,
-		Hashtags:       reels[idx].Hashtags,
-		ThumbnailBrief: reels[idx].ThumbnailBrief,
+		Title:          dailyManifestTitle(manifest, rank),
+		Script:         reel.Script,
+		Description:    reel.Description,
+		Hashtags:       reel.Hashtags,
+		ThumbnailBrief: reel.ThumbnailBrief,
 	})
-
-	now := time.Now().UTC().Format(time.RFC3339)
-	if result.Status != renderer.StatusCompleted {
-		msg := result.Notes
-		if msg == "" {
-			msg = result.Status
-		}
-		reels[idx].VideoSrcPath = ""
-		reels[idx].ThumbnailSrcPath = ""
-		reels[idx].Metadata.RenderStatus = "failed"
-		reels[idx].Metadata.RenderError = msg
-		reels[idx].Metadata.RenderNotes = "Single-reel render failed. No video.mp4 was included."
-		reels[idx].Metadata.HasVideo = false
-		reels[idx].Metadata.HasThumbnail = false
-		reels[idx].Metadata.VideoFile = ""
-		reels[idx].Metadata.ThumbnailFile = ""
-		reels[idx].Metadata.DurationSeconds = nil
-		reels[idx].Metadata.Resolution = ""
-		reels[idx].Metadata.RendererVersion = renderer.SimpleRendererVersion
-		reels[idx].Metadata.GeneratedAt = now
-		updateDailyManifestReel(&manifest, rank, reels[idx].Metadata)
-		manifest.Status = "ready_with_render_failures"
-		manifest.Message = "Daily package ready with text/evidence assets. Single-reel render failed; no fake video was included."
-		manifest.GeneratedAt = now
-		if _, _, rebuildErr := storage.BuildDailyReelsPackageZip(exportDir, reels, manifest); rebuildErr != nil {
-			msg += "; ZIP metadata rebuild failed: " + rebuildErr.Error()
-		}
-		s.finishDailyPackageRenderJob(jobID, "failed", "failed", msg, nil)
-		return
-	}
-
-	reels[idx].VideoSrcPath = result.VideoPath
-	reels[idx].ThumbnailSrcPath = result.ThumbnailPath
-	reels[idx].Metadata.RenderStatus = "rendered"
-	reels[idx].Metadata.RenderError = ""
-	reels[idx].Metadata.RenderNotes = result.Notes
-	reels[idx].Metadata.HasVideo = true
-	reels[idx].Metadata.HasThumbnail = result.ThumbnailPath != ""
-	reels[idx].Metadata.VideoFile = "video.mp4"
-	reels[idx].Metadata.ThumbnailFile = "thumbnail.png"
-	reels[idx].Metadata.VideoFormat = result.VideoFormat
-	reels[idx].Metadata.VideoWidth = result.VideoWidth
-	reels[idx].Metadata.VideoHeight = result.VideoHeight
-	reels[idx].Metadata.DurationSeconds = result.VideoDurationSeconds
-	reels[idx].Metadata.Resolution = fmt.Sprintf("%dx%d", result.VideoWidth, result.VideoHeight)
-	reels[idx].Metadata.RendererVersion = result.RendererVersion
-	reels[idx].Metadata.ThumbnailFormat = result.ThumbnailFormat
-	reels[idx].Metadata.ThumbnailWidth = result.ThumbnailWidth
-	reels[idx].Metadata.ThumbnailHeight = result.ThumbnailHeight
-	reels[idx].Metadata.GeneratedAt = now
-	updateDailyManifestReel(&manifest, rank, reels[idx].Metadata)
-	manifest.Status = "ready_with_render_failures"
-	manifest.Message = "Daily package ready. reel-01 includes rendered video.mp4 and thumbnail.png; other reels remain not_attempted."
-	manifest.GeneratedAt = now
-
-	_, included, err := storage.BuildDailyReelsPackageZip(exportDir, reels, manifest)
-	if err != nil {
-		s.finishDailyPackageRenderJob(jobID, "failed", "failed", "render completed but ZIP rebuild failed: "+err.Error(), nil)
-		return
-	}
-	manifest.IncludedFiles = included
-	pkg := dailyPackageResponseFromManifest(manifest)
-	s.finishDailyPackageRenderJob(jobID, "completed", "rendered", "reel-01 rendered and added to the latest daily package ZIP.", &pkg)
 }
 
 func dailyPackageRankFromID(id string) (int, error) {
@@ -463,6 +520,96 @@ func updateDailyManifestReel(manifest *storage.DailyPackageManifest, rank int, m
 	}
 }
 
+func applyDailyPackageRenderResult(reel *storage.DailyPackageReelContent, manifest *storage.DailyPackageManifest, rank int, result renderer.Result, label string) bool {
+	now := time.Now().UTC().Format(time.RFC3339)
+	if result.Status != renderer.StatusCompleted {
+		msg := result.Notes
+		if msg == "" {
+			msg = result.Status
+		}
+		reel.VideoSrcPath = ""
+		reel.ThumbnailSrcPath = ""
+		reel.Metadata.RenderStatus = "failed"
+		reel.Metadata.RenderError = msg
+		reel.Metadata.RenderNotes = label + " render failed. No video.mp4 was included."
+		reel.Metadata.HasVideo = false
+		reel.Metadata.HasThumbnail = false
+		reel.Metadata.VideoFile = ""
+		reel.Metadata.ThumbnailFile = ""
+		reel.Metadata.DurationSeconds = nil
+		reel.Metadata.Resolution = ""
+		reel.Metadata.RendererVersion = firstNonEmptyString(result.RendererVersion, renderer.SimpleRendererVersion)
+		reel.Metadata.GeneratedAt = now
+		updateDailyManifestReel(manifest, rank, reel.Metadata)
+		updateDailyManifestStatus(manifest)
+		manifest.GeneratedAt = now
+		return false
+	}
+
+	reel.VideoSrcPath = result.VideoPath
+	reel.ThumbnailSrcPath = result.ThumbnailPath
+	reel.Metadata.RenderStatus = "rendered"
+	reel.Metadata.RenderError = ""
+	reel.Metadata.RenderNotes = result.Notes
+	reel.Metadata.HasVideo = true
+	reel.Metadata.HasThumbnail = result.ThumbnailPath != ""
+	reel.Metadata.VideoFile = "video.mp4"
+	if result.ThumbnailPath != "" {
+		reel.Metadata.ThumbnailFile = "thumbnail.png"
+	} else {
+		reel.Metadata.ThumbnailFile = ""
+	}
+	reel.Metadata.VideoFormat = result.VideoFormat
+	reel.Metadata.VideoWidth = result.VideoWidth
+	reel.Metadata.VideoHeight = result.VideoHeight
+	reel.Metadata.DurationSeconds = result.VideoDurationSeconds
+	reel.Metadata.Resolution = fmt.Sprintf("%dx%d", result.VideoWidth, result.VideoHeight)
+	reel.Metadata.RendererVersion = result.RendererVersion
+	reel.Metadata.ThumbnailFormat = result.ThumbnailFormat
+	reel.Metadata.ThumbnailWidth = result.ThumbnailWidth
+	reel.Metadata.ThumbnailHeight = result.ThumbnailHeight
+	reel.Metadata.GeneratedAt = now
+	updateDailyManifestReel(manifest, rank, reel.Metadata)
+	updateDailyManifestStatus(manifest)
+	manifest.GeneratedAt = now
+	return true
+}
+
+func updateDailyManifestStatus(manifest *storage.DailyPackageManifest) {
+	completed, failed := dailyPackageRenderCounts(manifest.Reels)
+	if len(manifest.Reels) > 0 && completed == len(manifest.Reels) {
+		manifest.Status = "ready"
+		manifest.Message = "Daily package ready. All reels include rendered video.mp4 and thumbnail.png."
+		return
+	}
+	manifest.Status = "ready_with_render_failures"
+	if failed > 0 {
+		manifest.Message = fmt.Sprintf("Daily package ready with %d rendered reel(s) and %d failed render(s). Failed reels do not include fake video files.", completed, failed)
+		return
+	}
+	manifest.Message = fmt.Sprintf("Daily package ready with %d rendered reel(s). Remaining reels are not_attempted or rendering.", completed)
+}
+
+func dailyPackageRenderCounts(reels []storage.DailyPackageManifestReel) (completed int, failed int) {
+	for _, reel := range reels {
+		switch reel.RenderStatus {
+		case "rendered":
+			completed++
+		case "failed":
+			failed++
+		}
+	}
+	return completed, failed
+}
+
+func manifestReelsSnapshotFromZip(zipPath string) []storage.DailyPackageManifestReel {
+	_, manifest, err := storage.ReadDailyReelsPackageZip(zipPath)
+	if err != nil {
+		return nil
+	}
+	return append([]storage.DailyPackageManifestReel{}, manifest.Reels...)
+}
+
 func dailyPackageResponseFromManifest(manifest storage.DailyPackageManifest) dailyPackageResponse {
 	return dailyPackageResponse{
 		Status:        manifest.Status,
@@ -490,6 +637,46 @@ func (s *Server) finishDailyPackageRenderJob(jobID, status, renderStatus, messag
 	job.Message = message
 	if status == "failed" {
 		job.RenderError = message
+	}
+	if pkg != nil {
+		job.Reels = append([]storage.DailyPackageManifestReel{}, pkg.Reels...)
+		job.CompletedCount, job.FailedCount = dailyPackageRenderCounts(pkg.Reels)
+	}
+	job.CompletedAt = time.Now().UTC().Format(time.RFC3339)
+	job.PackageResponse = pkg
+	s.dailyRenderJobs[jobID] = job
+}
+
+func (s *Server) updateDailyPackageRenderProgress(jobID string, total int, currentReel string, reels []storage.DailyPackageManifestReel, message string) {
+	completed, failed := dailyPackageRenderCounts(reels)
+	s.dailyRenderMu.Lock()
+	defer s.dailyRenderMu.Unlock()
+	job := s.dailyRenderJobs[jobID]
+	job.Status = "rendering"
+	job.RenderStatus = "rendering"
+	job.TotalReels = total
+	job.CurrentReel = currentReel
+	job.CompletedCount = completed
+	job.FailedCount = failed
+	job.Reels = append([]storage.DailyPackageManifestReel{}, reels...)
+	job.Message = message
+	s.dailyRenderJobs[jobID] = job
+}
+
+func (s *Server) completeDailyPackageBatchJob(jobID, message string, pkg *dailyPackageResponse) {
+	s.dailyRenderMu.Lock()
+	defer s.dailyRenderMu.Unlock()
+	job := s.dailyRenderJobs[jobID]
+	job.Status = "completed"
+	job.RenderStatus = "rendered"
+	job.CurrentReel = ""
+	job.Message = message
+	if pkg != nil {
+		job.Reels = append([]storage.DailyPackageManifestReel{}, pkg.Reels...)
+		job.CompletedCount, job.FailedCount = dailyPackageRenderCounts(pkg.Reels)
+		if job.FailedCount > 0 {
+			job.RenderStatus = "failed"
+		}
 	}
 	job.CompletedAt = time.Now().UTC().Format(time.RFC3339)
 	job.PackageResponse = pkg

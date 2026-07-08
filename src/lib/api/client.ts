@@ -477,9 +477,14 @@ export interface DailyPackageRenderJob {
   id: string;
   reel_id: string;
   status: 'rendering' | 'completed' | 'failed';
-  render_status: 'rendered' | 'failed' | 'not_attempted' | string;
+  render_status: 'rendered' | 'failed' | 'not_attempted' | 'rendering' | string;
   render_error?: string;
   message: string;
+  total_reels: number;
+  current_reel?: string;
+  completed_count: number;
+  failed_count: number;
+  reels?: DailyPackageReelStatus[];
   started_at: string;
   completed_at?: string;
   package?: DailyPackageResponse;
@@ -487,6 +492,10 @@ export interface DailyPackageRenderJob {
 
 export async function renderDailyPackageReel(reelID: string): Promise<DailyPackageRenderJob> {
   return apiFetch(`/api/daily-package/reels/${encodeURIComponent(reelID)}/render`, { method: 'POST' });
+}
+
+export async function renderAllDailyPackageReels(): Promise<DailyPackageRenderJob> {
+  return apiFetch('/api/daily-package/render-all', { method: 'POST' });
 }
 
 export async function getDailyPackageRenderJob(jobID: string): Promise<DailyPackageRenderJob> {

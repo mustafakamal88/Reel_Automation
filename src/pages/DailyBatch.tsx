@@ -4,6 +4,7 @@ import {
   createDailyPackage,
   downloadDailyPackageZip,
   getDailyPackageRenderJob,
+  renderAllDailyPackageReels,
   renderDailyPackageReel,
   type DailyPackageRenderJob,
   type DailyPackageResponse,
@@ -34,6 +35,7 @@ export function DailyBatchPage() {
   const [pkg, setPkg] = useState<DailyPackageResponse | null>(null);
   const [renderJob, setRenderJob] = useState<DailyPackageRenderJob | null>(null);
   const [renderState, setRenderState] = useState<ActionState>('idle');
+  const [batchRenderState, setBatchRenderState] = useState<ActionState>('idle');
 
   const today = new Date().toISOString().split('T')[0];
 
@@ -41,6 +43,7 @@ export function DailyBatchPage() {
     setState('pending');
     setDownloadState('idle');
     setRenderState('idle');
+    setBatchRenderState('idle');
     setRenderJob(null);
     setError(null);
     setPkg(null);
@@ -87,6 +90,20 @@ export function DailyBatchPage() {
     }
   }
 
+  async function handleRenderAll6() {
+    if (!pkg) return;
+    setBatchRenderState('pending');
+    setRenderState('idle');
+    setError(null);
+    try {
+      const job = await renderAllDailyPackageReels();
+      setRenderJob(job);
+    } catch (err) {
+      setError(errorMessage(err, 'Batch render failed to start'));
+      setBatchRenderState('error');
+    }
+  }
+
   useEffect(() => {
     if (!renderJob || renderJob.status !== 'rendering') return undefined;
     let cancelled = false;
@@ -97,17 +114,27 @@ export function DailyBatchPage() {
         setRenderJob(job);
         if (job.status === 'completed') {
           if (job.package) setPkg(job.package);
-          setRenderState('ready');
+          if (job.reel_id === 'all') {
+            setBatchRenderState('ready');
+          } else {
+            setRenderState('ready');
+          }
           window.clearInterval(timer);
         }
         if (job.status === 'failed') {
-          setRenderState('error');
+          if (job.reel_id === 'all') {
+            setBatchRenderState('error');
+          } else {
+            setRenderState('error');
+          }
+          if (job.package) setPkg(job.package);
           setError(job.render_error || job.message);
           window.clearInterval(timer);
         }
       } catch (err) {
         if (cancelled) return;
         setRenderState('error');
+        setBatchRenderState('error');
         setError(errorMessage(err, 'Render status check failed'));
         window.clearInterval(timer);
       }
@@ -118,7 +145,9 @@ export function DailyBatchPage() {
     };
   }, [renderJob]);
 
-  const renderFailures = pkg?.reels.filter((reel) => !reel.has_video) ?? [];
+  const visibleReels = renderJob?.reels?.length ? renderJob.reels : (pkg?.reels ?? []);
+  const missingVideoReels = visibleReels.filter((reel) => !reel.has_video);
+  const failedReels = visibleReels.filter((reel) => reel.render_status === 'failed');
   const reel01 = pkg?.reels.find((reel) => reel.rank === 1);
 
   return (
@@ -192,11 +221,11 @@ export function DailyBatchPage() {
           <button
             className={`generate-btn${renderState === 'ready' ? ' done' : ' idle'}`}
             onClick={handleRenderReel01}
-            disabled={!pkg || renderState === 'pending' || reel01?.has_video}
+            disabled={!pkg || renderState === 'pending' || batchRenderState === 'pending' || reel01?.has_video}
             style={{
               width: '100%',
-              opacity: pkg && !reel01?.has_video ? 1 : 0.55,
-              cursor: pkg && !reel01?.has_video ? 'pointer' : 'not-allowed',
+              opacity: pkg && batchRenderState !== 'pending' && !reel01?.has_video ? 1 : 0.55,
+              cursor: pkg && batchRenderState !== 'pending' && !reel01?.has_video ? 'pointer' : 'not-allowed',
             }}
           >
             <span className="generate-btn-dot" style={{
@@ -210,9 +239,37 @@ export function DailyBatchPage() {
             {renderState === 'error' && 'Render failed'}
             {renderState === 'idle' && (reel01?.has_video ? 'reel-01 rendered' : 'Render reel-01')}
           </button>
+          <button
+            className={`generate-btn${batchRenderState === 'ready' ? ' done' : ' idle'}`}
+            onClick={handleRenderAll6}
+            disabled={!pkg || batchRenderState === 'pending' || renderState === 'pending'}
+            style={{
+              width: '100%',
+              opacity: pkg && renderState !== 'pending' ? 1 : 0.55,
+              cursor: pkg && renderState !== 'pending' ? 'pointer' : 'not-allowed',
+            }}
+          >
+            <span className="generate-btn-dot" style={{
+              background: batchRenderState === 'ready' ? 'var(--green)'
+                : batchRenderState === 'error' ? 'var(--red)'
+                : batchRenderState === 'pending' ? 'var(--accent)'
+                : '#15121f',
+            }} />
+            {batchRenderState === 'pending' && 'Rendering all 6...'}
+            {batchRenderState === 'ready' && 'Batch render finished'}
+            {batchRenderState === 'error' && 'Batch render failed'}
+            {batchRenderState === 'idle' && 'Render All 6'}
+          </button>
           {renderJob && (
-            <div style={{ fontSize: 11, color: renderState === 'error' ? 'var(--red)' : 'var(--text-dim)', fontFamily: 'var(--font-mono)', lineHeight: 1.5 }}>
+            <div style={{ fontSize: 11, color: renderState === 'error' || batchRenderState === 'error' ? 'var(--red)' : 'var(--text-dim)', fontFamily: 'var(--font-mono)', lineHeight: 1.5 }}>
               {renderJob.status} · {renderJob.message}
+              {renderJob.reel_id === 'all' && (
+                <>
+                  <br />
+                  progress: {renderJob.completed_count}/{renderJob.total_reels} rendered · {renderJob.failed_count} failed
+                  {renderJob.current_reel ? ` · current: ${renderJob.current_reel}` : ''}
+                </>
+              )}
               {renderJob.render_error && (
                 <>
                   <br />
@@ -274,7 +331,7 @@ export function DailyBatchPage() {
               <div style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.6 }}>
                 {pkg.message}
               </div>
-              {renderFailures.length > 0 && (
+              {missingVideoReels.length > 0 && (
                 <div style={{
                   fontSize: 11,
                   color: '#eab86a',
@@ -284,12 +341,25 @@ export function DailyBatchPage() {
                   borderRadius: 6,
                   padding: '8px 10px',
                 }}>
-                  Video rendering did not complete for reel(s): {renderFailures.map((reel) => reel.rank).join(', ')}.
+                  Video rendering did not complete for reel(s): {missingVideoReels.map((reel) => reel.rank).join(', ')}.
                   Text assets and trend evidence are included without fake video files.
                 </div>
               )}
+              {failedReels.length > 0 && (
+                <div style={{
+                  fontSize: 11,
+                  color: 'var(--red)',
+                  lineHeight: 1.6,
+                  background: 'rgba(232,115,107,0.08)',
+                  border: '1px solid rgba(232,115,107,0.25)',
+                  borderRadius: 6,
+                  padding: '8px 10px',
+                }}>
+                  Failed reel(s): {failedReels.map((reel) => `reel-${String(reel.rank).padStart(2, '0')}${reel.render_error ? ` (${reel.render_error})` : ''}`).join(', ')}.
+                </div>
+              )}
               <div style={{ display: 'grid', gap: 8 }}>
-                {pkg.reels.map((reel) => (
+                {visibleReels.map((reel) => (
                   <div
                     key={`${reel.rank}-${reel.candidate_id}`}
                     style={{

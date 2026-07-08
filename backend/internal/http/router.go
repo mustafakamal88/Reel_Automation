@@ -11,17 +11,19 @@ import (
 	"trendcortex/api/internal/content"
 	"trendcortex/api/internal/database"
 	"trendcortex/api/internal/oauth"
+	"trendcortex/api/internal/renderer"
 	trenddiscovery "trendcortex/api/internal/trends"
 )
 
 // Server holds the shared dependencies injected into all HTTP handlers.
 type Server struct {
-	cfg      *config.Config
-	db       *database.DB
-	registry oauth.Registry
-	audit    *audit.Logger
-	content  content.Generator
-	discover func(ctx context.Context, region, language string, limit int) (trenddiscovery.DiscoverResult, error)
+	cfg                    *config.Config
+	db                     *database.DB
+	registry               oauth.Registry
+	audit                  *audit.Logger
+	content                content.Generator
+	discover               func(ctx context.Context, region, language string, limit int) (trenddiscovery.DiscoverResult, error)
+	renderDailyPackageReel func(ctx context.Context, cfg renderer.Config, input renderer.ReelInput) renderer.Result
 
 	dailyRenderMu   sync.Mutex
 	dailyRenderJobs map[string]dailyPackageRenderJob
@@ -89,6 +91,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /api/batches/{id}/export", s.handleCreateExportJob)
 	mux.HandleFunc("POST /api/daily-package", s.handleCreateDailyPackage)
 	mux.HandleFunc("GET /api/daily-package/download", s.handleDownloadDailyPackage)
+	mux.HandleFunc("POST /api/daily-package/render-all", s.handleRenderAllDailyPackageReels)
 	mux.HandleFunc("POST /api/daily-package/reels/{id}/render", s.handleRenderDailyPackageReel)
 	mux.HandleFunc("GET /api/daily-package/render-jobs/{id}", s.handleGetDailyPackageRenderJob)
 
