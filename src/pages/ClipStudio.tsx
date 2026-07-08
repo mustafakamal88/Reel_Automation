@@ -72,7 +72,11 @@ function StatusPill({ children }: { children: React.ReactNode }) {
   );
 }
 
+type ClipStudioMode = 'video' | 'ai';
+type ErrorScope = ClipStudioMode | 'global';
+
 export function ClipStudioPage() {
+  const [activeMode, setActiveMode] = useState<ClipStudioMode>('video');
   const [sourceUrl, setSourceUrl] = useState('');
   const [source, setSource] = useState<ClipStudioSourceResponse | null>(null);
   const [prompt, setPrompt] = useState('make funny 3-minute clips with top and bottom branding');
@@ -96,6 +100,7 @@ export function ClipStudioPage() {
   const [downloadBusy, setDownloadBusy] = useState(false);
   const [result, setResult] = useState<ClipStudioGenerateResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [errorScope, setErrorScope] = useState<ErrorScope>('global');
   const [aiTopic, setAiTopic] = useState('');
   const [aiPrompt, setAiPrompt] = useState('Realistic vertical scenes for a fast-paced trend explainer');
   const [aiStyle, setAiStyle] = useState('realistic_editorial');
@@ -109,10 +114,24 @@ export function ClipStudioPage() {
 
   const hasSource = useMemo(() => Boolean(source?.source_id || sourceUrl.trim()), [source, sourceUrl]);
   const canGenerate = hasSource && prompt.trim() !== '' && rightsConfirmed && !busy && !uploadBusy;
+  const packageReady = Boolean(result?.download_url && result.zip_filename);
+  const aiPackageReady = Boolean(aiResult?.download_url && aiResult.zip_filename);
+  const clipSourceUnsupported = Boolean(source && !source.can_render);
+  const clipStatusMessage = useMemo(() => {
+    if (!hasSource) return 'Paste a video URL or upload a video to begin.';
+    if (clipSourceUnsupported) return 'Upload the source file or connect an approved source before rendering.';
+    if (!rightsConfirmed) return 'Confirm source rights before generating clips.';
+    if (!prompt.trim()) return 'Describe what clips you want before generating.';
+    if (uploadBusy) return 'Uploading source video...';
+    if (busy) return 'Generating clips and preparing the ZIP...';
+    if (packageReady) return 'Package ready. Download the ZIP when you are ready.';
+    return 'Ready to generate clips.';
+  }, [busy, clipSourceUnsupported, hasSource, packageReady, prompt, rightsConfirmed, uploadBusy]);
+  const currentError = error && (errorScope === 'global' || errorScope === activeMode) ? error : null;
 
   useEffect(() => {
-    void refreshWorkerStatus();
-  }, []);
+    if (activeMode === 'ai') void refreshWorkerStatus();
+  }, [activeMode]);
 
   async function refreshWorkerStatus() {
     try {
@@ -124,6 +143,7 @@ export function ClipStudioPage() {
 
   async function handlePlanAIScenes() {
     setAiBusy(true);
+    setErrorScope('ai');
     setError(null);
     setAiResult(null);
     try {
@@ -144,6 +164,7 @@ export function ClipStudioPage() {
 
   async function handleGenerateAIScenes() {
     setAiBusy(true);
+    setErrorScope('ai');
     setError(null);
     try {
       const generated = await generateAIScenes({
@@ -174,6 +195,7 @@ export function ClipStudioPage() {
   async function handleDownloadAIScenes() {
     if (!aiResult?.download_url || !aiResult.zip_filename) return;
     setAiDownloadBusy(true);
+    setErrorScope('ai');
     setError(null);
     try {
       await downloadClipStudioZip(aiResult.download_url, aiResult.zip_filename);
@@ -187,6 +209,7 @@ export function ClipStudioPage() {
   async function handleUpload(file: File | undefined) {
     if (!file) return;
     setUploadBusy(true);
+    setErrorScope('video');
     setError(null);
     setResult(null);
     try {
@@ -203,6 +226,7 @@ export function ClipStudioPage() {
 
   async function handleGenerate() {
     setBusy(true);
+    setErrorScope('video');
     setError(null);
     setResult(null);
     try {
@@ -262,7 +286,12 @@ export function ClipStudioPage() {
         },
       });
       setResult(generated);
-      if (!generated.success) setError(generated.notes || activeSource?.message || 'Clip generation did not complete');
+      if (!generated.success) {
+        const unsupported = activeSource && !activeSource.can_render;
+        setError(unsupported
+          ? 'Upload the source file or connect an approved source before rendering.'
+          : generated.notes || activeSource?.message || 'Clip generation did not complete');
+      }
     } catch (err) {
       setError(errMsg(err, 'Clip generation failed'));
     } finally {
@@ -273,6 +302,7 @@ export function ClipStudioPage() {
   async function handleDownload() {
     if (!result?.download_url || !result.zip_filename) return;
     setDownloadBusy(true);
+    setErrorScope('video');
     setError(null);
     try {
       await downloadClipStudioZip(result.download_url, result.zip_filename);
@@ -285,13 +315,49 @@ export function ClipStudioPage() {
 
   return (
     <section className="page-section">
-      <div className="empty-state" style={{ marginBottom: 16 }}>
-        <div className="empty-icon">CG</div>
-        <div className="empty-title">Clip Generator</div>
-        <div className="empty-desc">Paste a video URL or upload a source, describe the clips, then generate a downloadable package.</div>
+      <div style={{ maxWidth: 920, marginBottom: 14 }}>
+        <div style={{ fontSize: 18, fontWeight: 800, color: 'var(--text-primary)' }}>Clip Generator</div>
+        <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>
+          Paste a URL or upload a video, describe the clips you want, then download a ZIP package.
+        </div>
       </div>
 
-      {error && (
+      <div role="tablist" aria-label="Clip generator mode" style={{
+        display: 'inline-flex',
+        gap: 4,
+        background: 'var(--bg-subtle)',
+        border: '1px solid var(--border-strong)',
+        borderRadius: 6,
+        padding: 4,
+        marginBottom: 16,
+      }}>
+        {([
+          ['video', 'Clip from Video'],
+          ['ai', 'AI Scene Generator'],
+        ] as const).map(([mode, label]) => (
+          <button
+            key={mode}
+            type="button"
+            role="tab"
+            aria-selected={activeMode === mode}
+            onClick={() => setActiveMode(mode)}
+            style={{
+              border: 0,
+              borderRadius: 4,
+              padding: '8px 12px',
+              cursor: 'pointer',
+              fontSize: 12,
+              fontWeight: 800,
+              color: activeMode === mode ? '#ffffff' : 'var(--text-secondary)',
+              background: activeMode === mode ? '#15121f' : 'transparent',
+            }}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {currentError && (
         <div style={{
           fontSize: 12,
           color: 'var(--red)',
@@ -302,223 +368,239 @@ export function ClipStudioPage() {
           borderRadius: 6,
           padding: '8px 10px',
         }}>
-          {error}
+          {currentError}
         </div>
       )}
 
-      <div className="settings-card" style={{ display: 'flex', flexDirection: 'column', gap: 14, maxWidth: 920, marginBottom: 16 }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
-          <div>
-            <div style={{ fontSize: 14, fontWeight: 800, color: 'var(--text-primary)' }}>AI Scene Generator</div>
-            <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 3 }}>
-              {workerStatus?.message || 'Connect local AI worker to generate AI scenes.'}
+      {activeMode === 'video' && (
+        <div className="settings-card" style={{ display: 'flex', flexDirection: 'column', gap: 14, maxWidth: 920 }}>
+          <div style={{ fontSize: 14, fontWeight: 800, color: 'var(--text-primary)' }}>Clip from Video</div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 10, alignItems: 'end' }}>
+            <Field label="Paste video URL">
+              <input
+                value={sourceUrl}
+                onChange={event => {
+                  setSourceUrl(event.target.value);
+                  setSource(null);
+                }}
+                placeholder="https://example.com/source.mp4"
+                style={inputStyle()}
+              />
+            </Field>
+            <Field label="Upload video">
+              <input
+                type="file"
+                accept="video/mp4,video/quicktime,video/webm,.mp4,.mov,.webm"
+                onChange={event => void handleUpload(event.target.files?.[0])}
+                style={inputStyle()}
+              />
+            </Field>
+          </div>
+
+          <div style={{
+            fontSize: 12,
+            color: clipSourceUnsupported ? 'var(--red)' : 'var(--text-muted)',
+            background: clipSourceUnsupported ? 'rgba(232,115,107,0.08)' : 'var(--bg-subtle)',
+            border: clipSourceUnsupported ? '1px solid rgba(232,115,107,0.25)' : '1px solid var(--border)',
+            borderRadius: 6,
+            padding: '8px 10px',
+          }}>
+            {clipStatusMessage}
+          </div>
+
+          {(source || uploadBusy) && (
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+              {uploadBusy && <StatusPill>uploading</StatusPill>}
+              {source?.source_id && <StatusPill>{source.source_id}</StatusPill>}
+              {source?.status && <StatusPill>{source.status}</StatusPill>}
+              {source?.message && <StatusPill>{source.message}</StatusPill>}
             </div>
-          </div>
-          <button className="generate-btn idle" onClick={refreshWorkerStatus} type="button">
-            <span className="generate-btn-dot" style={{ background: workerStatus?.configured ? '#0f766e' : '#991b1b' }} />
-            Worker Status
-          </button>
-        </div>
+          )}
 
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 10 }}>
-          <Field label="Topic">
-            <input value={aiTopic} onChange={event => setAiTopic(event.target.value)} placeholder="AI search trend, finance news, creator drama..." style={inputStyle()} />
-          </Field>
-          <Field label="Style preset">
-            <select value={aiStyle} onChange={event => setAiStyle(event.target.value)} style={inputStyle()}>
-              <option value="realistic_editorial">Realistic editorial</option>
-              <option value="cinematic_documentary">Cinematic documentary</option>
-              <option value="ugc_phone_camera">UGC phone camera</option>
-            </select>
-          </Field>
-          <Field label="Target length">
-            <select value={aiLength} onChange={event => setAiLength(Number(event.target.value) as 30 | 60 | 180)} style={inputStyle()}>
-              <option value={30}>30s</option>
-              <option value={60}>60s</option>
-              <option value={180}>3min</option>
-            </select>
-          </Field>
-          <Field label="Branding text">
-            <input value={aiBranding} onChange={event => setAiBranding(event.target.value)} style={inputStyle()} />
-          </Field>
-        </div>
-
-        <Field label="Prompt">
-          <textarea
-            value={aiPrompt}
-            onChange={event => setAiPrompt(event.target.value)}
-            rows={4}
-            style={{ ...inputStyle(), resize: 'vertical', minHeight: 104, fontSize: 13 }}
-          />
-        </Field>
-
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          <button className="generate-btn idle" onClick={handlePlanAIScenes} disabled={aiBusy || !aiPrompt.trim()} type="button">
-            <span className="generate-btn-dot" style={{ background: '#15121f' }} />
-            Generate scene plan
-          </button>
-          <button className="generate-btn idle" onClick={handleGenerateAIScenes} disabled={aiBusy || !aiPrompt.trim()} type="button">
-            <span className="generate-btn-dot" style={{ background: workerStatus?.configured ? '#0f766e' : '#991b1b' }} />
-            {aiBusy ? 'Generating...' : 'Generate video using local worker'}
-          </button>
-          <button className="generate-btn idle" onClick={handleDownloadAIScenes} disabled={aiDownloadBusy || !aiResult?.download_url || !aiResult.zip_filename} type="button">
-            <span className="generate-btn-dot" style={{ background: '#15121f' }} />
-            {aiDownloadBusy ? 'Downloading...' : 'Download AI ZIP'}
-          </button>
-        </div>
-
-        {(aiPlan || aiResult) && (
-          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-            <StatusPill>{aiResult?.renderer_version || aiPlan?.renderer_version}</StatusPill>
-            <StatusPill>worker: {String(aiResult?.worker_url_configured ?? workerStatus?.configured ?? false)}</StatusPill>
-            <StatusPill>status: {aiResult?.generation_status || workerStatus?.status || 'planned'}</StatusPill>
-            <StatusPill>model: {aiResult?.model_hint || aiPlan?.model_hint || 'auto'}</StatusPill>
-            {aiResult?.zip_filename && <StatusPill>{aiResult.zip_filename}</StatusPill>}
-            {aiResult?.fallback_reason && <StatusPill>{aiResult.fallback_reason}</StatusPill>}
-          </div>
-        )}
-
-        {aiPlan?.scenes && (
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 8 }}>
-            {aiPlan.scenes.map(scene => (
-              <div key={scene.scene_id} style={{ border: '1px solid var(--border)', borderRadius: 6, padding: 10, background: 'var(--bg-subtle)' }}>
-                <div style={{ fontSize: 11, fontFamily: 'var(--font-mono)', color: 'var(--text-dim)' }}>{scene.scene_id} · {scene.duration_seconds.toFixed(1)}s · {scene.model_hint}</div>
-                <div style={{ fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.5, marginTop: 6 }}>{scene.visual_prompt}</div>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-
-      <div className="settings-card" style={{ display: 'flex', flexDirection: 'column', gap: 14, maxWidth: 920 }}>
-        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) auto', gap: 10, alignItems: 'end' }}>
-          <Field label="Paste video URL">
-            <input
-              value={sourceUrl}
-              onChange={event => {
-                setSourceUrl(event.target.value);
-                setSource(null);
-              }}
-              placeholder="https://example.com/source.mp4"
-              style={inputStyle()}
+          <Field label="Prompt / instruction">
+            <textarea
+              value={prompt}
+              onChange={event => setPrompt(event.target.value)}
+              rows={4}
+              placeholder="make funny 3-minute clips with top and bottom branding"
+              style={{ ...inputStyle(), resize: 'vertical', minHeight: 112, fontSize: 13 }}
             />
           </Field>
-          <Field label="Upload video">
-            <input
-              type="file"
-              accept="video/mp4,video/quicktime,video/webm,.mp4,.mov,.webm"
-              onChange={event => void handleUpload(event.target.files?.[0])}
-              style={{ ...inputStyle(), width: 230 }}
-            />
-          </Field>
-        </div>
 
-        {(source || uploadBusy) && (
-          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-            {uploadBusy && <StatusPill>uploading</StatusPill>}
-            {source?.source_id && <StatusPill>{source.source_id}</StatusPill>}
-            {source?.status && <StatusPill>{source.status}</StatusPill>}
-            {source?.message && <StatusPill>{source.message}</StatusPill>}
-          </div>
-        )}
-
-        <Field label="Prompt / instruction">
-          <textarea
-            value={prompt}
-            onChange={event => setPrompt(event.target.value)}
-            rows={4}
-            placeholder="make funny 3-minute clips with top and bottom branding"
-            style={{ ...inputStyle(), resize: 'vertical', minHeight: 112, fontSize: 13 }}
-          />
-        </Field>
-
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 10 }}>
-          <Field label="Clip length">
-            <select value={clipLength} onChange={event => setClipLength(event.target.value as typeof clipLength)} style={inputStyle()}>
-              <option value="auto">Auto</option>
-              <option value="15s">15s</option>
-              <option value="30s">30s</option>
-              <option value="60s">60s</option>
-              <option value="3min">3min</option>
-            </select>
-          </Field>
-          <Field label="Number of clips">
-            <select value={clipCount} onChange={event => setClipCount(Number(event.target.value) as 1 | 3 | 6)} style={inputStyle()}>
-              <option value={1}>1</option>
-              <option value={3}>3</option>
-              <option value={6}>6</option>
-            </select>
-          </Field>
-        </div>
-
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 10 }}>
-          <Field label="Top text">
-            <input value={topText} onChange={event => setTopText(event.target.value)} style={inputStyle()} />
-          </Field>
-          <Field label="Bottom text">
-            <input value={bottomText} onChange={event => setBottomText(event.target.value)} style={inputStyle()} />
-          </Field>
-          <Field label="Watermark / channel name">
-            <input value={watermark} onChange={event => setWatermark(event.target.value)} style={inputStyle()} />
-          </Field>
-        </div>
-
-        <details style={{ borderTop: '1px solid var(--border)', paddingTop: 12 }}>
-          <summary style={{ cursor: 'pointer', fontSize: 12, fontWeight: 700, color: 'var(--text-secondary)' }}>
-            Advanced / Rights & Attribution
-          </summary>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 10, marginTop: 12 }}>
-            <Field label="Source model">
-              <select value={sourceModel} onChange={event => setSourceModel(event.target.value as ClipSourceModel)} style={inputStyle()}>
-                {SOURCE_MODELS.map(item => <option key={item.value} value={item.value}>{item.label}</option>)}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 10 }}>
+            <Field label="Clip length">
+              <select value={clipLength} onChange={event => setClipLength(event.target.value as typeof clipLength)} style={inputStyle()}>
+                <option value="auto">Auto</option>
+                <option value="15s">15s</option>
+                <option value="30s">30s</option>
+                <option value="60s">60s</option>
+                <option value="3min">3min</option>
               </select>
             </Field>
-            <Field label="Source title">
-              <input value={sourceTitle} onChange={event => setSourceTitle(event.target.value)} style={inputStyle()} />
-            </Field>
-            <Field label="Source creator">
-              <input value={sourceCreator} onChange={event => setSourceCreator(event.target.value)} style={inputStyle()} />
-            </Field>
-            <Field label="License">
-              <input value={sourceLicense} onChange={event => setSourceLicense(event.target.value)} style={inputStyle()} />
-            </Field>
-            <Field label="Attribution text">
-              <input value={attributionText} onChange={event => setAttributionText(event.target.value)} style={inputStyle()} />
-            </Field>
-            <Field label="Copyright overlay">
-              <input value={copyrightOverlayText} onChange={event => setCopyrightOverlayText(event.target.value)} style={inputStyle()} />
-            </Field>
-            <Field label="Platform source">
-              <input value={platformSource} onChange={event => setPlatformSource(event.target.value)} style={inputStyle()} />
+            <Field label="Number of clips">
+              <select value={clipCount} onChange={event => setClipCount(Number(event.target.value) as 1 | 3 | 6)} style={inputStyle()}>
+                <option value={1}>1</option>
+                <option value={3}>3</option>
+                <option value={6}>6</option>
+              </select>
             </Field>
           </div>
-        </details>
 
-        <label style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 12, color: 'var(--text-secondary)' }}>
-          <input type="checkbox" checked={rightsConfirmed} onChange={event => setRightsConfirmed(event.target.checked)} />
-          I confirm I have rights or permission to use this source.
-        </label>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 10 }}>
+            <Field label="Top text">
+              <input value={topText} onChange={event => setTopText(event.target.value)} style={inputStyle()} />
+            </Field>
+            <Field label="Bottom text">
+              <input value={bottomText} onChange={event => setBottomText(event.target.value)} style={inputStyle()} />
+            </Field>
+            <Field label="Watermark / channel name">
+              <input value={watermark} onChange={event => setWatermark(event.target.value)} style={inputStyle()} />
+            </Field>
+          </div>
 
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          <button className="generate-btn idle" onClick={handleGenerate} disabled={!canGenerate} type="button">
-            <span className="generate-btn-dot" style={{ background: '#15121f' }} />
-            {busy ? 'Generating clips...' : 'Generate Clips'}
-          </button>
-          <button className="generate-btn idle" onClick={handleDownload} disabled={downloadBusy || !result?.download_url || !result.zip_filename} type="button">
-            <span className="generate-btn-dot" style={{ background: '#15121f' }} />
-            {downloadBusy ? 'Downloading...' : 'Download ZIP'}
-          </button>
+          <label style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 12, color: 'var(--text-secondary)' }}>
+            <input type="checkbox" checked={rightsConfirmed} onChange={event => setRightsConfirmed(event.target.checked)} />
+            I confirm I have rights or permission to use this source.
+          </label>
+
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <button className="generate-btn idle" onClick={handleGenerate} disabled={!canGenerate} type="button">
+              <span className="generate-btn-dot" style={{ background: canGenerate ? '#15121f' : '#6b7280' }} />
+              {busy ? 'Generating clips...' : 'Generate Clips'}
+            </button>
+            <button className="generate-btn idle" onClick={handleDownload} disabled={downloadBusy || !packageReady} type="button">
+              <span className="generate-btn-dot" style={{ background: packageReady ? '#15121f' : '#6b7280' }} />
+              {downloadBusy ? 'Downloading...' : 'Download ZIP'}
+            </button>
+          </div>
+
+          <details style={{ borderTop: '1px solid var(--border)', paddingTop: 12 }}>
+            <summary style={{ cursor: 'pointer', fontSize: 12, fontWeight: 700, color: 'var(--text-secondary)' }}>
+              Advanced / Rights & Attribution
+            </summary>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 10, marginTop: 12 }}>
+              <Field label="Source model">
+                <select value={sourceModel} onChange={event => setSourceModel(event.target.value as ClipSourceModel)} style={inputStyle()}>
+                  {SOURCE_MODELS.map(item => <option key={item.value} value={item.value}>{item.label}</option>)}
+                </select>
+              </Field>
+              <Field label="Source title">
+                <input value={sourceTitle} onChange={event => setSourceTitle(event.target.value)} style={inputStyle()} />
+              </Field>
+              <Field label="Source creator">
+                <input value={sourceCreator} onChange={event => setSourceCreator(event.target.value)} style={inputStyle()} />
+              </Field>
+              <Field label="License">
+                <input value={sourceLicense} onChange={event => setSourceLicense(event.target.value)} style={inputStyle()} />
+              </Field>
+              <Field label="Attribution text">
+                <input value={attributionText} onChange={event => setAttributionText(event.target.value)} style={inputStyle()} />
+              </Field>
+              <Field label="Copyright overlay">
+                <input value={copyrightOverlayText} onChange={event => setCopyrightOverlayText(event.target.value)} style={inputStyle()} />
+              </Field>
+              <Field label="Platform source">
+                <input value={platformSource} onChange={event => setPlatformSource(event.target.value)} style={inputStyle()} />
+              </Field>
+            </div>
+          </details>
+
+          {result && (
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+              <StatusPill>render: {result.render_status}</StatusPill>
+              <StatusPill>highlight_detection: {result.highlight_detection}</StatusPill>
+              {result.zip_filename && <StatusPill>{result.zip_filename}</StatusPill>}
+              {result.generated_clip_jobs?.map(job => <StatusPill key={job.clip_id}>{job.clip_id}: {job.render_status}</StatusPill>)}
+            </div>
+          )}
         </div>
+      )}
 
-        {result && (
-          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-            <StatusPill>render: {result.render_status}</StatusPill>
-            <StatusPill>highlight_detection: {result.highlight_detection}</StatusPill>
-            {result.zip_filename && <StatusPill>{result.zip_filename}</StatusPill>}
-            {result.generated_clip_jobs?.map(job => <StatusPill key={job.clip_id}>{job.clip_id}: {job.render_status}</StatusPill>)}
+      {activeMode === 'ai' && (
+        <div className="settings-card" style={{ display: 'flex', flexDirection: 'column', gap: 14, maxWidth: 920 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+            <div>
+              <div style={{ fontSize: 14, fontWeight: 800, color: 'var(--text-primary)' }}>AI Scene Generator</div>
+              <div style={{ fontSize: 12, color: workerStatus?.configured ? 'var(--text-muted)' : 'var(--red)', marginTop: 3 }}>
+                {workerStatus?.message || 'Connect local AI worker to generate AI scenes.'}
+              </div>
+            </div>
+            <button className="generate-btn idle" onClick={refreshWorkerStatus} type="button">
+              <span className="generate-btn-dot" style={{ background: workerStatus?.configured ? '#0f766e' : '#991b1b' }} />
+              Worker Status
+            </button>
           </div>
-        )}
-      </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 10 }}>
+            <Field label="Topic">
+              <input value={aiTopic} onChange={event => setAiTopic(event.target.value)} placeholder="AI search trend, finance news, creator drama..." style={inputStyle()} />
+            </Field>
+            <Field label="Style preset">
+              <select value={aiStyle} onChange={event => setAiStyle(event.target.value)} style={inputStyle()}>
+                <option value="realistic_editorial">Realistic editorial</option>
+                <option value="cinematic_documentary">Cinematic documentary</option>
+                <option value="ugc_phone_camera">UGC phone camera</option>
+              </select>
+            </Field>
+            <Field label="Target length">
+              <select value={aiLength} onChange={event => setAiLength(Number(event.target.value) as 30 | 60 | 180)} style={inputStyle()}>
+                <option value={30}>30s</option>
+                <option value={60}>60s</option>
+                <option value={180}>3min</option>
+              </select>
+            </Field>
+            <Field label="Branding text">
+              <input value={aiBranding} onChange={event => setAiBranding(event.target.value)} style={inputStyle()} />
+            </Field>
+          </div>
+
+          <Field label="Prompt">
+            <textarea
+              value={aiPrompt}
+              onChange={event => setAiPrompt(event.target.value)}
+              rows={4}
+              style={{ ...inputStyle(), resize: 'vertical', minHeight: 104, fontSize: 13 }}
+            />
+          </Field>
+
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <button className="generate-btn idle" onClick={handlePlanAIScenes} disabled={aiBusy || !aiPrompt.trim()} type="button">
+              <span className="generate-btn-dot" style={{ background: '#15121f' }} />
+              Generate scene plan
+            </button>
+            <button className="generate-btn idle" onClick={handleGenerateAIScenes} disabled={aiBusy || !aiPrompt.trim()} type="button">
+              <span className="generate-btn-dot" style={{ background: workerStatus?.configured ? '#0f766e' : '#991b1b' }} />
+              {aiBusy ? 'Generating scenes...' : 'Generate video using local worker'}
+            </button>
+            <button className="generate-btn idle" onClick={handleDownloadAIScenes} disabled={aiDownloadBusy || !aiPackageReady} type="button">
+              <span className="generate-btn-dot" style={{ background: aiPackageReady ? '#15121f' : '#6b7280' }} />
+              {aiDownloadBusy ? 'Downloading...' : 'Download AI ZIP'}
+            </button>
+          </div>
+
+          {(aiPlan || aiResult) && (
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+              <StatusPill>{aiResult?.renderer_version || aiPlan?.renderer_version}</StatusPill>
+              <StatusPill>worker: {String(aiResult?.worker_url_configured ?? workerStatus?.configured ?? false)}</StatusPill>
+              <StatusPill>status: {aiResult?.generation_status || workerStatus?.status || 'planned'}</StatusPill>
+              <StatusPill>model: {aiResult?.model_hint || aiPlan?.model_hint || 'auto'}</StatusPill>
+              {aiResult?.zip_filename && <StatusPill>{aiResult.zip_filename}</StatusPill>}
+              {aiResult?.fallback_reason && <StatusPill>{aiResult.fallback_reason}</StatusPill>}
+            </div>
+          )}
+
+          {aiPlan?.scenes && (
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 8 }}>
+              {aiPlan.scenes.map(scene => (
+                <div key={scene.scene_id} style={{ border: '1px solid var(--border)', borderRadius: 6, padding: 10, background: 'var(--bg-subtle)' }}>
+                  <div style={{ fontSize: 11, fontFamily: 'var(--font-mono)', color: 'var(--text-dim)' }}>{scene.scene_id} · {scene.duration_seconds.toFixed(1)}s · {scene.model_hint}</div>
+                  <div style={{ fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.5, marginTop: 6 }}>{scene.visual_prompt}</div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
     </section>
   );
 }
