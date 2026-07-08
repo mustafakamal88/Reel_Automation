@@ -366,6 +366,7 @@ func (s *Server) handleCreateClipStudioSource(w http.ResponseWriter, r *http.Req
 	sourceID := newClipStudioSourceID()
 	ext := strings.ToLower(filepath.Ext(parsed.Path))
 	direct := isSupportedClipVideoExt(ext)
+	message := clipStudioReferenceOnlyMessage(parsed.Host)
 	meta := clipStudioSourceMetadata{
 		SourceID:      sourceID,
 		Kind:          "url",
@@ -373,7 +374,7 @@ func (s *Server) handleCreateClipStudioSource(w http.ResponseWriter, r *http.Req
 		SourceModel:   renderer.ClipSourceExternalURLPendingRightsConfirmation,
 		Rights:        rights,
 		Status:        "metadata_only",
-		Message:       "Upload the source file or connect an approved source before rendering.",
+		Message:       message,
 		CreatedAt:     time.Now().UTC(),
 		DirectVideo:   direct,
 		SupportedType: direct,
@@ -714,6 +715,7 @@ func (s *Server) createClipStudioSourceFromURL(ctx context.Context, workspaceID 
 	sourceID := newClipStudioSourceID()
 	ext := strings.ToLower(filepath.Ext(parsed.Path))
 	direct := isSupportedClipVideoExt(ext)
+	message := clipStudioReferenceOnlyMessage(parsed.Host)
 	meta := clipStudioSourceMetadata{
 		SourceID:      sourceID,
 		Kind:          "url",
@@ -721,7 +723,7 @@ func (s *Server) createClipStudioSourceFromURL(ctx context.Context, workspaceID 
 		SourceModel:   renderer.ClipSourceExternalURLPendingRightsConfirmation,
 		Rights:        rights,
 		Status:        "metadata_only",
-		Message:       "Upload the source file or connect an approved source before rendering.",
+		Message:       message,
 		CreatedAt:     time.Now().UTC(),
 		DirectVideo:   direct,
 		SupportedType: direct,
@@ -806,6 +808,14 @@ func isSupportedClipVideoExt(ext string) bool {
 	default:
 		return false
 	}
+}
+
+func clipStudioReferenceOnlyMessage(host string) string {
+	normalized := strings.TrimPrefix(strings.ToLower(host), "www.")
+	if normalized == "youtu.be" || normalized == "youtube.com" || strings.HasSuffix(normalized, ".youtube.com") {
+		return "For YouTube links, upload the source video file or connect your own/approved channel source. This app does not auto-rip YouTube videos."
+	}
+	return "URL saved as reference only. Upload the source video file or connect an approved source before generating clips."
 }
 
 func copyUploadedClipSource(file multipart.File, dstPath string) (int64, error) {

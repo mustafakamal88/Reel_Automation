@@ -15,6 +15,13 @@ import {
   type ClipStudioGenerateResponse,
   type ClipStudioSourceResponse,
 } from '../lib/api/client';
+import {
+  clipGenerateDisabledReason,
+  clipPackageReady,
+  getClipSourceStatus,
+  isYouTubeURL,
+  sourceCanGenerate,
+} from './ClipStudioState';
 
 const SOURCE_MODELS: { value: ClipSourceModel; label: string }[] = [
   { value: 'user_upload', label: 'User upload' },
@@ -97,6 +104,7 @@ export function ClipStudioPage() {
 
   const [busy, setBusy] = useState(false);
   const [uploadBusy, setUploadBusy] = useState(false);
+  const [urlImportBusy, setUrlImportBusy] = useState(false);
   const [downloadBusy, setDownloadBusy] = useState(false);
   const [result, setResult] = useState<ClipStudioGenerateResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -112,21 +120,15 @@ export function ClipStudioPage() {
   const [aiBusy, setAiBusy] = useState(false);
   const [aiDownloadBusy, setAiDownloadBusy] = useState(false);
 
-  const hasSource = useMemo(() => Boolean(source?.source_id || sourceUrl.trim()), [source, sourceUrl]);
-  const canGenerate = hasSource && prompt.trim() !== '' && rightsConfirmed && !busy && !uploadBusy;
-  const packageReady = Boolean(result?.download_url && result.zip_filename);
+  const packageReady = clipPackageReady(result);
   const aiPackageReady = Boolean(aiResult?.download_url && aiResult.zip_filename);
-  const clipSourceUnsupported = Boolean(source && !source.can_render);
+  const sourceStatus = useMemo(() => getClipSourceStatus(source, sourceUrl), [source, sourceUrl]);
+  const generateDisabledReason = clipGenerateDisabledReason({ source, rightsConfirmed, prompt, busy, uploadBusy, urlImportBusy });
+  const canGenerate = generateDisabledReason === null;
   const clipStatusMessage = useMemo(() => {
-    if (!hasSource) return 'Paste a video URL or upload a video to begin.';
-    if (clipSourceUnsupported) return 'Upload the source file or connect an approved source before rendering.';
-    if (!rightsConfirmed) return 'Confirm source rights before generating clips.';
-    if (!prompt.trim()) return 'Describe what clips you want before generating.';
-    if (uploadBusy) return 'Uploading source video...';
-    if (busy) return 'Generating clips and preparing the ZIP...';
     if (packageReady) return 'Package ready. Download the ZIP when you are ready.';
-    return 'Ready to generate clips.';
-  }, [busy, clipSourceUnsupported, hasSource, packageReady, prompt, rightsConfirmed, uploadBusy]);
+    return generateDisabledReason || sourceStatus.message;
+  }, [generateDisabledReason, packageReady, sourceStatus.message]);
   const currentError = error && (errorScope === 'global' || errorScope === activeMode) ? error : null;
 
   useEffect(() => {
@@ -224,34 +226,51 @@ export function ClipStudioPage() {
     }
   }
 
+  async function handleImportURL() {
+    const trimmedURL = sourceUrl.trim();
+    if (!trimmedURL) return;
+    setUrlImportBusy(true);
+    setErrorScope('video');
+    setError(null);
+    setResult(null);
+    try {
+      const imported = await createClipStudioSource({
+        source_url: trimmedURL,
+        rights_confirmed: rightsConfirmed,
+        rights: {
+          source_url: trimmedURL,
+          source_title: sourceTitle,
+          source_creator: sourceCreator,
+          source_license: sourceLicense,
+          attribution_text: attributionText,
+          user_confirmed_rights: rightsConfirmed,
+          copyright_overlay_text: copyrightOverlayText,
+          platform_source: platformSource,
+        },
+      });
+      setSource(imported);
+      setSourceModel(imported.metadata.source_model || 'external_url_pending_rights_confirmation');
+    } catch (err) {
+      setError(errMsg(err, 'Source URL import failed'));
+    } finally {
+      setUrlImportBusy(false);
+    }
+  }
+
   async function handleGenerate() {
+    if (!source || !sourceCanGenerate(source)) {
+      setErrorScope('video');
+      setError(sourceStatus.message);
+      return;
+    }
+    const activeSource = source;
     setBusy(true);
     setErrorScope('video');
     setError(null);
     setResult(null);
     try {
-      let activeSource = source;
-      if (!activeSource && sourceUrl.trim()) {
-        activeSource = await createClipStudioSource({
-          source_url: sourceUrl.trim(),
-          rights_confirmed: rightsConfirmed,
-          rights: {
-            source_url: sourceUrl.trim(),
-            source_title: sourceTitle,
-            source_creator: sourceCreator,
-            source_license: sourceLicense,
-            attribution_text: attributionText,
-            user_confirmed_rights: rightsConfirmed,
-            copyright_overlay_text: copyrightOverlayText,
-            platform_source: platformSource,
-          },
-        });
-        setSource(activeSource);
-      }
-
       const generated = await generateClipStudio({
-        source_id: activeSource?.source_id,
-        source_url: activeSource ? undefined : sourceUrl.trim(),
+        source_id: activeSource.source_id,
         prompt,
         clip_length: clipLength,
         clip_count: clipCount,
@@ -265,7 +284,7 @@ export function ClipStudioPage() {
           bottom_banner_color: '#0f766e',
         },
         rights: {
-          source_url: sourceUrl.trim() || activeSource?.metadata.url,
+          source_url: sourceUrl.trim() || activeSource.metadata.url,
           source_title: sourceTitle,
           source_creator: sourceCreator,
           source_license: sourceLicense,
@@ -287,10 +306,7 @@ export function ClipStudioPage() {
       });
       setResult(generated);
       if (!generated.success) {
-        const unsupported = activeSource && !activeSource.can_render;
-        setError(unsupported
-          ? 'Upload the source file or connect an approved source before rendering.'
-          : generated.notes || activeSource?.message || 'Clip generation did not complete');
+        setError(generated.notes || activeSource.message || 'Clip generation did not complete');
       }
     } catch (err) {
       setError(errMsg(err, 'Clip generation failed'));
@@ -382,6 +398,7 @@ export function ClipStudioPage() {
                 onChange={event => {
                   setSourceUrl(event.target.value);
                   setSource(null);
+                  setResult(null);
                 }}
                 placeholder="https://example.com/source.mp4"
                 style={inputStyle()}
@@ -396,24 +413,36 @@ export function ClipStudioPage() {
               />
             </Field>
           </div>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+            <button
+              className="generate-btn idle"
+              onClick={handleImportURL}
+              disabled={!sourceUrl.trim() || urlImportBusy}
+              type="button"
+            >
+              <span className="generate-btn-dot" style={{ background: sourceUrl.trim() ? '#15121f' : '#6b7280' }} />
+              {urlImportBusy ? 'Checking URL...' : isYouTubeURL(sourceUrl) ? 'Save URL as Reference' : 'Import URL'}
+            </button>
+          </div>
 
           <div style={{
             fontSize: 12,
-            color: clipSourceUnsupported ? 'var(--red)' : 'var(--text-muted)',
-            background: clipSourceUnsupported ? 'rgba(232,115,107,0.08)' : 'var(--bg-subtle)',
-            border: clipSourceUnsupported ? '1px solid rgba(232,115,107,0.25)' : '1px solid var(--border)',
+            color: sourceStatus.tone === 'danger' ? 'var(--red)' : sourceStatus.tone === 'ready' ? 'var(--green)' : 'var(--text-muted)',
+            background: sourceStatus.tone === 'danger' ? 'rgba(232,115,107,0.08)' : sourceStatus.tone === 'ready' ? 'rgba(95,211,154,0.08)' : 'var(--bg-subtle)',
+            border: sourceStatus.tone === 'danger' ? '1px solid rgba(232,115,107,0.25)' : sourceStatus.tone === 'ready' ? '1px solid rgba(95,211,154,0.25)' : '1px solid var(--border)',
             borderRadius: 6,
             padding: '8px 10px',
           }}>
-            {clipStatusMessage}
+            <div style={{ fontWeight: 800, color: 'inherit', marginBottom: 3 }}>{sourceStatus.label}</div>
+            <div>{clipStatusMessage}</div>
           </div>
 
-          {(source || uploadBusy) && (
-            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-              {uploadBusy && <StatusPill>uploading</StatusPill>}
-              {source?.source_id && <StatusPill>{source.source_id}</StatusPill>}
-              {source?.status && <StatusPill>{source.status}</StatusPill>}
-              {source?.message && <StatusPill>{source.message}</StatusPill>}
+          {(source || uploadBusy || urlImportBusy) && (
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }} aria-label="Source status">
+              {uploadBusy && <StatusPill>Uploading source</StatusPill>}
+              {urlImportBusy && <StatusPill>Checking source URL</StatusPill>}
+              {source?.metadata.original_name && <StatusPill>{source.metadata.original_name}</StatusPill>}
+              {source?.download_ready && <StatusPill>Ready for clips</StatusPill>}
             </div>
           )}
 
@@ -464,7 +493,7 @@ export function ClipStudioPage() {
           </label>
 
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-            <button className="generate-btn idle" onClick={handleGenerate} disabled={!canGenerate} type="button">
+            <button className="generate-btn idle" onClick={handleGenerate} disabled={!canGenerate} title={generateDisabledReason || undefined} type="button">
               <span className="generate-btn-dot" style={{ background: canGenerate ? '#15121f' : '#6b7280' }} />
               {busy ? 'Generating clips...' : 'Generate Clips'}
             </button>

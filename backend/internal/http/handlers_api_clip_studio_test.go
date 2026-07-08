@@ -147,7 +147,7 @@ func TestClipStudioDirectConfirmedVideoURLCanBeProcessed(t *testing.T) {
 	}
 }
 
-func TestClipStudioUnsupportedURLReturnsClearMessage(t *testing.T) {
+func TestClipStudioYouTubeURLReturnsMetadataOnlyUnsupportedForRender(t *testing.T) {
 	s := testClipStudioServer(t)
 	body := strings.NewReader(`{
 		"source_url":"https://www.youtube.com/watch?v=abc123",
@@ -165,9 +165,15 @@ func TestClipStudioUnsupportedURLReturnsClearMessage(t *testing.T) {
 	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	want := "Upload the source file or connect an approved source before rendering."
-	if got.Message != want || got.CanRender {
-		t.Fatalf("unsupported URL response = %+v, want message %q and can_render=false", got, want)
+	want := "For YouTube links, upload the source video file or connect your own/approved channel source. This app does not auto-rip YouTube videos."
+	if got.Status != "metadata_only" || got.Metadata.Status != "metadata_only" {
+		t.Fatalf("YouTube status = response %q metadata %q, want metadata_only", got.Status, got.Metadata.Status)
+	}
+	if got.Message != want || got.CanRender || got.DownloadReady {
+		t.Fatalf("unsupported URL response = %+v, want message %q, can_render=false, download_ready=false", got, want)
+	}
+	if got.Metadata.DirectVideo || got.Metadata.SupportedType {
+		t.Fatalf("YouTube URL must not be treated as direct renderable video: %+v", got.Metadata)
 	}
 }
 
