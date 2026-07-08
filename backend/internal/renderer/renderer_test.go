@@ -133,6 +133,15 @@ func TestRenderSimpleTextReelProducesArtifacts(t *testing.T) {
 	if res.RendererVersion != SimpleRendererVersion {
 		t.Fatalf("renderer version = %q, want %q", res.RendererVersion, SimpleRendererVersion)
 	}
+	if res.RendererVersion != "quality_v1" {
+		t.Fatalf("renderer version = %q, want quality_v1", res.RendererVersion)
+	}
+	if res.VideoDurationSeconds == nil {
+		t.Fatal("duration missing")
+	}
+	if *res.VideoDurationSeconds < 25 || *res.VideoDurationSeconds > 45 {
+		t.Fatalf("duration = %.2fs, want 25-45s", *res.VideoDurationSeconds)
+	}
 }
 
 func assertNoFakeMedia(t *testing.T, base string) {

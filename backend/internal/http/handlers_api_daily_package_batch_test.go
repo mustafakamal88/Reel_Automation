@@ -50,6 +50,9 @@ func TestDailyPackageBatchRenderSuccessIncludesRenderedMedia(t *testing.T) {
 		if got := manifest.Reels[rank-1].RenderStatus; got != "rendered" {
 			t.Fatalf("reel-%02d render_status = %q, want rendered", rank, got)
 		}
+		if got := manifest.Reels[rank-1].RendererVersion; got != renderer.SimpleRendererVersion {
+			t.Fatalf("reel-%02d renderer_version = %q, want %q", rank, got, renderer.SimpleRendererVersion)
+		}
 	}
 }
 
@@ -177,7 +180,7 @@ func fakeDailyPackageRenderer(t *testing.T, failures map[int]renderer.Result) fu
 			ThumbnailFormat:      "png",
 			ThumbnailWidth:       renderer.VideoWidth,
 			ThumbnailHeight:      renderer.VideoHeight,
-			RendererVersion:      "test-renderer",
+			RendererVersion:      renderer.SimpleRendererVersion,
 		}
 	}
 }
