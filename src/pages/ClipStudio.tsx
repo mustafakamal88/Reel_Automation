@@ -214,10 +214,11 @@ export function ClipStudioPage() {
       { label: 'Failed', done: false, active: status === 'failed' || status === 'timed_out' },
     ];
   }, [aiBusy, aiPlan, aiResult, currentSceneJobs, workerStatus]);
-  const aiButtonLabel = currentSceneJobs.some(job => job.status === 'waiting_for_manual_output' || job.status === 'timed_out')
+  const activeGenerationJobs = aiResult?.scene_jobs || [];
+  const aiButtonLabel = activeGenerationJobs.some(job => job.status === 'waiting_for_manual_output' || job.status === 'timed_out')
     ? 'Waiting for worker output...'
     : aiBusy ? 'Generating scenes...' : 'Generate video using local worker';
-  const aiGenerateDisabled = aiBusy || !aiPrompt.trim() || currentSceneJobs.some(job => job.status === 'waiting_for_manual_output');
+  const aiGenerateDisabled = aiBusy || !aiPrompt.trim() || activeGenerationJobs.some(job => job.status === 'waiting_for_manual_output');
 
   useEffect(() => {
     if (activeMode === 'ai') void refreshWorkerStatus();
