@@ -38,16 +38,17 @@ const (
 )
 
 type Config struct {
-	Provider           string
-	OutputDir          string
-	OpenAIAPIKey       string
-	TTSModel           string
-	ImageModel         string
-	FFmpegPath         string
-	FFprobePath        string
-	LocalAIWorkerURL   string
-	LocalAIWorkerToken string
-	HTTPClient         *http.Client
+	Provider             string
+	OutputDir            string
+	OpenAIAPIKey         string
+	TTSModel             string
+	ImageModel           string
+	FFmpegPath           string
+	FFprobePath          string
+	LocalAIWorkerURL     string
+	LocalAIWorkerToken   string
+	LocalAIWorkerTimeout time.Duration
+	HTTPClient           *http.Client
 }
 
 type ReelInput struct {
@@ -80,6 +81,7 @@ type Result struct {
 	ModelHint            string
 	ScenePrompts         []ScenePlan
 	SceneJobIDs          []string
+	SceneJobs            []WorkerSceneJob
 	GenerationStatus     string
 	FallbackReason       string
 }

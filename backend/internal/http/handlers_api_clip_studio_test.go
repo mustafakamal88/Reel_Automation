@@ -465,6 +465,43 @@ func TestAISceneMissingWorkerReturnsNotConnected(t *testing.T) {
 	}
 }
 
+func TestAISceneWorkerStatusIncludesManualJobs(t *testing.T) {
+	s := testClipStudioServer(t)
+	worker := httptest.NewServer(stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+		switch r.URL.Path {
+		case "/health":
+			_, _ = w.Write([]byte(`{"status":"ok","message":"worker connected"}`))
+		case "/jobs":
+			_, _ = w.Write([]byte(`{"jobs":[{"id":"job-1","status":"pending","visual_prompt":"Prompt","expected_output_path":"outputs/job-1/output.mp4"}]}`))
+		default:
+			stdhttp.NotFound(w, r)
+		}
+	}))
+	defer worker.Close()
+	s.cfg.LocalAIWorkerURL = worker.URL
+
+	req := httptest.NewRequest(stdhttp.MethodGet, "/api/clip-studio/ai-scenes/worker-status", nil)
+	rec := httptest.NewRecorder()
+	s.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != stdhttp.StatusOK {
+		t.Fatalf("worker status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var got aiSceneWorkerStatusResponse
+	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if !got.Configured || got.DashboardURL != worker.URL {
+		t.Fatalf("unexpected worker status: %+v", got)
+	}
+	if len(got.Jobs) != 1 || got.Jobs[0].Status != "waiting_for_manual_output" {
+		t.Fatalf("manual job not surfaced: %+v", got.Jobs)
+	}
+	if got.Jobs[0].ManualOutputPath != "outputs/job-1/output.mp4" {
+		t.Fatalf("manual path = %q", got.Jobs[0].ManualOutputPath)
+	}
+}
+
 func TestAISceneGenerateZipIncludesFinalVideoThumbnailManifestAndSceneMetadata(t *testing.T) {
 	requireFFmpeg(t)
 	s := testClipStudioServer(t)

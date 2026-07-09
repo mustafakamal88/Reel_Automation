@@ -7,8 +7,10 @@ import {
   getAISceneWorkerStatus,
   importClipStudioURL,
   planAIScenes,
+  type AISceneJob,
   type AISceneGenerateResponse,
   type AIScenePlanResponse,
+  type AISceneWorkerJob,
   type AISceneWorkerStatusResponse,
   uploadClipStudioSource,
   type ClipCTASize,
@@ -80,6 +82,54 @@ function StatusPill({ children }: { children: React.ReactNode }) {
   );
 }
 
+function statusTone(status: string): { color: string; background: string; border: string } {
+  switch (status) {
+    case 'completed':
+      return { color: 'var(--green)', background: 'rgba(95,211,154,0.08)', border: 'rgba(95,211,154,0.25)' };
+    case 'failed':
+    case 'timed_out':
+    case 'error':
+      return { color: 'var(--red)', background: 'rgba(232,115,107,0.08)', border: 'rgba(232,115,107,0.25)' };
+    case 'waiting_for_manual_output':
+      return { color: '#f8c471', background: 'rgba(248,196,113,0.08)', border: 'rgba(248,196,113,0.25)' };
+    default:
+      return { color: 'var(--text-muted)', background: 'var(--bg-subtle)', border: 'var(--border)' };
+  }
+}
+
+function AISceneJobCard({ job, onCopy }: { job: AISceneJob; onCopy: (value: string) => void }) {
+  const tone = statusTone(job.status);
+  const statusLabel = job.status.replaceAll('_', ' ');
+  return (
+    <div style={{ border: '1px solid var(--border)', borderRadius: 6, padding: 10, background: 'var(--bg-subtle)' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'flex-start', flexWrap: 'wrap' }}>
+        <div>
+          <div style={{ fontSize: 12, fontWeight: 800, color: 'var(--text-primary)' }}>Scene {job.scene_number || job.scene_id}</div>
+          <div style={{ fontSize: 10, fontFamily: 'var(--font-mono)', color: 'var(--text-dim)', marginTop: 3 }}>{job.job_id || 'job pending'}</div>
+        </div>
+        <span style={{ fontSize: 10, fontWeight: 800, color: tone.color, background: tone.background, border: `1px solid ${tone.border}`, borderRadius: 4, padding: '3px 6px', textTransform: 'uppercase' }}>
+          {statusLabel}
+        </span>
+      </div>
+      <div style={{ fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.5, marginTop: 9 }}>{job.visual_prompt}</div>
+      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 8 }}>
+        <button className="generate-btn idle" type="button" onClick={() => onCopy(job.visual_prompt)} style={{ padding: '6px 9px', fontSize: 11 }}>
+          Copy prompt
+        </button>
+        <button className="generate-btn idle" type="button" onClick={() => onCopy(job.manual_output_path)} style={{ padding: '6px 9px', fontSize: 11 }}>
+          Copy output path
+        </button>
+      </div>
+      <div style={{ marginTop: 8, display: 'grid', gap: 5, fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.5 }}>
+        <div><strong style={{ color: 'var(--text-secondary)' }}>Expected file path:</strong> <code>{job.manual_output_path || 'outputs/<job-id>/output.mp4'}</code></div>
+        <div><strong style={{ color: 'var(--text-secondary)' }}>Timeout:</strong> {job.timeout_seconds || 120}s</div>
+        <div>{job.next_action}</div>
+        {(job.worker_message || job.error) && <div style={{ color: job.error ? 'var(--red)' : 'var(--text-muted)' }}>{job.worker_message || job.error}</div>}
+      </div>
+    </div>
+  );
+}
+
 type ClipStudioMode = 'video' | 'ai';
 type ErrorScope = ClipStudioMode | 'global';
 
@@ -134,6 +184,40 @@ export function ClipStudioPage() {
     return generateDisabledReason || sourceStatus.message;
   }, [generateDisabledReason, packageReady, sourceStatus.message]);
   const currentError = error && (errorScope === 'global' || errorScope === activeMode) ? error : null;
+  const currentSceneJobs = useMemo<AISceneJob[]>(() => {
+    if (aiResult?.scene_jobs?.length) return aiResult.scene_jobs;
+    return (workerStatus?.jobs || []).map((job: AISceneWorkerJob, index: number) => ({
+      scene_number: index + 1,
+      scene_id: `worker-job-${index + 1}`,
+      job_id: job.id,
+      status: job.status,
+      visual_prompt: job.visual_prompt || '',
+      manual_output_path: job.manual_output_path || job.expected_output_path || `outputs/${job.id}/output.mp4`,
+      timeout_seconds: job.timeout_seconds || 120,
+      next_action: job.next_action || 'Manual worker mode: generate this scene in Pinokio/Wan2GP, then save it as output.mp4 in the shown job folder.',
+      worker_message: job.worker_message,
+      error: job.error,
+    }));
+  }, [aiResult?.scene_jobs, workerStatus?.jobs]);
+  const aiProgressSteps = useMemo(() => {
+    const status = aiResult?.generation_status || workerStatus?.status || 'idle';
+    return [
+      { label: 'Worker connected', done: Boolean(workerStatus?.configured), active: workerStatus?.configured && !aiResult && !aiBusy },
+      { label: 'Creating scene plan', done: Boolean(aiPlan || aiResult), active: aiBusy && !aiResult },
+      { label: 'Submitting scene jobs', done: currentSceneJobs.length > 0, active: aiBusy && currentSceneJobs.length === 0 },
+      { label: 'Scene job created', done: currentSceneJobs.length > 0, active: false },
+      { label: 'Waiting for generated output', done: status === 'completed', active: currentSceneJobs.some(job => job.status === 'waiting_for_manual_output') },
+      { label: 'Manual output needed', done: false, active: currentSceneJobs.some(job => job.status === 'waiting_for_manual_output' || job.status === 'timed_out') },
+      { label: 'Downloading generated scene', done: status === 'completed', active: false },
+      { label: 'Stitching final video', done: status === 'completed', active: false },
+      { label: 'Complete', done: status === 'completed', active: false },
+      { label: 'Failed', done: false, active: status === 'failed' || status === 'timed_out' },
+    ];
+  }, [aiBusy, aiPlan, aiResult, currentSceneJobs, workerStatus]);
+  const aiButtonLabel = currentSceneJobs.some(job => job.status === 'waiting_for_manual_output' || job.status === 'timed_out')
+    ? 'Waiting for worker output...'
+    : aiBusy ? 'Generating scenes...' : 'Generate video using local worker';
+  const aiGenerateDisabled = aiBusy || !aiPrompt.trim() || currentSceneJobs.some(job => job.status === 'waiting_for_manual_output');
 
   useEffect(() => {
     if (activeMode === 'ai') void refreshWorkerStatus();
@@ -145,6 +229,11 @@ export function ClipStudioPage() {
     } catch (err) {
       setWorkerStatus({ configured: false, status: 'error', message: errMsg(err, 'Worker status unavailable') });
     }
+  }
+
+  async function copyText(value: string) {
+    if (!value) return;
+    await navigator.clipboard?.writeText(value);
   }
 
   async function handlePlanAIScenes() {
@@ -575,8 +664,14 @@ export function ClipStudioPage() {
             </div>
             <button className="generate-btn idle" onClick={refreshWorkerStatus} type="button">
               <span className="generate-btn-dot" style={{ background: workerStatus?.configured ? '#0f766e' : '#991b1b' }} />
-              Worker Status
+              Refresh worker jobs
             </button>
+            {workerStatus?.dashboard_url && (
+              <a className="generate-btn idle" href={workerStatus.dashboard_url} target="_blank" rel="noreferrer" style={{ textDecoration: 'none' }}>
+                <span className="generate-btn-dot" style={{ background: '#0f766e' }} />
+                Open worker dashboard
+              </a>
+            )}
           </div>
 
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 10 }}>
@@ -616,14 +711,49 @@ export function ClipStudioPage() {
               <span className="generate-btn-dot" style={{ background: '#15121f' }} />
               Generate scene plan
             </button>
-            <button className="generate-btn idle" onClick={handleGenerateAIScenes} disabled={aiBusy || !aiPrompt.trim()} type="button">
+            <button className="generate-btn idle" onClick={handleGenerateAIScenes} disabled={aiGenerateDisabled} type="button">
               <span className="generate-btn-dot" style={{ background: workerStatus?.configured ? '#0f766e' : '#991b1b' }} />
-              {aiBusy ? 'Generating scenes...' : 'Generate video using local worker'}
+              {aiButtonLabel}
             </button>
             <button className="generate-btn idle" onClick={handleDownloadAIScenes} disabled={aiDownloadBusy || !aiPackageReady} type="button">
               <span className="generate-btn-dot" style={{ background: aiPackageReady ? '#15121f' : '#6b7280' }} />
               {aiDownloadBusy ? 'Downloading...' : 'Download AI ZIP'}
             </button>
+          </div>
+
+          <div style={{ border: '1px solid var(--border)', borderRadius: 6, background: '#0b0f14', padding: 12, display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <div>
+              <div style={{ fontSize: 13, fontWeight: 800, color: 'var(--text-primary)' }}>Worker progress</div>
+              <div style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.5, marginTop: 4 }}>
+                Manual worker mode: generate this scene in Pinokio/Wan2GP, then save it as output.mp4 in the shown job folder.
+              </div>
+            </div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+              {aiProgressSteps.map(step => {
+                const tone = step.done ? statusTone('completed') : step.active ? statusTone(step.label === 'Failed' ? 'failed' : 'waiting_for_manual_output') : statusTone('idle');
+                return (
+                  <span key={step.label} style={{ fontSize: 10, color: tone.color, background: tone.background, border: `1px solid ${tone.border}`, borderRadius: 4, padding: '4px 7px', fontWeight: step.active || step.done ? 800 : 600 }}>
+                    {step.label}
+                  </span>
+                );
+              })}
+            </div>
+            {aiResult?.generation_status === 'timed_out' && (
+              <div style={{ fontSize: 12, color: 'var(--red)', lineHeight: 1.5, background: 'rgba(232,115,107,0.08)', border: '1px solid rgba(232,115,107,0.25)', borderRadius: 6, padding: '8px 10px' }}>
+                Timed out waiting for output.mp4. The worker job may still be pending. Add the generated file and retry/refresh.
+              </div>
+            )}
+            {currentSceneJobs.length > 0 ? (
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 8 }}>
+                {currentSceneJobs.map(job => (
+                  <AISceneJobCard key={job.job_id || job.scene_id} job={job} onCopy={copyText} />
+                ))}
+              </div>
+            ) : (
+              <div style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.5 }}>
+                No worker scene jobs yet. Generate scene jobs or refresh after submitting work.
+              </div>
+            )}
           </div>
 
           {(aiPlan || aiResult) && (

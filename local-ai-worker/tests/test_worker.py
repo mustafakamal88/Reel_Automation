@@ -136,6 +136,9 @@ def test_generate_job(tmp_path: Path) -> None:
     assert status == 200
     assert body["id"].startswith("job_")
     assert body["status"] == "pending"
+    assert body["manual_output_path"].endswith(f"{body['id']}/output.mp4")
+    assert body["timeout_seconds"] == 120
+    assert "Pinokio/Wan2GP" in body["next_action"]
     assert (tmp_path / body["id"] / "job.json").exists()
 
 
@@ -150,6 +153,8 @@ def test_pending_job_status(tmp_path: Path) -> None:
     assert body["status"] == "pending"
     assert body["visual_prompt"] == "Prompt"
     assert body["expected_output_path"].endswith(f"{job_id}/output.mp4")
+    assert body["manual_output_path"].endswith(f"{job_id}/output.mp4")
+    assert body["worker_message"] == "Place generated MP4 at outputs/<job-id>/output.mp4"
 
 
 def test_completed_job_status_when_output_file_exists(tmp_path: Path) -> None:
@@ -163,6 +168,17 @@ def test_completed_job_status_when_output_file_exists(tmp_path: Path) -> None:
 
     assert status == 200
     assert body["status"] == "completed"
+
+
+def test_dashboard_mentions_manual_output_path(tmp_path: Path) -> None:
+    app = make_app(tmp_path)
+
+    status, _, body = request(app, "GET", "/")
+
+    assert status == 200
+    text = body.decode("utf-8")
+    assert "Manual worker mode" in text
+    assert "outputs/&lt;job-id&gt;/output.mp4" in text
 
 
 def test_output_download(tmp_path: Path) -> None:

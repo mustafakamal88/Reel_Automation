@@ -17,6 +17,8 @@ import (
 const (
 	LocalAISceneRendererVersion     = "local_ai_scene_v1"
 	StatusLocalAIWorkerNotConnected = "local_ai_worker_not_connected"
+	localAIWorkerTimeoutSeconds     = 120
+	localAIWorkerNextAction         = "Manual worker mode: generate this scene in Pinokio/Wan2GP, then save it as output.mp4 in the shown job folder."
 )
 
 type ScenePlan struct {
@@ -41,13 +43,14 @@ type LocalAISceneInput struct {
 }
 
 type LocalAISceneMetadata struct {
-	RendererVersion     string      `json:"renderer_version"`
-	WorkerURLConfigured bool        `json:"worker_url_configured"`
-	ModelHint           string      `json:"model_hint"`
-	ScenePrompts        []ScenePlan `json:"scene_prompts"`
-	SceneJobIDs         []string    `json:"scene_job_ids"`
-	GenerationStatus    string      `json:"generation_status"`
-	FallbackReason      string      `json:"fallback_reason,omitempty"`
+	RendererVersion     string           `json:"renderer_version"`
+	WorkerURLConfigured bool             `json:"worker_url_configured"`
+	ModelHint           string           `json:"model_hint"`
+	ScenePrompts        []ScenePlan      `json:"scene_prompts"`
+	SceneJobIDs         []string         `json:"scene_job_ids"`
+	SceneJobs           []WorkerSceneJob `json:"scene_jobs"`
+	GenerationStatus    string           `json:"generation_status"`
+	FallbackReason      string           `json:"fallback_reason,omitempty"`
 }
 
 type WorkerClient struct {
@@ -62,9 +65,29 @@ type WorkerHealth struct {
 }
 
 type WorkerJob struct {
-	ID     string `json:"id"`
-	Status string `json:"status"`
-	Error  string `json:"error,omitempty"`
+	ID                 string      `json:"id"`
+	Status             string      `json:"status"`
+	Error              string      `json:"error,omitempty"`
+	VisualPrompt       string      `json:"visual_prompt,omitempty"`
+	ExpectedOutputPath string      `json:"expected_output_path,omitempty"`
+	ManualOutputPath   string      `json:"manual_output_path,omitempty"`
+	WorkerMessage      string      `json:"worker_message,omitempty"`
+	NextAction         string      `json:"next_action,omitempty"`
+	TimeoutSeconds     int         `json:"timeout_seconds,omitempty"`
+	Jobs               []WorkerJob `json:"jobs,omitempty"`
+}
+
+type WorkerSceneJob struct {
+	SceneNumber      int    `json:"scene_number"`
+	SceneID          string `json:"scene_id"`
+	JobID            string `json:"job_id"`
+	Status           string `json:"status"`
+	VisualPrompt     string `json:"visual_prompt"`
+	ManualOutputPath string `json:"manual_output_path"`
+	TimeoutSeconds   int    `json:"timeout_seconds"`
+	NextAction       string `json:"next_action"`
+	WorkerMessage    string `json:"worker_message,omitempty"`
+	Error            string `json:"error,omitempty"`
 }
 
 func WorkerConfigured(workerURL string) bool {
@@ -144,6 +167,10 @@ func RenderLocalAISceneReel(ctx context.Context, cfg Config, input LocalAISceneI
 	}
 
 	client := WorkerClient{BaseURL: cfg.LocalAIWorkerURL, Token: cfg.LocalAIWorkerToken, HTTPClient: cfg.HTTPClient}
+	workerTimeout := cfg.LocalAIWorkerTimeout
+	if workerTimeout <= 0 {
+		workerTimeout = time.Duration(localAIWorkerTimeoutSeconds) * time.Second
+	}
 	if _, err := client.Health(ctx); err != nil {
 		meta.Status = StatusFailed
 		meta.Notes = "Local AI worker health check failed: " + err.Error()
@@ -153,22 +180,34 @@ func RenderLocalAISceneReel(ctx context.Context, cfg Config, input LocalAISceneI
 
 	scenePaths := make([]string, 0, len(scenes))
 	jobIDs := make([]string, 0, len(scenes))
-	for _, scene := range scenes {
+	sceneJobs := make([]WorkerSceneJob, 0, len(scenes))
+	for sceneIndex, scene := range scenes {
 		job, err := client.GenerateScene(ctx, scene)
 		if err != nil {
 			meta.Status = StatusFailed
 			meta.Notes = "Local AI worker scene submission failed: " + err.Error()
 			meta.GenerationStatus = "failed"
 			meta.SceneJobIDs = jobIDs
+			meta.SceneJobs = sceneJobs
 			return meta
 		}
 		jobIDs = append(jobIDs, job.ID)
-		finalJob, err := client.WaitForJob(ctx, job.ID, 2*time.Minute)
+		sceneJobs = append(sceneJobs, workerSceneJobFromWorker(sceneIndex+1, scene, job, "Scene job created"))
+		meta.SceneJobIDs = jobIDs
+		meta.SceneJobs = sceneJobs
+		finalJob, err := client.WaitForJob(ctx, job.ID, workerTimeout)
+		sceneJobs[len(sceneJobs)-1] = workerSceneJobFromWorker(sceneIndex+1, scene, finalJob, "")
 		if err != nil {
 			meta.Status = StatusFailed
-			meta.Notes = "Local AI worker scene generation failed: " + err.Error()
-			meta.GenerationStatus = "failed"
+			if finalJob.Status == "timed_out" {
+				meta.Notes = "Timed out waiting for output.mp4. The worker job may still be pending. Add the generated file and retry/refresh."
+				meta.GenerationStatus = "timed_out"
+			} else {
+				meta.Notes = "Local AI worker scene generation failed: " + err.Error()
+				meta.GenerationStatus = "failed"
+			}
 			meta.SceneJobIDs = jobIDs
+			meta.SceneJobs = sceneJobs
 			return meta
 		}
 		if finalJob.Status != "completed" {
@@ -176,6 +215,7 @@ func RenderLocalAISceneReel(ctx context.Context, cfg Config, input LocalAISceneI
 			meta.Notes = firstNonEmpty(finalJob.Error, "Local AI worker did not complete scene "+scene.SceneID)
 			meta.GenerationStatus = finalJob.Status
 			meta.SceneJobIDs = jobIDs
+			meta.SceneJobs = sceneJobs
 			return meta
 		}
 		outPath := filepath.Join(dir, scene.SceneID+".mp4")
@@ -184,6 +224,7 @@ func RenderLocalAISceneReel(ctx context.Context, cfg Config, input LocalAISceneI
 			meta.Notes = "Local AI worker output download failed: " + err.Error()
 			meta.GenerationStatus = "failed"
 			meta.SceneJobIDs = jobIDs
+			meta.SceneJobs = sceneJobs
 			return meta
 		}
 		scenePaths = append(scenePaths, outPath)
@@ -195,6 +236,7 @@ func RenderLocalAISceneReel(ctx context.Context, cfg Config, input LocalAISceneI
 		ModelHint:           aggregateModelHint(scenes),
 		ScenePrompts:        scenes,
 		SceneJobIDs:         jobIDs,
+		SceneJobs:           sceneJobs,
 		GenerationStatus:    "completed",
 	}
 	if err := writeLocalAISceneMetadata(dir, metadata); err != nil {
@@ -202,6 +244,7 @@ func RenderLocalAISceneReel(ctx context.Context, cfg Config, input LocalAISceneI
 		meta.Notes = "store scene metadata: " + err.Error()
 		meta.GenerationStatus = "failed"
 		meta.SceneJobIDs = jobIDs
+		meta.SceneJobs = sceneJobs
 		return meta
 	}
 
@@ -213,6 +256,7 @@ func RenderLocalAISceneReel(ctx context.Context, cfg Config, input LocalAISceneI
 		meta.Notes = "write subtitles: " + err.Error()
 		meta.GenerationStatus = "failed"
 		meta.SceneJobIDs = jobIDs
+		meta.SceneJobs = sceneJobs
 		return meta
 	}
 	if err := renderLocalAISceneOverlayPNG(overlayPath, input.Branding); err != nil {
@@ -220,6 +264,7 @@ func RenderLocalAISceneReel(ctx context.Context, cfg Config, input LocalAISceneI
 		meta.Notes = "render branding overlay: " + err.Error()
 		meta.GenerationStatus = "failed"
 		meta.SceneJobIDs = jobIDs
+		meta.SceneJobs = sceneJobs
 		return meta
 	}
 	if err := stitchLocalAIScenes(ctx, cfg.FFmpegPath, scenePaths, overlayPath, subtitlePath, videoPath); err != nil {
@@ -227,6 +272,7 @@ func RenderLocalAISceneReel(ctx context.Context, cfg Config, input LocalAISceneI
 		meta.Notes = "ffmpeg scene stitch failed: " + err.Error()
 		meta.GenerationStatus = "failed"
 		meta.SceneJobIDs = jobIDs
+		meta.SceneJobs = sceneJobs
 		return meta
 	}
 	thumbnailPath := filepath.Join(dir, "thumbnail.png")
@@ -235,6 +281,7 @@ func RenderLocalAISceneReel(ctx context.Context, cfg Config, input LocalAISceneI
 		meta.Notes = "thumbnail render failed: " + err.Error()
 		meta.GenerationStatus = "failed"
 		meta.SceneJobIDs = jobIDs
+		meta.SceneJobs = sceneJobs
 		return meta
 	}
 	tw, th, err := pngDimensions(thumbnailPath)
@@ -260,6 +307,7 @@ func RenderLocalAISceneReel(ctx context.Context, cfg Config, input LocalAISceneI
 	meta.ThumbnailWidth = tw
 	meta.ThumbnailHeight = th
 	meta.SceneJobIDs = jobIDs
+	meta.SceneJobs = sceneJobs
 	meta.GenerationStatus = "completed"
 	return meta
 }
@@ -300,6 +348,20 @@ func (c WorkerClient) GenerateScene(ctx context.Context, scene ScenePlan) (Worke
 	if out.ID == "" {
 		return out, errors.New("worker response missing job id")
 	}
+	out.VisualPrompt = scene.VisualPrompt
+	out.Status = normalizeWorkerStatus(out.Status)
+	if out.ManualOutputPath == "" {
+		out.ManualOutputPath = firstNonEmpty(out.ExpectedOutputPath, manualOutputPath(out.ID))
+	}
+	if out.ExpectedOutputPath == "" {
+		out.ExpectedOutputPath = out.ManualOutputPath
+	}
+	if out.TimeoutSeconds == 0 {
+		out.TimeoutSeconds = localAIWorkerTimeoutSeconds
+	}
+	if out.NextAction == "" {
+		out.NextAction = localAIWorkerNextAction
+	}
 	return out, nil
 }
 
@@ -317,6 +379,19 @@ func (c WorkerClient) Job(ctx context.Context, id string) (WorkerJob, error) {
 	}
 	if out.ID == "" {
 		out.ID = id
+	}
+	out.Status = normalizeWorkerStatus(out.Status)
+	if out.ManualOutputPath == "" {
+		out.ManualOutputPath = firstNonEmpty(out.ExpectedOutputPath, manualOutputPath(out.ID))
+	}
+	if out.ExpectedOutputPath == "" {
+		out.ExpectedOutputPath = out.ManualOutputPath
+	}
+	if out.TimeoutSeconds == 0 {
+		out.TimeoutSeconds = localAIWorkerTimeoutSeconds
+	}
+	if out.NextAction == "" {
+		out.NextAction = localAIWorkerNextAction
 	}
 	return out, nil
 }
@@ -336,6 +411,9 @@ func (c WorkerClient) WaitForJob(ctx context.Context, id string, timeout time.Du
 			return job, nil
 		}
 		if time.Now().After(deadline) {
+			job.Status = "timed_out"
+			job.WorkerMessage = "Timed out waiting for output.mp4. The worker job may still be pending."
+			job.NextAction = "Add the generated file and retry/refresh."
 			return job, errors.New("worker job timed out")
 		}
 		select {
@@ -344,6 +422,84 @@ func (c WorkerClient) WaitForJob(ctx context.Context, id string, timeout time.Du
 		case <-time.After(250 * time.Millisecond):
 		}
 	}
+}
+
+func (c WorkerClient) Jobs(ctx context.Context) ([]WorkerJob, error) {
+	body, status, err := c.request(ctx, http.MethodGet, "/jobs", nil)
+	if err != nil {
+		return nil, err
+	}
+	if status < 200 || status >= 300 {
+		return nil, fmt.Errorf("HTTP %d: %s", status, trimForLog(body))
+	}
+	var out WorkerJob
+	if err := json.Unmarshal(body, &out); err != nil {
+		return nil, err
+	}
+	for i := range out.Jobs {
+		out.Jobs[i].Status = normalizeWorkerStatus(out.Jobs[i].Status)
+		if out.Jobs[i].ManualOutputPath == "" {
+			out.Jobs[i].ManualOutputPath = firstNonEmpty(out.Jobs[i].ExpectedOutputPath, manualOutputPath(out.Jobs[i].ID))
+		}
+		if out.Jobs[i].ExpectedOutputPath == "" {
+			out.Jobs[i].ExpectedOutputPath = out.Jobs[i].ManualOutputPath
+		}
+		if out.Jobs[i].TimeoutSeconds == 0 {
+			out.Jobs[i].TimeoutSeconds = localAIWorkerTimeoutSeconds
+		}
+		if out.Jobs[i].NextAction == "" {
+			out.Jobs[i].NextAction = localAIWorkerNextAction
+		}
+	}
+	return out.Jobs, nil
+}
+
+func workerSceneJobFromWorker(sceneNumber int, scene ScenePlan, job WorkerJob, fallbackMessage string) WorkerSceneJob {
+	status := normalizeWorkerStatus(job.Status)
+	message := firstNonEmpty(job.WorkerMessage, fallbackMessage)
+	if status == "waiting_for_manual_output" && message == "" {
+		message = "Waiting for output.mp4"
+	}
+	if status == "timed_out" && message == "" {
+		message = "Timed out waiting for output.mp4. The worker job may still be pending."
+	}
+	return WorkerSceneJob{
+		SceneNumber:      sceneNumber,
+		SceneID:          scene.SceneID,
+		JobID:            job.ID,
+		Status:           status,
+		VisualPrompt:     firstNonEmpty(job.VisualPrompt, scene.VisualPrompt),
+		ManualOutputPath: firstNonEmpty(job.ManualOutputPath, job.ExpectedOutputPath, manualOutputPath(job.ID)),
+		TimeoutSeconds:   firstNonZero(job.TimeoutSeconds, localAIWorkerTimeoutSeconds),
+		NextAction:       firstNonEmpty(job.NextAction, localAIWorkerNextAction),
+		WorkerMessage:    message,
+		Error:            job.Error,
+	}
+}
+
+func normalizeWorkerStatus(status string) string {
+	switch strings.TrimSpace(status) {
+	case "", "pending", "queued", "running":
+		return "waiting_for_manual_output"
+	default:
+		return status
+	}
+}
+
+func manualOutputPath(jobID string) string {
+	if strings.TrimSpace(jobID) == "" {
+		return "outputs/<job-id>/output.mp4"
+	}
+	return "outputs/" + jobID + "/output.mp4"
+}
+
+func firstNonZero(values ...int) int {
+	for _, value := range values {
+		if value != 0 {
+			return value
+		}
+	}
+	return 0
 }
 
 func (c WorkerClient) DownloadOutput(ctx context.Context, id, outputPath string) error {

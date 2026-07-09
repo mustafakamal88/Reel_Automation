@@ -49,6 +49,8 @@ class JobSummary(BaseModel):
     id: str
     status: str
     error: str = ""
+    worker_message: str = ""
+    next_action: str = ""
     visual_prompt: str = ""
     negative_prompt: str = ""
     duration_seconds: Optional[float] = None
@@ -58,6 +60,8 @@ class JobSummary(BaseModel):
     created_at: str = ""
     updated_at: str = ""
     expected_output_path: str = ""
+    manual_output_path: str = ""
+    timeout_seconds: int = 120
 
 
 def now_iso() -> str:
@@ -128,16 +132,28 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             job["status"] = "completed"
             job["updated_at"] = now_iso()
             job["output_path"] = str(out)
+            job["worker_message"] = "Generated output.mp4 found."
             write_job(job)
             logger.info("job completed id=%s output=%s", job["id"], out)
         return job
 
     def summarize(job: dict[str, Any]) -> JobSummary:
         req = job.get("request", {})
+        expected_output = str(output_file(job["id"]))
+        status = job.get("status", "pending")
+        next_action = job.get(
+            "next_action",
+            "Manual worker mode: generate this scene in Pinokio/Wan2GP, then save it as output.mp4 in the shown job folder.",
+        )
+        worker_message = job.get("worker_message", "")
+        if status == "pending" and not worker_message:
+            worker_message = "Place generated MP4 at outputs/<job-id>/output.mp4"
         return JobSummary(
             id=job["id"],
-            status=job.get("status", "pending"),
+            status=status,
             error=job.get("error", ""),
+            worker_message=worker_message,
+            next_action=next_action,
             visual_prompt=req.get("visual_prompt", ""),
             negative_prompt=req.get("negative_prompt", ""),
             duration_seconds=req.get("duration_seconds"),
@@ -146,7 +162,9 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             style_preset=req.get("style_preset", ""),
             created_at=job.get("created_at", ""),
             updated_at=job.get("updated_at", ""),
-            expected_output_path=str(output_file(job["id"])),
+            expected_output_path=expected_output,
+            manual_output_path=expected_output,
+            timeout_seconds=int(job.get("timeout_seconds", 120)),
         )
 
     def list_jobs() -> list[JobSummary]:
@@ -182,7 +200,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
                 f"<td>{html.escape(job.status)}</td>"
                 f"<td>{html.escape(job.visual_prompt)}</td>"
                 f"<td><code>{html.escape(job.expected_output_path)}</code></td>"
-                f"<td>{html.escape(job.error)}</td>"
+                f"<td>{html.escape(job.worker_message or job.error)}</td>"
                 "</tr>"
             )
         body = "\n".join(rows) or "<tr><td colspan='5'>No jobs yet.</td></tr>"
@@ -203,8 +221,9 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
 <body>
   <h1>TrendCortex Local AI Worker</h1>
   <p>Output directory: <code>{html.escape(str(cfg.output_dir))}</code></p>
+  <p><strong>Manual worker mode:</strong> generate each scene in Pinokio/Wan2GP, then place generated MP4 at <code>outputs/&lt;job-id&gt;/output.mp4</code>.</p>
   <table>
-    <thead><tr><th>Job</th><th>Status</th><th>Visual prompt</th><th>Expected output file</th><th>Error</th></tr></thead>
+    <thead><tr><th>Job</th><th>Status</th><th>Visual prompt</th><th>Expected output file</th><th>Worker message</th></tr></thead>
     <tbody>{body}</tbody>
   </table>
 </body>
@@ -226,7 +245,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         return config_status()
 
     @app.post("/generate-scene", dependencies=[auth_dep])
-    def generate_scene(scene: SceneRequest, background_tasks: BackgroundTasks) -> dict[str, str]:
+    def generate_scene(scene: SceneRequest, background_tasks: BackgroundTasks) -> dict[str, Any]:
         job_id = "job_" + uuid.uuid4().hex
         created = now_iso()
         job = {
@@ -236,6 +255,10 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             "updated_at": created,
             "request": scene.model_dump(),
             "expected_output_path": str(output_file(job_id)),
+            "manual_output_path": str(output_file(job_id)),
+            "timeout_seconds": 120,
+            "next_action": "Manual worker mode: generate this scene in Pinokio/Wan2GP, then save it as output.mp4 in the shown job folder.",
+            "worker_message": "Place generated MP4 at outputs/<job-id>/output.mp4",
         }
         write_job(job)
         logger.info(
@@ -248,7 +271,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             scene.visual_prompt,
         )
         background_tasks.add_task(background_process, job_id)
-        return {"id": job_id, "status": "pending"}
+        return summarize(job).model_dump()
 
     @app.get("/jobs", dependencies=[auth_dep])
     def jobs() -> dict[str, Any]:

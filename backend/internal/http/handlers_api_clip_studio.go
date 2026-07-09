@@ -126,9 +126,11 @@ type clipStudioGenerateResponse struct {
 }
 
 type aiSceneWorkerStatusResponse struct {
-	Configured bool   `json:"configured"`
-	Status     string `json:"status"`
-	Message    string `json:"message"`
+	Configured   bool                 `json:"configured"`
+	Status       string               `json:"status"`
+	Message      string               `json:"message"`
+	DashboardURL string               `json:"dashboard_url,omitempty"`
+	Jobs         []renderer.WorkerJob `json:"jobs,omitempty"`
 }
 
 type aiScenePlanRequest struct {
@@ -153,22 +155,26 @@ type aiSceneGenerateRequest struct {
 }
 
 type aiSceneGenerateResponse struct {
-	Success          bool                 `json:"success"`
-	RenderStatus     string               `json:"render_status"`
-	Notes            string               `json:"notes,omitempty"`
-	RendererVersion  string               `json:"renderer_version"`
-	ClipID           string               `json:"clip_id"`
-	WorkerConfigured bool                 `json:"worker_url_configured"`
-	ModelHint        string               `json:"model_hint"`
-	ScenePrompts     []renderer.ScenePlan `json:"scene_prompts"`
-	SceneJobIDs      []string             `json:"scene_job_ids"`
-	GenerationStatus string               `json:"generation_status"`
-	FallbackReason   string               `json:"fallback_reason,omitempty"`
-	ZipFilename      string               `json:"zip_filename,omitempty"`
-	DownloadURL      string               `json:"download_url,omitempty"`
-	IncludedFiles    []string             `json:"included_files"`
-	VideoPath        string               `json:"video_path,omitempty"`
-	ThumbnailPath    string               `json:"thumbnail_path,omitempty"`
+	Success          bool                      `json:"success"`
+	RenderStatus     string                    `json:"render_status"`
+	Notes            string                    `json:"notes,omitempty"`
+	RendererVersion  string                    `json:"renderer_version"`
+	ClipID           string                    `json:"clip_id"`
+	WorkerConfigured bool                      `json:"worker_url_configured"`
+	ModelHint        string                    `json:"model_hint"`
+	ScenePrompts     []renderer.ScenePlan      `json:"scene_prompts"`
+	SceneJobIDs      []string                  `json:"scene_job_ids"`
+	SceneJobs        []renderer.WorkerSceneJob `json:"scene_jobs"`
+	GenerationStatus string                    `json:"generation_status"`
+	FallbackReason   string                    `json:"fallback_reason,omitempty"`
+	ManualOutputPath string                    `json:"manual_output_path,omitempty"`
+	TimeoutSeconds   int                       `json:"timeout_seconds,omitempty"`
+	NextAction       string                    `json:"next_action,omitempty"`
+	ZipFilename      string                    `json:"zip_filename,omitempty"`
+	DownloadURL      string                    `json:"download_url,omitempty"`
+	IncludedFiles    []string                  `json:"included_files"`
+	VideoPath        string                    `json:"video_path,omitempty"`
+	ThumbnailPath    string                    `json:"thumbnail_path,omitempty"`
 }
 
 var clipStudioHTTPClient = http.DefaultClient
@@ -622,16 +628,24 @@ func (s *Server) handleAISceneWorkerStatus(w http.ResponseWriter, r *http.Reques
 	health, err := client.Health(r.Context())
 	if err != nil {
 		jsonOK(w, aiSceneWorkerStatusResponse{
-			Configured: true,
-			Status:     "error",
-			Message:    err.Error(),
+			Configured:   true,
+			Status:       "error",
+			Message:      err.Error(),
+			DashboardURL: strings.TrimRight(s.cfg.LocalAIWorkerURL, "/"),
 		})
 		return
 	}
+	jobs, jobsErr := client.Jobs(r.Context())
+	message := firstNonEmpty(health.Message, "Local AI worker connected")
+	if jobsErr != nil {
+		message += "; jobs unavailable: " + jobsErr.Error()
+	}
 	jsonOK(w, aiSceneWorkerStatusResponse{
-		Configured: true,
-		Status:     firstNonEmpty(health.Status, "ok"),
-		Message:    firstNonEmpty(health.Message, "Local AI worker connected"),
+		Configured:   true,
+		Status:       firstNonEmpty(health.Status, "ok"),
+		Message:      message,
+		DashboardURL: strings.TrimRight(s.cfg.LocalAIWorkerURL, "/"),
+		Jobs:         jobs,
 	})
 }
 
@@ -686,10 +700,18 @@ func (s *Server) handleGenerateAIScenes(w http.ResponseWriter, r *http.Request) 
 		ModelHint:        result.ModelHint,
 		ScenePrompts:     result.ScenePrompts,
 		SceneJobIDs:      result.SceneJobIDs,
+		SceneJobs:        result.SceneJobs,
 		GenerationStatus: result.GenerationStatus,
 		FallbackReason:   result.FallbackReason,
+		TimeoutSeconds:   120,
+		NextAction:       "Manual worker mode: generate this scene in Pinokio/Wan2GP, then save it as output.mp4 in the shown job folder.",
 		VideoPath:        result.VideoPath,
 		ThumbnailPath:    result.ThumbnailPath,
+	}
+	if len(result.SceneJobs) > 0 {
+		response.ManualOutputPath = result.SceneJobs[0].ManualOutputPath
+		response.TimeoutSeconds = result.SceneJobs[0].TimeoutSeconds
+		response.NextAction = result.SceneJobs[0].NextAction
 	}
 	if result.Status != renderer.StatusCompleted {
 		jsonOK(w, response)
@@ -709,6 +731,7 @@ func (s *Server) handleGenerateAIScenes(w http.ResponseWriter, r *http.Request) 
 			ModelHint:           result.ModelHint,
 			ScenePrompts:        result.ScenePrompts,
 			SceneJobIDs:         result.SceneJobIDs,
+			SceneJobs:           result.SceneJobs,
 			GenerationStatus:    result.GenerationStatus,
 			FallbackReason:      result.FallbackReason,
 		},

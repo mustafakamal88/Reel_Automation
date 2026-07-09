@@ -8,7 +8,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 )
 
 func TestPrerequisiteStatus(t *testing.T) {
@@ -351,6 +353,49 @@ func TestRenderLocalAISceneReelWorkerFailureSurfacesError(t *testing.T) {
 	}
 	if res.GenerationStatus != "failed" || res.Notes == "" {
 		t.Fatalf("failure not surfaced honestly: %+v", res)
+	}
+	if len(res.SceneJobs) == 0 || res.SceneJobs[0].Error != "gpu out of memory" {
+		t.Fatalf("scene job error missing: %+v", res.SceneJobs)
+	}
+}
+
+func TestRenderLocalAISceneReelPendingManualJobReturnsDetails(t *testing.T) {
+	worker := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/health":
+			_, _ = w.Write([]byte(`{"status":"ok"}`))
+		case "/generate-scene":
+			_, _ = w.Write([]byte(`{"id":"job-1","status":"pending","expected_output_path":"outputs/job-1/output.mp4"}`))
+		case "/jobs/job-1":
+			_, _ = w.Write([]byte(`{"id":"job-1","status":"pending","visual_prompt":"manual prompt","expected_output_path":"outputs/job-1/output.mp4"}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer worker.Close()
+
+	res := RenderLocalAISceneReel(context.Background(), Config{
+		OutputDir:            t.TempDir(),
+		FFmpegPath:           "ffmpeg",
+		FFprobePath:          "ffprobe",
+		LocalAIWorkerURL:     worker.URL,
+		LocalAIWorkerTimeout: 5 * time.Millisecond,
+	}, LocalAISceneInput{WorkspaceID: "w", ClipID: "c", Prompt: "prompt", TargetLengthSeconds: 30})
+	if res.Status != StatusFailed || res.GenerationStatus != "timed_out" {
+		t.Fatalf("status = %q generation = %q notes = %q", res.Status, res.GenerationStatus, res.Notes)
+	}
+	if len(res.SceneJobs) != 1 {
+		t.Fatalf("scene jobs missing: %+v", res.SceneJobs)
+	}
+	job := res.SceneJobs[0]
+	if job.Status != "timed_out" || job.JobID != "job-1" {
+		t.Fatalf("unexpected job status: %+v", job)
+	}
+	if job.ManualOutputPath != "outputs/job-1/output.mp4" {
+		t.Fatalf("manual output path = %q", job.ManualOutputPath)
+	}
+	if !strings.Contains(job.NextAction, "retry/refresh") {
+		t.Fatalf("next action missing manual copy: %+v", job)
 	}
 }
 

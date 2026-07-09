@@ -761,6 +761,8 @@ export interface AISceneWorkerStatusResponse {
   configured: boolean;
   status: string;
   message: string;
+  dashboard_url?: string;
+  jobs?: AISceneWorkerJob[];
 }
 
 export interface AIScenePlanResponse {
@@ -779,13 +781,42 @@ export interface AISceneGenerateResponse {
   model_hint: string;
   scene_prompts: AIScenePlan[];
   scene_job_ids: string[];
+  scene_jobs: AISceneJob[];
   generation_status: string;
   fallback_reason?: string;
+  manual_output_path?: string;
+  timeout_seconds?: number;
+  next_action?: string;
   zip_filename?: string;
   download_url?: string;
   included_files: string[];
   video_path?: string;
   thumbnail_path?: string;
+}
+
+export interface AISceneJob {
+  scene_number: number;
+  scene_id: string;
+  job_id: string;
+  status: 'pending' | 'waiting_for_manual_output' | 'completed' | 'failed' | 'timed_out' | string;
+  visual_prompt: string;
+  manual_output_path: string;
+  timeout_seconds: number;
+  next_action: string;
+  worker_message?: string;
+  error?: string;
+}
+
+export interface AISceneWorkerJob {
+  id: string;
+  status: 'pending' | 'waiting_for_manual_output' | 'completed' | 'failed' | 'timed_out' | string;
+  error?: string;
+  worker_message?: string;
+  next_action?: string;
+  visual_prompt?: string;
+  expected_output_path?: string;
+  manual_output_path?: string;
+  timeout_seconds?: number;
 }
 
 export async function getAISceneWorkerStatus(): Promise<AISceneWorkerStatusResponse> {
