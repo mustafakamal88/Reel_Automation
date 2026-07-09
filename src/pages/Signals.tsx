@@ -130,11 +130,22 @@ export function TrendFinderPage({ initialFilter = 'all', onFilterChange, onStatu
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 10, marginBottom: 16 }}>
         {SOURCE_STATUS.map(source => {
           const connected = source.id === 'gt' && response?.provider_status === 'ok';
+          const checking = source.id === 'gt' && loading;
+          const googleNoData = source.id === 'gt' && response?.provider_status === 'no_data';
+          const statusText = connected
+            ? 'Connected'
+            : checking
+              ? 'Checking'
+              : googleNoData
+                ? 'Connected, no data'
+                : source.id === 'gt'
+                  ? 'Not connected'
+                  : source.status;
           return (
             <div key={source.id} className="settings-card" style={{ padding: '12px 14px', borderRadius: 8 }}>
               <div style={{ fontSize: 12, fontWeight: 800, color: 'var(--text-primary)' }}>{source.name}</div>
-              <div style={{ fontSize: 11, color: connected ? 'var(--green)' : 'var(--text-dim)', marginTop: 5 }}>
-                {connected ? 'Connected' : source.status}
+              <div style={{ fontSize: 11, color: connected || googleNoData ? 'var(--green)' : 'var(--text-dim)', marginTop: 5 }}>
+                {statusText}
               </div>
             </div>
           );
@@ -251,7 +262,7 @@ export function TrendFinderPage({ initialFilter = 'all', onFilterChange, onStatu
                     rel="noreferrer"
                     style={{ display: 'inline-block', marginTop: 8, fontSize: 12, color: 'var(--accent)' }}
                   >
-                    Source evidence
+                    Source Evidence
                   </a>
                 )}
                 <div style={{ marginTop: 12, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
@@ -271,7 +282,7 @@ export function TrendFinderPage({ initialFilter = 'all', onFilterChange, onStatu
                       cursor: generatingID === candidate.id ? 'wait' : 'pointer',
                     }}
                   >
-                    {generatingID === candidate.id ? 'Generating...' : 'Generate script'}
+                    {generatingID === candidate.id ? 'Generating...' : 'Generate Script'}
                   </button>
                   {generated[candidate.id] && (
                     <span style={{ alignSelf: 'center', fontSize: 12, color: 'var(--green)' }}>

@@ -40,7 +40,7 @@ export function PublishPage() {
       <div style={{ maxWidth: 780, marginBottom: 18 }}>
         <div style={{ fontSize: 15, fontWeight: 800, color: 'var(--text-primary)' }}>Publishing readiness</div>
         <div style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.6, marginTop: 6 }}>
-          Direct uploads stay disabled until OAuth and platform API publishing are fully configured. Download ZIP packages from Exports for manual posting.
+          Direct uploads stay disabled until OAuth and platform API publishing are fully configured. Download generated clip packages from Clip Generator for manual posting.
         </div>
       </div>
 
@@ -64,7 +64,7 @@ export function PublishPage() {
 
               <div style={{ display: 'grid', gap: 8, fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.5 }}>
                 <div>Upload disabled until OAuth/API setup exists.</div>
-                <div>Manual download available from Exports.</div>
+                <div>Manual download is available from the generated package in Clip Generator.</div>
                 {conn?.handle && <div style={{ color: 'var(--text-secondary)' }}>{conn.handle}</div>}
               </div>
 

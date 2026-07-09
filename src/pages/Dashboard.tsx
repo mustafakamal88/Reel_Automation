@@ -2,15 +2,15 @@ import type { StoredScriptPackage } from '../lib/storage';
 
 interface Props {
   latestScript: StoredScriptPackage | null;
-  onNavigate: (view: 'trendFinder' | 'scriptStudio' | 'clipStudio' | 'exports' | 'publish') => void;
+  onNavigate: (view: 'trendFinder' | 'scriptStudio' | 'clipStudio' | 'publish') => void;
 }
 
 export function DashboardPage({ latestScript, onNavigate }: Props) {
   const cards = [
-    { title: 'Find a trend', body: 'Discover real keywords from connected sources.', action: 'Open Trend Finder', view: 'trendFinder' as const },
-    { title: 'Write the script', body: latestScript ? latestScript.package.title : 'Generate a script from Trend Finder to begin.', action: 'Open Script Studio', view: 'scriptStudio' as const },
-    { title: 'Create clips', body: 'Upload a source file or use a direct video URL.', action: 'Open Clip Generator', view: 'clipStudio' as const },
-    { title: 'Export package', body: 'Download ZIP packages for manual publishing.', action: 'Open Exports', view: 'exports' as const },
+    { title: 'Trends found', body: 'Real trend candidates appear after Trend Finder loads connected sources.', action: 'Open Trend Finder', view: 'trendFinder' as const },
+    { title: 'Scripts generated', body: latestScript ? latestScript.package.title : 'Generate a script from Trend Finder to begin.', action: 'Open Script Studio', view: 'scriptStudio' as const },
+    { title: 'Clips generated', body: 'Upload a source file or use a direct video URL. ZIP downloads stay inside Clip Generator.', action: 'Open Clip Generator', view: 'clipStudio' as const },
+    { title: 'Publishing status', body: 'Social upload is disabled until real OAuth and platform API setup exists.', action: 'Open Publish', view: 'publish' as const },
   ];
 
   return (
@@ -18,7 +18,7 @@ export function DashboardPage({ latestScript, onNavigate }: Props) {
       <div style={{ maxWidth: 880, marginBottom: 18 }}>
         <div style={{ fontSize: 24, fontWeight: 800, color: 'var(--text-primary)' }}>Catch trends. Create clips. Publish everywhere.</div>
         <div style={{ fontSize: 13, color: 'var(--text-muted)', lineHeight: 1.6, marginTop: 7 }}>
-          TrendCortex is focused on real trend discovery, script generation, clip creation, export packages, and future social publishing.
+          TrendCortex is focused on real trend discovery, script generation, clip creation, and future social publishing.
         </div>
       </div>
 

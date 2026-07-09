@@ -9,7 +9,6 @@ export type View =
   | 'trendFinder'
   | 'scriptStudio'
   | 'clipStudio'
-  | 'exports'
   | 'publish'
   | 'connections'
   | 'settings';

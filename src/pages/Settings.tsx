@@ -84,7 +84,7 @@ export function SettingsPage({ settings: initial, onSave }: Props) {
         <div className="settings-card">
           <div className="settings-card-title">Publishing Guardrails</div>
           <div style={{ fontSize: 13, color: 'var(--text-muted)', lineHeight: 1.7 }}>
-            Uploads are disabled until platform OAuth and API publishing support are configured. Use Exports for manual ZIP downloads.
+            Uploads are disabled until platform OAuth and API publishing support are configured. Manual ZIP downloads stay inside Clip Generator.
           </div>
         </div>
       </div>

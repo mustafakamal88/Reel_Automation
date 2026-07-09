@@ -68,7 +68,6 @@ const VALID_VIEWS: View[] = [
   'trendFinder',
   'scriptStudio',
   'clipStudio',
-  'exports',
   'publish',
   'connections',
   'settings',
@@ -76,8 +75,9 @@ const VALID_VIEWS: View[] = [
 
 const LEGACY_VIEW_MAP: Record<string, View> = {
   signals: 'trendFinder',
-  batch: 'exports',
-  topics: 'exports',
+  exports: 'clipStudio',
+  batch: 'clipStudio',
+  topics: 'clipStudio',
   workflow: 'dashboard',
   pipeline: 'clipStudio',
   realPipeline: 'dashboard',

@@ -1,13 +1,12 @@
 import { useState, useCallback } from 'react';
 import type { View } from './types';
 import { storage } from './lib/storage';
-import { MobileBottomNav, Sidebar } from './components/Sidebar';
+import { MobileNavDrawer, Sidebar } from './components/Sidebar';
 import { Header } from './components/Header';
 import { DashboardPage } from './pages/Dashboard';
 import { TrendFinderPage } from './pages/Signals';
 import { ScriptStudioPage } from './pages/ScriptStudio';
 import { ClipStudioPage } from './pages/ClipStudio';
-import { ExportsPage } from './pages/Exports';
 import { PublishPage } from './pages/Publish';
 import { SocialConnectionsPage } from './pages/SocialConnections';
 import { SettingsPage } from './pages/Settings';
@@ -20,6 +19,7 @@ export default function App() {
   const [settings, setSettings] = useState(() => storage.getSettings());
   const [latestScript, setLatestScript] = useState(() => storage.getScriptPackage());
   const [trendSubtitle, setTrendSubtitle] = useState<string>('Real keyword discovery from connected sources');
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   const navigate = useCallback((v: View) => {
     setView(v);
@@ -49,6 +49,7 @@ export default function App() {
           view={view}
           region={settings.region}
           subtitleOverride={view === 'trendFinder' ? trendSubtitle : undefined}
+          onMenuClick={() => setMobileMenuOpen(true)}
         />
 
         <div className="scroll-area">
@@ -56,7 +57,6 @@ export default function App() {
           {view === 'trendFinder' && <TrendFinderPage onStatusChange={setTrendSubtitle} onScriptGenerated={handleScriptGenerated} />}
           {view === 'scriptStudio' && <ScriptStudioPage latestScript={latestScript} />}
           {view === 'clipStudio' && <ClipStudioPage />}
-          {view === 'exports' && <ExportsPage />}
           {view === 'publish' && <PublishPage />}
           {view === 'connections' && <SocialConnectionsPage />}
           {view === 'settings' && (
@@ -68,9 +68,11 @@ export default function App() {
         </div>
       </main>
 
-      <MobileBottomNav
+      <MobileNavDrawer
         currentView={view}
         onNavigate={navigate}
+        open={mobileMenuOpen}
+        onClose={() => setMobileMenuOpen(false)}
       />
     </div>
   );

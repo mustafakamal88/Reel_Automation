@@ -3,11 +3,10 @@ import type { View } from '../types';
 import { getHealth } from '../lib/api/client';
 
 const VIEW_META: Record<View, { title: string; sub: string }> = {
-  dashboard:    { title: 'Dashboard',      sub: 'Trend discovery, scripts, clips, exports, and publishing readiness' },
+  dashboard:    { title: 'Dashboard',      sub: 'Trend discovery, scripts, clips, and publishing readiness' },
   trendFinder:  { title: 'Trend Finder',   sub: 'Real keyword discovery from connected sources' },
   scriptStudio: { title: 'Script Studio',  sub: 'Generated scripts and platform copy' },
-  clipStudio:   { title: 'Clip Generator', sub: 'Upload a video or provide a direct video URL, then export clips' },
-  exports:      { title: 'Exports',        sub: 'ZIP packages ready for manual publishing' },
+  clipStudio:   { title: 'Clip Generator', sub: 'Upload a video or provide a direct video URL, then download clips' },
   publish:      { title: 'Publish',        sub: 'Future social publishing with honest connection status' },
   connections:  { title: 'Connections',    sub: 'Real provider and account connection status' },
   settings:     { title: 'Settings',       sub: 'Workspace preferences and product configuration' },
@@ -17,9 +16,10 @@ interface Props {
   view: View;
   region?: string;
   subtitleOverride?: string;
+  onMenuClick?: () => void;
 }
 
-export function Header({ view, region = 'US · Global', subtitleOverride }: Props) {
+export function Header({ view, region = 'US · Global', subtitleOverride, onMenuClick }: Props) {
   const { title, sub } = VIEW_META[view];
   const [backendConnected, setBackendConnected] = useState(false);
 
@@ -37,6 +37,12 @@ export function Header({ view, region = 'US · Global', subtitleOverride }: Prop
 
   return (
     <header className="header">
+      <button className="mobile-menu-btn" type="button" aria-label="Open navigation" onClick={onMenuClick}>
+        <span />
+        <span />
+        <span />
+      </button>
+
       <div className="header-title-block">
         <div className="header-title">{title}</div>
         <div className="header-subtitle">{subtitleOverride || sub}</div>

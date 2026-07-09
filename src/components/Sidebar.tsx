@@ -1,4 +1,6 @@
+import { useEffect, useState } from 'react';
 import type { View } from '../types';
+import { getHealth } from '../lib/api/client';
 
 interface NavItem {
   id: View;
@@ -17,21 +19,26 @@ export const NAV_ITEMS: NavItem[] = [
   { id: 'trendFinder',  label: 'Trend Finder',   short: 'TF' },
   { id: 'scriptStudio', label: 'Script Studio',  short: 'SS' },
   { id: 'clipStudio',   label: 'Clip Generator', short: 'CG' },
-  { id: 'exports',      label: 'Exports',        short: 'EX' },
   { id: 'publish',      label: 'Publish',        short: 'PB' },
   { id: 'connections',  label: 'Connections',    short: 'CN' },
   { id: 'settings',     label: 'Settings',       short: 'ST' },
 ];
 
-const MOBILE_NAV_ITEMS: NavItem[] = [
-  { id: 'dashboard',    label: 'Home',    short: 'DB' },
-  { id: 'trendFinder',  label: 'Trends',  short: 'TF' },
-  { id: 'scriptStudio', label: 'Scripts', short: 'SS' },
-  { id: 'clipStudio',   label: 'Clips',   short: 'CG' },
-  { id: 'exports',      label: 'Exports', short: 'EX' },
-];
+function SidebarChrome({ currentView, onNavigate, onAfterNavigate }: Props & { onAfterNavigate?: () => void }) {
+  const [backendConnected, setBackendConnected] = useState(false);
 
-export function Sidebar({ currentView, onNavigate }: Props) {
+  useEffect(() => {
+    let cancelled = false;
+    getHealth()
+      .then(res => {
+        if (!cancelled) setBackendConnected(Boolean(res.ok));
+      })
+      .catch(() => {
+        if (!cancelled) setBackendConnected(false);
+      });
+    return () => { cancelled = true; };
+  }, []);
+
   return (
     <aside className="sidebar" role="navigation" aria-label="Main navigation">
       <div className="sidebar-logo">
@@ -56,15 +63,14 @@ export function Sidebar({ currentView, onNavigate }: Props) {
               key={item.id}
               className={`nav-item${active ? ' active' : ''}`}
               data-view={item.id}
-              onClick={() => onNavigate(item.id)}
+              onClick={() => {
+                onNavigate(item.id);
+                onAfterNavigate?.();
+              }}
               aria-current={active ? 'page' : undefined}
               type="button"
             >
-              <span
-                className="nav-item-num"
-              >
-                {item.short}
-              </span>
+              <span className="nav-item-num" aria-hidden="true" />
               <span
                 className="nav-item-label"
               >
@@ -82,8 +88,12 @@ export function Sidebar({ currentView, onNavigate }: Props) {
 
       <div className="sidebar-footer">
         <div className="collector-status">
-          <span className="collector-dot" aria-hidden="true" />
-          <span className="collector-label">Backend connected</span>
+          <span
+            className="collector-dot"
+            aria-hidden="true"
+            style={{ background: backendConnected ? 'var(--green)' : 'var(--red)' }}
+          />
+          <span className="collector-label">{backendConnected ? 'Backend connected' : 'Backend offline'}</span>
         </div>
         <div className="user-card">
           <div className="user-avatar" aria-hidden="true">TC</div>
@@ -97,25 +107,19 @@ export function Sidebar({ currentView, onNavigate }: Props) {
   );
 }
 
-export function MobileBottomNav({ currentView, onNavigate }: Props) {
-  return (
-    <nav className="mobile-bottom-nav" aria-label="Mobile main navigation">
-      {MOBILE_NAV_ITEMS.map(item => {
-        const active = item.id === currentView;
+export function Sidebar(props: Props) {
+  return <SidebarChrome {...props} />;
+}
 
-        return (
-          <button
-            key={item.id}
-            className={`mobile-nav-item${active ? ' active' : ''}`}
-            onClick={() => onNavigate(item.id)}
-            aria-current={active ? 'page' : undefined}
-            type="button"
-          >
-            <span className="mobile-nav-icon" aria-hidden="true">{item.short}</span>
-            <span className="mobile-nav-label">{item.label}</span>
-          </button>
-        );
-      })}
-    </nav>
+export function MobileNavDrawer({ currentView, onNavigate, open, onClose }: Props & { open: boolean; onClose: () => void }) {
+  if (!open) return null;
+
+  return (
+    <>
+      <button className="mobile-drawer-backdrop" type="button" aria-label="Close navigation" onClick={onClose} />
+      <div className="mobile-drawer-panel">
+        <SidebarChrome currentView={currentView} onNavigate={onNavigate} onAfterNavigate={onClose} />
+      </div>
+    </>
   );
 }
