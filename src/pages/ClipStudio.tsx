@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
   ApiError,
-  createClipStudioSource,
   downloadClipStudioZip,
   generateAIScenes,
   generateClipStudio,
   getAISceneWorkerStatus,
+  importClipStudioURL,
   planAIScenes,
   type AISceneGenerateResponse,
   type AIScenePlanResponse,
@@ -21,7 +21,6 @@ import {
   clipGenerateDisabledReason,
   clipPackageReady,
   getClipSourceStatus,
-  isYouTubeURL,
   sourceCanGenerate,
 } from './ClipStudioState';
 
@@ -239,7 +238,7 @@ export function ClipStudioPage() {
     setError(null);
     setResult(null);
     try {
-      const imported = await createClipStudioSource({
+      const imported = await importClipStudioURL({
         source_url: trimmedURL,
         rights_confirmed: rightsConfirmed,
         rights: {
@@ -429,7 +428,7 @@ export function ClipStudioPage() {
               type="button"
             >
               <span className="generate-btn-dot" style={{ background: sourceUrl.trim() ? '#15121f' : '#6b7280' }} />
-              {urlImportBusy ? 'Checking URL...' : isYouTubeURL(sourceUrl) ? 'Save URL as Reference' : 'Import URL'}
+              {urlImportBusy ? 'Checking URL...' : 'Import URL'}
             </button>
           </div>
 
@@ -444,15 +443,6 @@ export function ClipStudioPage() {
             <div style={{ fontWeight: 800, color: 'inherit', marginBottom: 3 }}>{sourceStatus.label}</div>
             <div>{clipStatusMessage}</div>
           </div>
-
-          {(source || uploadBusy || urlImportBusy) && (
-            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }} aria-label="Source status">
-              {uploadBusy && <StatusPill>Uploading source</StatusPill>}
-              {urlImportBusy && <StatusPill>Checking source URL</StatusPill>}
-              {source?.metadata.original_name && <StatusPill>{source.metadata.original_name}</StatusPill>}
-              {source?.download_ready && <StatusPill>Ready for clips</StatusPill>}
-            </div>
-          )}
 
           <Field label="Prompt / instruction">
             <textarea
@@ -566,12 +556,9 @@ export function ClipStudioPage() {
             </div>
           </details>
 
-          {result && (
-            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-              <StatusPill>render: {result.render_status}</StatusPill>
-              <StatusPill>highlight_detection: {result.highlight_detection}</StatusPill>
-              {result.zip_filename && <StatusPill>{result.zip_filename}</StatusPill>}
-              {result.generated_clip_jobs?.map(job => <StatusPill key={job.clip_id}>{job.clip_id}: {job.render_status}</StatusPill>)}
+          {result && result.notes && (
+            <div style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.6 }}>
+              {result.notes}
             </div>
           )}
         </div>

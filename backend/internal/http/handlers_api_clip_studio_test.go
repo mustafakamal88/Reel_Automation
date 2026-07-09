@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"mime/multipart"
 	stdhttp "net/http"
@@ -147,6 +148,208 @@ func TestClipStudioDirectConfirmedVideoURLCanBeProcessed(t *testing.T) {
 	}
 }
 
+func TestClipStudioImportURLDirectMP4ImportsAndEnablesGeneration(t *testing.T) {
+	requireFFmpeg(t)
+	s := testClipStudioServer(t)
+	sourcePath := buildClipStudioSourceFixture(t, t.TempDir())
+	sourceBytes, err := os.ReadFile(sourcePath)
+	if err != nil {
+		t.Fatalf("read source fixture: %v", err)
+	}
+	var sawHEAD, sawGET bool
+	videoServer := httptest.NewServer(stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+		w.Header().Set("Content-Type", "video/mp4")
+		w.Header().Set("Content-Length", fmt.Sprintf("%d", len(sourceBytes)))
+		switch r.Method {
+		case stdhttp.MethodHead:
+			sawHEAD = true
+		case stdhttp.MethodGet:
+			sawGET = true
+			_, _ = w.Write(sourceBytes)
+		default:
+			stdhttp.Error(w, "method not allowed", stdhttp.StatusMethodNotAllowed)
+		}
+	}))
+	defer videoServer.Close()
+
+	body := strings.NewReader(`{
+		"source_url":"` + videoServer.URL + `/source.mp4",
+		"rights_confirmed":true,
+		"rights":{"user_confirmed_rights":true,"attribution_text":"Imported source"}
+	}`)
+	req := httptest.NewRequest(stdhttp.MethodPost, "/api/clip-studio/import-url", body)
+	rec := httptest.NewRecorder()
+	s.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != stdhttp.StatusOK {
+		t.Fatalf("import status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var got clipStudioSourceResponse
+	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if got.Status != "ready" || !got.CanRender || !got.DownloadReady || got.Message != clipStudioImportedMessage {
+		t.Fatalf("direct import did not enable generation: %+v", got)
+	}
+	if !sawHEAD || !sawGET {
+		t.Fatalf("expected HEAD and GET during import; saw HEAD=%v GET=%v", sawHEAD, sawGET)
+	}
+	if _, err := os.Stat(got.Metadata.FilePath); err != nil {
+		t.Fatalf("downloaded source missing: %v", err)
+	}
+}
+
+func TestClipStudioImportURLRejectsHTML(t *testing.T) {
+	s := testClipStudioServer(t)
+	htmlServer := httptest.NewServer(stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = w.Write([]byte("<html></html>"))
+	}))
+	defer htmlServer.Close()
+
+	body := strings.NewReader(`{
+		"source_url":"` + htmlServer.URL + `/page.html",
+		"rights_confirmed":true,
+		"rights":{"user_confirmed_rights":true}
+	}`)
+	req := httptest.NewRequest(stdhttp.MethodPost, "/api/clip-studio/import-url", body)
+	rec := httptest.NewRecorder()
+	s.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != stdhttp.StatusBadRequest {
+		t.Fatalf("import status = %d, want 400, body = %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "HTML page") {
+		t.Fatalf("HTML rejection body = %s", rec.Body.String())
+	}
+}
+
+func TestClipStudioImportURLYouTubeStoredReferenceOnly(t *testing.T) {
+	s := testClipStudioServer(t)
+	body := strings.NewReader(`{
+		"source_url":"https://www.youtube.com/watch?v=abc123",
+		"rights_confirmed":true,
+		"rights":{"user_confirmed_rights":true}
+	}`)
+	req := httptest.NewRequest(stdhttp.MethodPost, "/api/clip-studio/import-url", body)
+	rec := httptest.NewRecorder()
+	s.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != stdhttp.StatusOK {
+		t.Fatalf("import status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var got clipStudioSourceResponse
+	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if got.Status != "metadata_only" || got.CanRender || got.DownloadReady {
+		t.Fatalf("YouTube import response = %+v, want metadata_only", got)
+	}
+	if got.Message != clipStudioWatchURLMessage {
+		t.Fatalf("message = %q, want %q", got.Message, clipStudioWatchURLMessage)
+	}
+	if got.Metadata.DirectVideo || got.Metadata.SupportedType {
+		t.Fatalf("watch URL must not be direct video: %+v", got.Metadata)
+	}
+}
+
+func TestClipStudioImportURLRejectsOversizedFile(t *testing.T) {
+	s := testClipStudioServer(t)
+	videoServer := httptest.NewServer(stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+		w.Header().Set("Content-Type", "video/mp4")
+		w.Header().Set("Content-Length", "536870913")
+	}))
+	defer videoServer.Close()
+
+	body := strings.NewReader(`{
+		"source_url":"` + videoServer.URL + `/source.mp4",
+		"rights_confirmed":true,
+		"rights":{"user_confirmed_rights":true}
+	}`)
+	req := httptest.NewRequest(stdhttp.MethodPost, "/api/clip-studio/import-url", body)
+	rec := httptest.NewRecorder()
+	s.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != stdhttp.StatusBadRequest {
+		t.Fatalf("import status = %d, want 400, body = %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "exceeds the 512MB limit") {
+		t.Fatalf("oversized rejection body = %s", rec.Body.String())
+	}
+}
+
+func TestClipStudioGenerateFromImportedSourceIDWorks(t *testing.T) {
+	requireFFmpeg(t)
+	s := testClipStudioServer(t)
+	sourcePath := buildClipStudioSourceFixture(t, t.TempDir())
+	sourceBytes, err := os.ReadFile(sourcePath)
+	if err != nil {
+		t.Fatalf("read source fixture: %v", err)
+	}
+	videoServer := httptest.NewServer(stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+		w.Header().Set("Content-Type", "video/mp4")
+		w.Header().Set("Content-Length", fmt.Sprintf("%d", len(sourceBytes)))
+		if r.Method == stdhttp.MethodGet {
+			_, _ = w.Write(sourceBytes)
+		}
+	}))
+	defer videoServer.Close()
+
+	importBody := strings.NewReader(`{
+		"source_url":"` + videoServer.URL + `/source.mp4",
+		"rights_confirmed":true,
+		"rights":{"user_confirmed_rights":true,"attribution_text":"Imported source"}
+	}`)
+	importReq := httptest.NewRequest(stdhttp.MethodPost, "/api/clip-studio/import-url", importBody)
+	importRec := httptest.NewRecorder()
+	s.Routes().ServeHTTP(importRec, importReq)
+	if importRec.Code != stdhttp.StatusOK {
+		t.Fatalf("import status = %d, body = %s", importRec.Code, importRec.Body.String())
+	}
+	var imported clipStudioSourceResponse
+	if err := json.NewDecoder(importRec.Body).Decode(&imported); err != nil {
+		t.Fatalf("decode import response: %v", err)
+	}
+
+	generateBody := strings.NewReader(`{
+		"source_id":"` + imported.SourceID + `",
+		"prompt":"make clips",
+		"clip_length":"15s",
+		"clip_count":1,
+		"rights_confirmed":true,
+		"rights":{"user_confirmed_rights":true},
+		"branding":{"top_banner_text":"TOP","bottom_banner_text":"BOTTOM","watermark_text":"@test"}
+	}`)
+	generateReq := httptest.NewRequest(stdhttp.MethodPost, "/api/clip-studio/generate", generateBody)
+	generateRec := httptest.NewRecorder()
+	s.Routes().ServeHTTP(generateRec, generateReq)
+	if generateRec.Code != stdhttp.StatusOK {
+		t.Fatalf("generate status = %d, body = %s", generateRec.Code, generateRec.Body.String())
+	}
+	var generated clipStudioGenerateResponse
+	if err := json.NewDecoder(generateRec.Body).Decode(&generated); err != nil {
+		t.Fatalf("decode generate response: %v", err)
+	}
+	if !generated.Success || generated.ZipFilename == "" {
+		t.Fatalf("generate from imported source failed: %+v", generated)
+	}
+	zipPath := filepath.Join(s.cfg.ExportDir, "default-workspace", "clip-studio", generated.ZipFilename)
+	zr, err := zip.OpenReader(zipPath)
+	if err != nil {
+		t.Fatalf("open generated zip: %v", err)
+	}
+	defer zr.Close()
+	names := map[string]bool{}
+	for _, f := range zr.File {
+		names[f.Name] = true
+	}
+	for _, name := range []string{"clip-01/video.mp4", "clip-01/thumbnail.png", "clip-01/attribution.json", "manifest.json"} {
+		if !names[name] {
+			t.Fatalf("expected zip entry %q; entries=%v", name, names)
+		}
+	}
+}
+
 func TestClipStudioYouTubeURLReturnsMetadataOnlyUnsupportedForRender(t *testing.T) {
 	s := testClipStudioServer(t)
 	body := strings.NewReader(`{
@@ -165,7 +368,7 @@ func TestClipStudioYouTubeURLReturnsMetadataOnlyUnsupportedForRender(t *testing.
 	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	want := "For YouTube links, upload the source video file or connect your own/approved channel source. This app does not auto-rip YouTube videos."
+	want := clipStudioWatchURLMessage
 	if got.Status != "metadata_only" || got.Metadata.Status != "metadata_only" {
 		t.Fatalf("YouTube status = response %q metadata %q, want metadata_only", got.Status, got.Metadata.Status)
 	}

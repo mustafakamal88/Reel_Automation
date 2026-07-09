@@ -102,6 +102,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /api/reels/export-test", s.handleRenderExportTest)
 	mux.HandleFunc("GET /api/reels/export-test/download/{filename}", s.handleDownloadRenderExportTest)
 	mux.HandleFunc("POST /api/clip-studio/upload", s.handleUploadClipStudioSource)
+	mux.HandleFunc("POST /api/clip-studio/import-url", s.handleImportClipStudioURL)
 	mux.HandleFunc("POST /api/clip-studio/source", s.handleCreateClipStudioSource)
 	mux.HandleFunc("POST /api/clip-studio/generate", s.handleGenerateClipStudio)
 	mux.HandleFunc("POST /api/clip-studio/render", s.handleRenderClipStudio)

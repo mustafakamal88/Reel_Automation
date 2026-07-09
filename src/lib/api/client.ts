@@ -730,6 +730,14 @@ export async function createClipStudioSource(body: {
   return apiFetch('/api/clip-studio/source', { method: 'POST', body: JSON.stringify(body) });
 }
 
+export async function importClipStudioURL(body: {
+  source_url: string;
+  rights_confirmed: boolean;
+  rights: ClipRightsMetadata;
+}): Promise<ClipStudioSourceResponse> {
+  return apiFetch('/api/clip-studio/import-url', { method: 'POST', body: JSON.stringify(body) });
+}
+
 export async function generateClipStudio(body: ClipStudioGenerateRequest): Promise<ClipStudioGenerateResponse> {
   return apiFetch('/api/clip-studio/generate', { method: 'POST', body: JSON.stringify(body) });
 }

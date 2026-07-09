@@ -26,13 +26,21 @@ export interface ClipGenerateAvailabilityInput {
 }
 
 const referenceOnlyMessage = 'URL saved as reference only. Upload the source video file or connect an approved source before generating clips.';
-const youtubeMessage = 'For YouTube links, upload the source video file or connect your own/approved channel source. This app does not auto-rip YouTube videos.';
+const watchURLMessage = 'This is a platform watch URL. Upload the source file or provide a direct downloadable video URL.';
 
 export function isYouTubeURL(value: string): boolean {
+  return isPlatformWatchURL(value);
+}
+
+export function isPlatformWatchURL(value: string): boolean {
   try {
     const parsed = new URL(value);
     const host = parsed.hostname.toLowerCase().replace(/^www\./, '');
-    return host === 'youtube.com' || host.endsWith('.youtube.com') || host === 'youtu.be';
+    if (host === 'youtube.com' || host.endsWith('.youtube.com') || host === 'youtu.be') return true;
+    if (host === 'vimeo.com' || host.endsWith('.vimeo.com')) return true;
+    if (parsed.pathname.toLowerCase().includes('/watch')) return true;
+    return ['tiktok.com', 'instagram.com', 'facebook.com', 'fb.watch', 'x.com', 'twitter.com', 'threads.net']
+      .some(socialHost => host === socialHost || host.endsWith(`.${socialHost}`));
   } catch {
     return false;
   }
@@ -67,11 +75,11 @@ export function getClipSourceStatus(source: ClipStudioSourceResponse | null, sou
     };
   }
 
-  if (!source && isYouTubeURL(trimmedURL)) {
+  if (!source && isPlatformWatchURL(trimmedURL)) {
     return {
       state: 'unsupported_url',
       label: 'Unsupported URL',
-      message: youtubeMessage,
+      message: watchURLMessage,
       tone: 'danger',
     };
   }
@@ -107,7 +115,7 @@ export function getClipSourceStatus(source: ClipStudioSourceResponse | null, sou
     return {
       state: 'direct_video_imported',
       label: 'Direct video imported',
-      message: 'Confirm rights, then generate clips.',
+      message: 'Video imported and ready',
       tone: 'ready',
     };
   }
@@ -116,7 +124,7 @@ export function getClipSourceStatus(source: ClipStudioSourceResponse | null, sou
     return {
       state: 'url_reference_only',
       label: 'URL reference only',
-      message: isYouTubeURL(source.metadata.url || '') ? youtubeMessage : referenceOnlyMessage,
+      message: isPlatformWatchURL(source.metadata.url || '') ? watchURLMessage : referenceOnlyMessage,
       tone: 'warning',
     };
   }

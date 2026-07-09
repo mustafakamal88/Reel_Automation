@@ -65,6 +65,17 @@ assert(
   'Uploaded source should enable Generate after rights confirmation',
 );
 
+const importedSource = source({
+  metadata: {
+    kind: 'url',
+    url: 'https://cdn.example.com/source.mp4',
+  },
+});
+assert(
+  getClipSourceStatus(importedSource, '').message === 'Video imported and ready',
+  'Direct URL import should show ready message',
+);
+
 assert(getClipSourceStatus(null, '').state === 'none', 'Empty state should be no source selected');
 assert(!clipPackageReady(null), 'Download must be disabled until a package exists');
 assert(

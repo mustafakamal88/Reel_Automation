@@ -173,6 +173,13 @@ type aiSceneGenerateResponse struct {
 
 var clipStudioHTTPClient = http.DefaultClient
 
+const (
+	clipStudioMaxSourceBytes   int64 = 512 << 20
+	clipStudioURLImportTimeout       = 20 * time.Second
+	clipStudioWatchURLMessage        = "This is a platform watch URL. Upload the source file or provide a direct downloadable video URL."
+	clipStudioImportedMessage        = "Video imported and ready"
+)
+
 func (s *Server) handleRenderClipStudio(w http.ResponseWriter, r *http.Request) {
 	var req clipStudioRenderRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -373,7 +380,8 @@ func (s *Server) handleCreateClipStudioSource(w http.ResponseWriter, r *http.Req
 
 	sourceID := newClipStudioSourceID()
 	ext := strings.ToLower(filepath.Ext(parsed.Path))
-	direct := isSupportedClipVideoExt(ext)
+	watchURL := isPlatformWatchURL(parsed)
+	direct := !watchURL && isSupportedClipVideoExt(ext)
 	message := clipStudioReferenceOnlyMessage(parsed.Host)
 	meta := clipStudioSourceMetadata{
 		SourceID:      sourceID,
@@ -427,6 +435,33 @@ func (s *Server) handleCreateClipStudioSource(w http.ResponseWriter, r *http.Req
 		CanRender:     meta.Status == "ready",
 		DirectVideo:   meta.DirectVideo,
 		DownloadReady: meta.FilePath != "",
+	})
+}
+
+func (s *Server) handleImportClipStudioURL(w http.ResponseWriter, r *http.Request) {
+	var req clipStudioSourceRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, "invalid request body: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	workspaceID, err := s.defaultWorkspaceID(r.Context())
+	if err != nil {
+		jsonError(w, "workspace lookup failed: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	source, err := s.createClipStudioSourceFromURL(r.Context(), workspaceID, req)
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	jsonOK(w, clipStudioSourceResponse{
+		SourceID:      source.SourceID,
+		Status:        source.Status,
+		Message:       source.Message,
+		Metadata:      source,
+		CanRender:     source.Status == "ready" && source.FilePath != "",
+		DirectVideo:   source.DirectVideo,
+		DownloadReady: source.FilePath != "",
 	})
 }
 
@@ -725,7 +760,8 @@ func (s *Server) createClipStudioSourceFromURL(ctx context.Context, workspaceID 
 
 	sourceID := newClipStudioSourceID()
 	ext := strings.ToLower(filepath.Ext(parsed.Path))
-	direct := isSupportedClipVideoExt(ext)
+	watchURL := isPlatformWatchURL(parsed)
+	direct := !watchURL && isSupportedClipVideoExt(ext)
 	message := clipStudioReferenceOnlyMessage(parsed.Host)
 	meta := clipStudioSourceMetadata{
 		SourceID:      sourceID,
@@ -739,11 +775,26 @@ func (s *Server) createClipStudioSourceFromURL(ctx context.Context, workspaceID 
 		DirectVideo:   direct,
 		SupportedType: direct,
 	}
-	if !direct {
+	if watchURL {
+		meta.Message = clipStudioWatchURLMessage
 		if err := s.writeClipStudioSource(workspaceID, meta); err != nil {
 			return clipStudioSourceMetadata{}, fmt.Errorf("store source metadata failed: %w", err)
 		}
 		return meta, nil
+	}
+	probeCtx, cancel := context.WithTimeout(ctx, clipStudioURLImportTimeout)
+	defer cancel()
+	probe, err := probeDirectClipURL(probeCtx, sourceURL)
+	if err != nil {
+		return clipStudioSourceMetadata{}, err
+	}
+	direct = direct || probe.DirectVideo
+	meta.DirectVideo = direct
+	meta.SupportedType = direct
+	if direct {
+		if ext == "" || !isSupportedClipVideoExt(ext) {
+			ext = extFromVideoContentType(probe.ContentType)
+		}
 	}
 	if !rights.UserConfirmedRights {
 		meta.Status = "rights_required"
@@ -758,15 +809,18 @@ func (s *Server) createClipStudioSourceFromURL(ctx context.Context, workspaceID 
 		return clipStudioSourceMetadata{}, fmt.Errorf("create source storage failed: %w", err)
 	}
 	dstPath := filepath.Join(dstDir, "source"+ext)
-	size, contentType, err := downloadDirectClipSource(ctx, sourceURL, dstPath)
+	downloadCtx, cancel := context.WithTimeout(ctx, clipStudioURLImportTimeout)
+	defer cancel()
+	size, contentType, err := downloadDirectClipSource(downloadCtx, sourceURL, dstPath)
 	if err != nil {
 		return clipStudioSourceMetadata{}, fmt.Errorf("download direct video failed: %w", err)
 	}
 	meta.FilePath = dstPath
 	meta.SizeBytes = size
 	meta.ContentType = contentType
+	meta.SourceModel = renderer.ClipSourceUserUpload
 	meta.Status = "ready"
-	meta.Message = "Direct video URL downloaded and ready for clip generation."
+	meta.Message = clipStudioImportedMessage
 	if err := s.writeClipStudioSource(workspaceID, meta); err != nil {
 		return clipStudioSourceMetadata{}, fmt.Errorf("store source metadata failed: %w", err)
 	}
@@ -824,7 +878,7 @@ func isSupportedClipVideoExt(ext string) bool {
 func clipStudioReferenceOnlyMessage(host string) string {
 	normalized := strings.TrimPrefix(strings.ToLower(host), "www.")
 	if normalized == "youtu.be" || normalized == "youtube.com" || strings.HasSuffix(normalized, ".youtube.com") {
-		return "For YouTube links, upload the source video file or connect your own/approved channel source. This app does not auto-rip YouTube videos."
+		return clipStudioWatchURLMessage
 	}
 	return "URL saved as reference only. Upload the source video file or connect an approved source before generating clips."
 }
@@ -835,7 +889,50 @@ func copyUploadedClipSource(file multipart.File, dstPath string) (int64, error) 
 		return 0, err
 	}
 	defer dst.Close()
-	return io.Copy(dst, io.LimitReader(file, 512<<20))
+	return io.Copy(dst, io.LimitReader(file, clipStudioMaxSourceBytes))
+}
+
+type clipStudioURLProbe struct {
+	ContentType   string
+	ContentLength int64
+	DirectVideo   bool
+}
+
+func probeDirectClipURL(ctx context.Context, sourceURL string) (clipStudioURLProbe, error) {
+	probe, err := requestClipURLProbe(ctx, http.MethodHead, sourceURL)
+	if err == nil {
+		return probe, nil
+	}
+	if strings.Contains(err.Error(), "HTTP 405") || strings.Contains(err.Error(), "HTTP 501") {
+		return requestClipURLProbe(ctx, http.MethodGet, sourceURL)
+	}
+	return clipStudioURLProbe{}, err
+}
+
+func requestClipURLProbe(ctx context.Context, method, sourceURL string) (clipStudioURLProbe, error) {
+	req, err := http.NewRequestWithContext(ctx, method, sourceURL, nil)
+	if err != nil {
+		return clipStudioURLProbe{}, err
+	}
+	res, err := clipStudioHTTPClient.Do(req)
+	if err != nil {
+		return clipStudioURLProbe{}, err
+	}
+	defer res.Body.Close()
+	if res.StatusCode < 200 || res.StatusCode >= 300 {
+		return clipStudioURLProbe{}, fmt.Errorf("source returned HTTP %d", res.StatusCode)
+	}
+	contentType := normalizeMediaType(res.Header.Get("Content-Type"))
+	if strings.HasPrefix(contentType, "text/html") {
+		return clipStudioURLProbe{}, fmt.Errorf("source URL is an HTML page, not a direct video file")
+	}
+	if contentType == "" || !strings.HasPrefix(contentType, "video/") {
+		return clipStudioURLProbe{}, fmt.Errorf("source URL must return a video content-type")
+	}
+	if res.ContentLength > clipStudioMaxSourceBytes {
+		return clipStudioURLProbe{}, fmt.Errorf("source video exceeds the 512MB limit")
+	}
+	return clipStudioURLProbe{ContentType: contentType, ContentLength: res.ContentLength, DirectVideo: true}, nil
 }
 
 func downloadDirectClipSource(ctx context.Context, sourceURL, dstPath string) (int64, string, error) {
@@ -851,13 +948,68 @@ func downloadDirectClipSource(ctx context.Context, sourceURL, dstPath string) (i
 	if res.StatusCode < 200 || res.StatusCode >= 300 {
 		return 0, "", fmt.Errorf("source returned HTTP %d", res.StatusCode)
 	}
+	contentType := normalizeMediaType(res.Header.Get("Content-Type"))
+	if strings.HasPrefix(contentType, "text/html") {
+		return 0, "", fmt.Errorf("source URL is an HTML page, not a direct video file")
+	}
+	if contentType == "" || !strings.HasPrefix(contentType, "video/") {
+		return 0, "", fmt.Errorf("source URL must return a video content-type")
+	}
+	if res.ContentLength > clipStudioMaxSourceBytes {
+		return 0, "", fmt.Errorf("source video exceeds the 512MB limit")
+	}
 	dst, err := os.OpenFile(dstPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0640)
 	if err != nil {
 		return 0, "", err
 	}
 	defer dst.Close()
-	size, err := io.Copy(dst, io.LimitReader(res.Body, 512<<20))
-	return size, res.Header.Get("Content-Type"), err
+	size, err := io.Copy(dst, io.LimitReader(res.Body, clipStudioMaxSourceBytes+1))
+	if err != nil {
+		return 0, "", err
+	}
+	if size > clipStudioMaxSourceBytes {
+		_ = os.Remove(dstPath)
+		return 0, "", fmt.Errorf("source video exceeds the 512MB limit")
+	}
+	return size, contentType, nil
+}
+
+func normalizeMediaType(value string) string {
+	if idx := strings.Index(value, ";"); idx >= 0 {
+		value = value[:idx]
+	}
+	return strings.ToLower(strings.TrimSpace(value))
+}
+
+func extFromVideoContentType(contentType string) string {
+	switch normalizeMediaType(contentType) {
+	case "video/quicktime", "video/mov":
+		return ".mov"
+	case "video/webm":
+		return ".webm"
+	default:
+		return ".mp4"
+	}
+}
+
+func isPlatformWatchURL(parsed *url.URL) bool {
+	host := strings.TrimPrefix(strings.ToLower(parsed.Hostname()), "www.")
+	if host == "youtu.be" || host == "youtube.com" || strings.HasSuffix(host, ".youtube.com") {
+		return true
+	}
+	if host == "vimeo.com" || strings.HasSuffix(host, ".vimeo.com") {
+		return true
+	}
+	if strings.Contains(strings.ToLower(parsed.Path), "/watch") {
+		return true
+	}
+	socialHosts := []string{"tiktok.com", "instagram.com", "facebook.com", "fb.watch", "x.com", "twitter.com", "threads.net"}
+	for _, socialHost := range socialHosts {
+		if host == socialHost || strings.HasSuffix(host, "."+socialHost) {
+			return true
+		}
+	}
+	return false
 }
 
 func clipLengthToSeconds(value string) float64 {
