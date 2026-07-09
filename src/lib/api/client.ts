@@ -194,6 +194,16 @@ export interface TrendCandidate {
   status: string;
 }
 
+export interface ResearchProviderStatus {
+  id: string;
+  name: string;
+  platform: string;
+  status: 'active' | 'not_configured' | 'unavailable';
+  message: string;
+  scopes?: string[];
+  limitations?: string[];
+}
+
 export interface TrendDiscoveryResponse {
   provider: string;
   provider_url?: string;
@@ -393,6 +403,10 @@ export async function discoverTrendCandidates(params: { region?: string; languag
   return apiFetch(`/api/trends/discover${suffix}`);
 }
 
+export async function getResearchProviderStatus(): Promise<{ providers: ResearchProviderStatus[] }> {
+  return apiFetch('/api/research/providers/status');
+}
+
 export async function generateReelScript(body: ReelContentGenerationRequest): Promise<ReelContentGenerationResponse> {
   return apiFetch('/api/reels/generate-script', {
     method: 'POST',
@@ -401,29 +415,87 @@ export async function generateReelScript(body: ReelContentGenerationRequest): Pr
 }
 
 export interface YouTubeVideoAnalysisResponse {
-  status: 'not_configured' | 'ok';
+  status: 'not_configured' | 'ok' | 'invalid_input' | 'provider_error' | 'no_data';
   message: string;
   video_url?: string;
+  video_id?: string;
   title?: string;
-  description_keywords?: string[];
+  channel_title?: string;
+  channel_id?: string;
+  published_at?: string;
+  description?: string;
   tags?: string[];
   category?: string;
+  duration?: string;
   views?: number;
   likes?: number;
   comments?: number;
-  inferred_topic?: string;
-  possible_target_keywords?: string[];
-  seo_suggestions?: string[];
+  public_topic_details?: string[];
+  extracted_keywords?: string[];
+  inferred_niche?: string;
+  inferred_content_angle?: string;
+  hook_analysis?: string;
+  title_structure_analysis?: string;
+  description_hashtag_analysis?: string;
+  performance_signals?: Record<string, unknown>;
+  suggested_remake_angles?: string[];
+  limitations?: string[];
+  metadata?: ResearchResultMetadata;
 }
 
 export interface YouTubeChannelAnalysisResponse {
-  status: 'not_configured' | 'ok';
+  status: 'not_configured' | 'ok' | 'invalid_input' | 'provider_error' | 'no_data';
   message: string;
   channel_url?: string;
-  niche?: string;
-  strategy?: string;
-  top_performing_patterns?: string[];
-  view_drivers?: string[];
+  channel_id?: string;
+  channel_title?: string;
+  description?: string;
+  subscribers?: number;
+  views?: number;
+  video_count?: number;
+  country?: string;
+  public_topic_details?: string[];
+  recent_videos?: {
+    video_id: string;
+    title: string;
+    published_at: string;
+    views?: number;
+    likes?: number;
+    comments?: number;
+  }[];
+  channel_niche?: string;
+  content_pillars?: string[];
+  title_patterns?: string[];
+  upload_frequency?: string;
+  top_video_topics?: string[];
+  repeated_keywords?: string[];
+  view_distribution?: Record<string, unknown>;
+  subscriber_view_ratio?: number;
+  likely_strategy?: string;
+  opportunities?: string[];
+  suggested_content_ideas?: string[];
+  limitations?: string[];
+  metadata?: ResearchResultMetadata;
+}
+
+export interface ResearchResultMetadata {
+  source_provider: string;
+  source_url?: string;
+  evidence_url?: string;
+  region?: string;
+  language?: string;
+  country?: string;
+  platform?: string;
+  topic?: string;
+  keyword?: string;
+  score?: number;
+  velocity?: number;
+  volume?: number;
+  views?: number;
+  confidence: number;
+  limitations: string[];
+  fetched_at: string;
+  score_reason?: string;
 }
 
 export async function analyzeYouTubeVideo(videoURL: string): Promise<YouTubeVideoAnalysisResponse> {

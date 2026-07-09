@@ -3,6 +3,9 @@ package http
 import (
 	"net/http"
 	"strings"
+
+	"trendcortex/api/internal/research"
+	trenddiscovery "trendcortex/api/internal/trends"
 )
 
 type youtubeVideoAnalysisRequest struct {
@@ -24,19 +27,13 @@ func (s *Server) handleAnalyzeYouTubeVideo(w http.ResponseWriter, r *http.Reques
 		jsonError(w, "video_url is required", http.StatusBadRequest)
 		return
 	}
-	if strings.TrimSpace(s.cfg.YouTubeAPIKey) == "" {
-		jsonOK(w, map[string]any{
-			"status":    "not_configured",
-			"message":   "Add YouTube Data API key in Settings to analyze videos.",
-			"video_url": req.VideoURL,
-		})
+	provider := research.NewYouTubeProvider(s.cfg.YouTubeAPIKey, nil)
+	result, err := provider.AnalyzeVideo(r.Context(), req.VideoURL)
+	if err != nil && err != research.ErrNotConfigured {
+		jsonOK(w, result)
 		return
 	}
-	jsonOK(w, map[string]any{
-		"status":    "not_configured",
-		"message":   "YouTube video analysis is not implemented yet. The endpoint will use public YouTube Data API metadata only.",
-		"video_url": req.VideoURL,
-	})
+	jsonOK(w, result)
 }
 
 func (s *Server) handleAnalyzeYouTubeChannel(w http.ResponseWriter, r *http.Request) {
@@ -50,17 +47,39 @@ func (s *Server) handleAnalyzeYouTubeChannel(w http.ResponseWriter, r *http.Requ
 		jsonError(w, "channel_url is required", http.StatusBadRequest)
 		return
 	}
-	if strings.TrimSpace(s.cfg.YouTubeAPIKey) == "" {
-		jsonOK(w, map[string]any{
-			"status":      "not_configured",
-			"message":     "Add YouTube Data API key in Settings to analyze channels.",
-			"channel_url": req.ChannelURL,
-		})
+	provider := research.NewYouTubeProvider(s.cfg.YouTubeAPIKey, nil)
+	result, err := provider.AnalyzeChannel(r.Context(), req.ChannelURL)
+	if err != nil && err != research.ErrNotConfigured {
+		jsonOK(w, result)
 		return
 	}
-	jsonOK(w, map[string]any{
-		"status":      "not_configured",
-		"message":     "YouTube channel analysis is not implemented yet. The endpoint will use public YouTube Data API metadata only.",
-		"channel_url": req.ChannelURL,
-	})
+	jsonOK(w, result)
+}
+
+func (s *Server) handleResearchProviderStatus(w http.ResponseWriter, r *http.Request) {
+	googleStatus := research.ProviderStatus{
+		ID:       "google_trends_rss",
+		Name:     "Google Trends RSS",
+		Platform: "google_trends",
+		Status:   research.StatusNotConfigured,
+		Message:  "Set TREND_DISCOVERY_PROVIDER=google_trends_rss on the backend to enable Google Trends RSS discovery.",
+		Limitations: []string{
+			"RSS trend data does not provide exact ranking keywords or platform-specific creator performance.",
+		},
+	}
+	if strings.EqualFold(strings.TrimSpace(s.cfg.TrendDiscoveryProvider), trenddiscovery.ProviderGoogleTrendsRSS) {
+		googleStatus.Status = research.StatusActive
+		googleStatus.Message = "Configured. Trend Finder can request live Google Trends RSS candidates."
+	}
+
+	youtube := research.NewYouTubeProvider(s.cfg.YouTubeAPIKey, nil)
+	statuses := []research.ProviderStatus{
+		googleStatus,
+		youtube.Status(),
+		research.TikTokResearchStatus(s.cfg.TikTokResearchClientID, s.cfg.TikTokResearchSecret, s.cfg.TikTokResearchToken),
+		research.MetaInstagramStatus(s.cfg.MetaAppID, s.cfg.MetaAppSecret),
+		research.XStatus(s.cfg.XClientID, s.cfg.XClientSecret),
+		research.FacebookStatus(s.cfg.MetaAppID, s.cfg.MetaAppSecret),
+	}
+	jsonOK(w, map[string]any{"providers": statuses})
 }

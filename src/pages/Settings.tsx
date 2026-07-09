@@ -1,5 +1,7 @@
+import { useEffect, useState } from 'react';
 import type { Platform, Settings } from '../types';
 import { PLATFORMS } from '../data/platforms';
+import { getResearchProviderStatus, type ResearchProviderStatus } from '../lib/api/client';
 
 const CREATOR_PLATFORMS: Platform[] = ['yt', 'tt', 'ig', 'fb', 'x'];
 
@@ -10,6 +12,21 @@ interface Props {
 
 export function SettingsPage({ settings: initial, onSave }: Props) {
   const settings = initial;
+  const [providers, setProviders] = useState<ResearchProviderStatus[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    getResearchProviderStatus()
+      .then(data => {
+        if (!cancelled) setProviders(data.providers);
+      })
+      .catch(() => {
+        if (!cancelled) setProviders([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   function setField<K extends keyof Settings>(key: K, value: Settings[K]) {
     onSave({ ...settings, [key]: value });
@@ -56,12 +73,21 @@ export function SettingsPage({ settings: initial, onSave }: Props) {
         <div className="settings-card">
           <div className="settings-card-title">Trend Data Providers</div>
           <div className="status-list">
-            <StatusRow label="Google Trends RSS" value="Configured / active when backend provider is enabled" tone="good" />
-            <StatusRow label="YouTube Data API" value="Not configured" />
-            <StatusRow label="TikTok trend sources" value="Planned / not configured" />
-            <StatusRow label="Instagram trend sources" value="Planned / not configured" />
-            <StatusRow label="X and Facebook trend sources" value="Planned / not configured" />
+            <ProviderStatusRow providers={providers} id="google_trends_rss" fallbackLabel="Google Trends RSS" />
+            <ProviderStatusRow providers={providers} id="youtube_data_api" fallbackLabel="YouTube Data API" />
+            <ProviderStatusRow providers={providers} id="tiktok_research_api" fallbackLabel="TikTok Research API" />
+            <ProviderStatusRow providers={providers} id="instagram_graph_api" fallbackLabel="Instagram Graph/Meta" />
+            <ProviderStatusRow providers={providers} id="x_api" fallbackLabel="X API" />
+            <ProviderStatusRow providers={providers} id="facebook_graph_api" fallbackLabel="Facebook/Meta" />
           </div>
+        </div>
+
+        <div className="settings-card">
+          <div className="settings-card-title">YouTube Analyzer</div>
+          <div className="status-list">
+            <ProviderStatusRow providers={providers} id="youtube_data_api" fallbackLabel="YOUTUBE_API_KEY" />
+          </div>
+          <div className="muted-note">Only configuration status is displayed. API keys are never shown in the browser.</div>
         </div>
 
         <div className="settings-card">
@@ -73,7 +99,7 @@ export function SettingsPage({ settings: initial, onSave }: Props) {
         </div>
 
         <div className="settings-card">
-          <div className="settings-card-title">Publishing Providers</div>
+          <div className="settings-card-title">Social Publishing Providers</div>
           <div className="status-list">
             <StatusRow label="OAuth credentials" value="Missing or configured on backend environment" />
             <StatusRow label="Direct publishing" value="Disabled until real platform APIs are wired" />
@@ -141,5 +167,17 @@ function StatusRow({ label, value, tone }: { label: string; value: string; tone?
       <span>{label}</span>
       <strong style={{ color: tone === 'good' ? 'var(--green)' : undefined }}>{value}</strong>
     </div>
+  );
+}
+
+function ProviderStatusRow({ providers, id, fallbackLabel }: { providers: ResearchProviderStatus[]; id: string; fallbackLabel: string }) {
+  const provider = providers.find(item => item.id === id);
+  const active = provider?.status === 'active';
+  return (
+    <StatusRow
+      label={provider?.name ?? fallbackLabel}
+      value={provider ? `${provider.status.replaceAll('_', ' ')} · ${provider.message}` : 'Status unavailable from backend'}
+      tone={active ? 'good' : undefined}
+    />
   );
 }

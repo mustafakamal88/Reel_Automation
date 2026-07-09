@@ -41,6 +41,9 @@ type Config struct {
 	TrendDiscoveryBaseURL  string
 	TrendDiscoveryTimeout  string
 	YouTubeAPIKey          string
+	TikTokResearchClientID string
+	TikTokResearchSecret   string
+	TikTokResearchToken    string
 
 	// Session / encryption
 	SessionSecret      string
@@ -87,6 +90,9 @@ func Load() (*Config, error) {
 		TrendDiscoveryBaseURL:  getEnv("TREND_DISCOVERY_BASE_URL", "https://trends.google.com/trending/rss"),
 		TrendDiscoveryTimeout:  getEnv("TREND_DISCOVERY_TIMEOUT", "10s"),
 		YouTubeAPIKey:          os.Getenv("YOUTUBE_API_KEY"),
+		TikTokResearchClientID: os.Getenv("TIKTOK_RESEARCH_CLIENT_ID"),
+		TikTokResearchSecret:   os.Getenv("TIKTOK_RESEARCH_CLIENT_SECRET"),
+		TikTokResearchToken:    os.Getenv("TIKTOK_RESEARCH_TOKEN"),
 
 		SessionSecret:      os.Getenv("SESSION_SECRET"),
 		TokenEncryptionKey: os.Getenv("TOKEN_ENCRYPTION_KEY"),

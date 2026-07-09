@@ -22,9 +22,13 @@ export interface ActivityState {
   scriptsGenerated: number;
   clipsGenerated: number;
   packagesDownloaded: number;
+  youtubeAnalysesRun: number;
+  channelAnalysesRun: number;
   latestTrendPulled: string | null;
   latestScriptGenerated: string | null;
   latestClipPackageGenerated: string | null;
+  latestYouTubeAnalysis: string | null;
+  latestChannelAnalysis: string | null;
 }
 
 const LEGACY_STORED_DATA_KEYS = [
@@ -80,9 +84,13 @@ export const DEFAULT_ACTIVITY: ActivityState = {
   scriptsGenerated: 0,
   clipsGenerated: 0,
   packagesDownloaded: 0,
+  youtubeAnalysesRun: 0,
+  channelAnalysesRun: 0,
   latestTrendPulled: null,
   latestScriptGenerated: null,
   latestClipPackageGenerated: null,
+  latestYouTubeAnalysis: null,
+  latestChannelAnalysis: null,
 };
 
 export const DEFAULT_APPROVALS: Record<string, ApprovalStatus> = {

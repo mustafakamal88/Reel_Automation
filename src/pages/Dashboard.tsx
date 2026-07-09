@@ -37,10 +37,10 @@ export function DashboardPage({ latestScript, onNavigate }: Props) {
   const kpis = [
     { label: 'Trends found today', value: activity.trendsFoundToday > 0 ? String(activity.trendsFoundToday) : 'No activity yet' },
     { label: 'Scripts generated', value: activity.scriptsGenerated > 0 ? String(activity.scriptsGenerated) : 'No activity yet' },
-    { label: 'Clips generated', value: activity.clipsGenerated > 0 ? String(activity.clipsGenerated) : 'No activity yet' },
-    { label: 'Packages downloaded', value: activity.packagesDownloaded > 0 ? String(activity.packagesDownloaded) : 'No activity yet' },
+    { label: 'Clip packages generated', value: activity.clipsGenerated > 0 ? String(activity.clipsGenerated) : 'No activity yet' },
+    { label: 'YouTube analyses run', value: activity.youtubeAnalysesRun > 0 ? String(activity.youtubeAnalysesRun) : 'No activity yet' },
+    { label: 'Channel analyses run', value: activity.channelAnalysesRun > 0 ? String(activity.channelAnalysesRun) : 'No activity yet' },
     { label: 'Connected platforms', value: connectionStatus === 'offline' ? 'Backend offline' : String(connectedPlatforms) },
-    { label: 'Publishing readiness', value: connectedPlatforms > 0 ? 'Accounts connected' : 'Connect required' },
   ];
 
   return (
@@ -69,6 +69,8 @@ export function DashboardPage({ latestScript, onNavigate }: Props) {
             <StatusRow label="Latest trend pulled" value={formatActivityTime(activity.latestTrendPulled)} />
             <StatusRow label="Latest script generated" value={latestScript ? formatActivityTime(latestScript.savedAt) : formatActivityTime(activity.latestScriptGenerated)} />
             <StatusRow label="Latest clip package generated" value={formatActivityTime(activity.latestClipPackageGenerated)} />
+            <StatusRow label="Latest YouTube video analysis" value={formatActivityTime(activity.latestYouTubeAnalysis)} />
+            <StatusRow label="Latest channel analysis" value={formatActivityTime(activity.latestChannelAnalysis)} />
           </div>
         </div>
 
