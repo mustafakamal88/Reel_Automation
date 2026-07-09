@@ -8,15 +8,14 @@ import (
 )
 
 // platformOrder is the canonical set of publishable platforms in display order.
-var platformOrder = []string{"youtube", "tiktok", "instagram", "facebook", "threads", "x"}
+var platformOrder = []string{"youtube", "tiktok", "instagram", "facebook", "x"}
 
 var platformNames = map[string]string{
 	"youtube":   "YouTube Shorts",
 	"tiktok":    "TikTok",
 	"instagram": "Instagram Reels",
 	"facebook":  "Facebook Reels",
-	"threads":   "Threads",
-	"x":         "X / Twitter",
+	"x":         "X",
 }
 
 type platformConnectionItem struct {

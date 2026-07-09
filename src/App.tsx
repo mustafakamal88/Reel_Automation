@@ -7,7 +7,6 @@ import { DashboardPage } from './pages/Dashboard';
 import { TrendFinderPage } from './pages/Signals';
 import { ScriptStudioPage } from './pages/ScriptStudio';
 import { ClipStudioPage } from './pages/ClipStudio';
-import { PublishPage } from './pages/Publish';
 import { SocialConnectionsPage } from './pages/SocialConnections';
 import { SettingsPage } from './pages/Settings';
 import type { ReelContentPackage, TrendCandidate } from './lib/api/client';
@@ -35,6 +34,11 @@ export default function App() {
     const stored = { candidate, package: pkg, savedAt: new Date().toISOString() };
     setLatestScript(stored);
     storage.setScriptPackage(stored);
+    storage.updateActivity(current => ({
+      ...current,
+      scriptsGenerated: current.scriptsGenerated + 1,
+      latestScriptGenerated: new Date().toISOString(),
+    }));
   }, []);
 
   return (
@@ -55,9 +59,8 @@ export default function App() {
         <div className="scroll-area">
           {view === 'dashboard' && <DashboardPage latestScript={latestScript} onNavigate={navigate} />}
           {view === 'trendFinder' && <TrendFinderPage onStatusChange={setTrendSubtitle} onScriptGenerated={handleScriptGenerated} />}
-          {view === 'scriptStudio' && <ScriptStudioPage latestScript={latestScript} />}
-          {view === 'clipStudio' && <ClipStudioPage />}
-          {view === 'publish' && <PublishPage />}
+          {view === 'scriptStudio' && <ScriptStudioPage latestScript={latestScript} onUseInClipGenerator={() => navigate('clipStudio')} />}
+          {view === 'clipStudio' && <ClipStudioPage onNavigate={navigate} />}
           {view === 'connections' && <SocialConnectionsPage />}
           {view === 'settings' && (
             <SettingsPage

@@ -40,6 +40,7 @@ type Config struct {
 	TrendDiscoveryProvider string
 	TrendDiscoveryBaseURL  string
 	TrendDiscoveryTimeout  string
+	YouTubeAPIKey          string
 
 	// Session / encryption
 	SessionSecret      string
@@ -85,6 +86,7 @@ func Load() (*Config, error) {
 		TrendDiscoveryProvider: getEnv("TREND_DISCOVERY_PROVIDER", ""),
 		TrendDiscoveryBaseURL:  getEnv("TREND_DISCOVERY_BASE_URL", "https://trends.google.com/trending/rss"),
 		TrendDiscoveryTimeout:  getEnv("TREND_DISCOVERY_TIMEOUT", "10s"),
+		YouTubeAPIKey:          os.Getenv("YOUTUBE_API_KEY"),
 
 		SessionSecret:      os.Getenv("SESSION_SECRET"),
 		TokenEncryptionKey: os.Getenv("TOKEN_ENCRYPTION_KEY"),

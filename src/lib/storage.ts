@@ -9,11 +9,22 @@ const KEY_VIEW = 'signal_view';
 const KEY_GENERATED = 'signal_generated';
 const KEY_WORKFLOW_STATUSES = 'signal_workflow_statuses';
 const KEY_SCRIPT_STUDIO = 'trendcortex_script_studio_package';
+const KEY_ACTIVITY = 'trendcortex_activity';
 
 export interface StoredScriptPackage {
   candidate: TrendCandidate;
   package: ReelContentPackage;
   savedAt: string;
+}
+
+export interface ActivityState {
+  trendsFoundToday: number;
+  scriptsGenerated: number;
+  clipsGenerated: number;
+  packagesDownloaded: number;
+  latestTrendPulled: string | null;
+  latestScriptGenerated: string | null;
+  latestClipPackageGenerated: string | null;
 }
 
 const LEGACY_STORED_DATA_KEYS = [
@@ -58,6 +69,20 @@ export const DEFAULT_SETTINGS: Settings = {
   contentStyle: 'Educational + entertaining (edutainment)',
   riskTolerance: 'medium',
   brandVoice: 'Direct, confident, no fluff. First-person.',
+  defaultTopText: 'TREND CLIP',
+  defaultBottomText: 'FOLLOW FOR MORE',
+  defaultWatermark: '@trendcortex',
+  defaultLayoutMode: 'blurred_background',
+};
+
+export const DEFAULT_ACTIVITY: ActivityState = {
+  trendsFoundToday: 0,
+  scriptsGenerated: 0,
+  clipsGenerated: 0,
+  packagesDownloaded: 0,
+  latestTrendPulled: null,
+  latestScriptGenerated: null,
+  latestClipPackageGenerated: null,
 };
 
 export const DEFAULT_APPROVALS: Record<string, ApprovalStatus> = {
@@ -68,7 +93,6 @@ const VALID_VIEWS: View[] = [
   'trendFinder',
   'scriptStudio',
   'clipStudio',
-  'publish',
   'connections',
   'settings',
 ];
@@ -85,6 +109,7 @@ const LEGACY_VIEW_MAP: Record<string, View> = {
   competitors: 'dashboard',
   approvals: 'dashboard',
   performance: 'dashboard',
+  publish: 'clipStudio',
 };
 
 function containsLegacyStoredData(value: unknown): boolean {
@@ -156,7 +181,7 @@ export const storage = {
   },
 
   getSettings(): Settings {
-    return safeGet(KEY_SETTINGS, DEFAULT_SETTINGS);
+    return { ...DEFAULT_SETTINGS, ...safeGet(KEY_SETTINGS, DEFAULT_SETTINGS) };
   },
   setSettings(v: Settings): void {
     safeSet(KEY_SETTINGS, v);
@@ -183,5 +208,17 @@ export const storage = {
   },
   setWorkflowStatuses(v: Record<string, WorkflowStatus>): void {
     safeSet(KEY_WORKFLOW_STATUSES, v);
+  },
+
+  getActivity(): ActivityState {
+    return { ...DEFAULT_ACTIVITY, ...safeGet(KEY_ACTIVITY, DEFAULT_ACTIVITY) };
+  },
+  setActivity(v: ActivityState): void {
+    safeSet(KEY_ACTIVITY, v);
+  },
+  updateActivity(fn: (current: ActivityState) => ActivityState): ActivityState {
+    const next = fn(this.getActivity());
+    safeSet(KEY_ACTIVITY, next);
+    return next;
   },
 };

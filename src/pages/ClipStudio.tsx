@@ -1,8 +1,9 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   ApiError,
   downloadClipStudioZip,
   generateClipStudio,
+  getPlatformConnections,
   importClipStudioURL,
   uploadClipStudioSource,
   type ClipCTASize,
@@ -10,13 +11,28 @@ import {
   type ClipSourceModel,
   type ClipStudioGenerateResponse,
   type ClipStudioSourceResponse,
+  type PlatformStatus,
 } from '../lib/api/client';
+import { storage } from '../lib/storage';
 import {
   clipGenerateDisabledReason,
   clipPackageReady,
   getClipSourceStatus,
   sourceCanGenerate,
 } from './ClipStudioState';
+
+interface Props {
+  onNavigate?: (view: 'connections') => void;
+}
+
+const PUBLISH_PLATFORMS = ['youtube', 'tiktok', 'instagram', 'facebook', 'x'] as const;
+const PLATFORM_LABELS: Record<string, string> = {
+  youtube: 'YouTube Shorts',
+  tiktok: 'TikTok',
+  instagram: 'Instagram Reels',
+  facebook: 'Facebook Reels',
+  x: 'X',
+};
 
 const SOURCE_MODELS: { value: ClipSourceModel; label: string }[] = [
   { value: 'user_upload', label: 'User upload' },
@@ -57,16 +73,17 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
   );
 }
 
-export function ClipStudioPage() {
+export function ClipStudioPage({ onNavigate }: Props) {
+  const savedSettings = storage.getSettings();
   const [sourceUrl, setSourceUrl] = useState('');
   const [source, setSource] = useState<ClipStudioSourceResponse | null>(null);
   const [prompt, setPrompt] = useState('Make short branded clips with a strong hook and clear takeaway.');
   const [clipLength, setClipLength] = useState<'auto' | '15s' | '30s' | '60s' | '3min'>('auto');
   const [clipCount, setClipCount] = useState<1 | 3 | 6>(3);
-  const [topText, setTopText] = useState('TREND CLIP');
-  const [bottomText, setBottomText] = useState('FOLLOW FOR MORE');
-  const [watermark, setWatermark] = useState('@trendcortex');
-  const [layoutMode, setLayoutMode] = useState<ClipLayoutMode>('blurred_background');
+  const [topText, setTopText] = useState(savedSettings.defaultTopText);
+  const [bottomText, setBottomText] = useState(savedSettings.defaultBottomText);
+  const [watermark, setWatermark] = useState(savedSettings.defaultWatermark);
+  const [layoutMode, setLayoutMode] = useState<ClipLayoutMode>(savedSettings.defaultLayoutMode);
   const [captionText, setCaptionText] = useState('');
   const [ctaSize, setCtaSize] = useState<ClipCTASize>('small');
   const [rightsConfirmed, setRightsConfirmed] = useState(false);
@@ -82,10 +99,14 @@ export function ClipStudioPage() {
   const [uploadBusy, setUploadBusy] = useState(false);
   const [urlImportBusy, setUrlImportBusy] = useState(false);
   const [downloadBusy, setDownloadBusy] = useState(false);
+  const [publishOpen, setPublishOpen] = useState(false);
+  const [connections, setConnections] = useState<PlatformStatus[]>([]);
+  const [connectionsLoaded, setConnectionsLoaded] = useState(false);
   const [result, setResult] = useState<ClipStudioGenerateResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const packageReady = clipPackageReady(result);
+  const connectedPublishPlatforms = connections.filter(conn => PUBLISH_PLATFORMS.includes(conn.platform as typeof PUBLISH_PLATFORMS[number]) && conn.status === 'connected' && conn.can_publish);
   const sourceStatus = useMemo(() => getClipSourceStatus(source, sourceUrl), [source, sourceUrl]);
   const generateDisabledReason = clipGenerateDisabledReason({ source, rightsConfirmed, prompt, busy, uploadBusy, urlImportBusy });
   const canGenerate = generateDisabledReason === null;
@@ -93,6 +114,23 @@ export function ClipStudioPage() {
     if (packageReady) return 'Package ready. Download the ZIP when you are ready.';
     return generateDisabledReason || sourceStatus.message;
   }, [generateDisabledReason, packageReady, sourceStatus.message]);
+
+  useEffect(() => {
+    let cancelled = false;
+    getPlatformConnections()
+      .then(res => {
+        if (!cancelled) setConnections(res.platforms);
+      })
+      .catch(() => {
+        if (!cancelled) setConnections([]);
+      })
+      .finally(() => {
+        if (!cancelled) setConnectionsLoaded(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   async function handleUpload(file: File | undefined) {
     if (!file) return;
@@ -190,6 +228,13 @@ export function ClipStudioPage() {
         },
       });
       setResult(generated);
+      if (generated.success) {
+        storage.updateActivity(current => ({
+          ...current,
+          clipsGenerated: current.clipsGenerated + (generated.generated_clip_jobs?.length || clipCount),
+          latestClipPackageGenerated: new Date().toISOString(),
+        }));
+      }
       if (!generated.success) setError(generated.notes || activeSource.message || 'Clip generation did not complete.');
     } catch (err) {
       setError(errMsg(err, 'Clip generation failed'));
@@ -204,6 +249,10 @@ export function ClipStudioPage() {
     setError(null);
     try {
       await downloadClipStudioZip(result.download_url, result.zip_filename);
+      storage.updateActivity(current => ({
+        ...current,
+        packagesDownloaded: current.packagesDownloaded + 1,
+      }));
     } catch (err) {
       setError(errMsg(err, 'Clip ZIP download failed'));
     } finally {
@@ -213,7 +262,7 @@ export function ClipStudioPage() {
 
   return (
     <section className="page-section">
-      <div className="settings-card" style={{ display: 'flex', flexDirection: 'column', gap: 14, maxWidth: 980 }}>
+      <div className="settings-card" style={{ display: 'flex', flexDirection: 'column', gap: 14, maxWidth: 1040 }}>
         <div>
           <div style={{ fontSize: 18, fontWeight: 800, color: 'var(--text-primary)' }}>Clip from Video</div>
           <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>
@@ -254,6 +303,13 @@ export function ClipStudioPage() {
           <button className="generate-btn idle" onClick={handleImportURL} disabled={!sourceUrl.trim() || urlImportBusy} type="button">
             {urlImportBusy ? 'Checking URL...' : 'Import URL'}
           </button>
+        </div>
+
+        <div className="clip-status-grid">
+          <StatusPill label="Source ready" active={Boolean(source && sourceCanGenerate(source))} />
+          <StatusPill label="Clips generated" active={Boolean(result?.success)} />
+          <StatusPill label="Package ready" active={packageReady} />
+          <StatusPill label="Social accounts not connected" active={connectedPublishPlatforms.length === 0} neutral />
         </div>
 
         <div style={{ fontSize: 12, color: sourceStatus.tone === 'danger' ? 'var(--red)' : sourceStatus.tone === 'ready' ? 'var(--green)' : 'var(--text-muted)', background: sourceStatus.tone === 'danger' ? 'rgba(232,115,107,0.08)' : sourceStatus.tone === 'ready' ? 'rgba(95,211,154,0.08)' : 'var(--bg-subtle)', border: sourceStatus.tone === 'danger' ? '1px solid rgba(232,115,107,0.25)' : sourceStatus.tone === 'ready' ? '1px solid rgba(95,211,154,0.25)' : '1px solid var(--border)', borderRadius: 6, padding: '8px 10px' }}>
@@ -343,6 +399,9 @@ export function ClipStudioPage() {
           <button className="generate-btn idle" onClick={handleDownload} disabled={downloadBusy || !packageReady} type="button" style={{ opacity: packageReady ? 1 : 0.55 }}>
             {downloadBusy ? 'Downloading...' : 'Download ZIP'}
           </button>
+          <button className="generate-btn idle" onClick={() => setPublishOpen(true)} type="button">
+            Publish
+          </button>
         </div>
 
         {result?.notes && <div style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.6 }}>{result.notes}</div>}
@@ -352,6 +411,95 @@ export function ClipStudioPage() {
           </div>
         )}
       </div>
+      {publishOpen && (
+        <PublishModal
+          connections={connections}
+          connectionsLoaded={connectionsLoaded}
+          connectedPlatforms={connectedPublishPlatforms}
+          onClose={() => setPublishOpen(false)}
+          onConnections={() => {
+            setPublishOpen(false);
+            onNavigate?.('connections');
+          }}
+        />
+      )}
     </section>
+  );
+}
+
+function StatusPill({ label, active, neutral = false }: { label: string; active: boolean; neutral?: boolean }) {
+  return (
+    <div className={`clip-status-pill${active ? ' active' : ''}${neutral ? ' neutral' : ''}`}>
+      <span />
+      {label}
+    </div>
+  );
+}
+
+function PublishModal({
+  connections,
+  connectionsLoaded,
+  connectedPlatforms,
+  onClose,
+  onConnections,
+}: {
+  connections: PlatformStatus[];
+  connectionsLoaded: boolean;
+  connectedPlatforms: PlatformStatus[];
+  onClose: () => void;
+  onConnections: () => void;
+}) {
+  const hasConnected = connectedPlatforms.length > 0;
+  const visibleConnections = PUBLISH_PLATFORMS.map(platform => connections.find(conn => conn.platform === platform) || {
+    platform,
+    name: PLATFORM_LABELS[platform],
+    status: 'not_connected',
+    scopes: [],
+    can_publish: false,
+  } as PlatformStatus);
+
+  return (
+    <div className="modal-layer" role="dialog" aria-modal="true" aria-label="Publish clips">
+      <button className="modal-backdrop" type="button" aria-label="Close publish modal" onClick={onClose} />
+      <div className="publish-modal">
+        <div className="modal-header">
+          <div>
+            <div className="page-eyebrow">Publish</div>
+            <h2>{hasConnected ? 'Choose platforms' : 'Connect your social accounts first'}</h2>
+          </div>
+          <button className="modal-close" type="button" onClick={onClose}>x</button>
+        </div>
+
+        {!hasConnected && (
+          <>
+            <p className="muted-note">Publishing is disabled until real OAuth/API connections exist. Your generated ZIP is ready for manual download.</p>
+            <div className="publish-platform-grid">
+              {visibleConnections.map(conn => (
+                <div key={conn.platform} className="publish-platform-card">
+                  <strong>{PLATFORM_LABELS[conn.platform] || conn.name}</strong>
+                  <span>{connectionsLoaded && conn.status === 'connected' ? 'Connected' : 'Not connected'}</span>
+                </div>
+              ))}
+            </div>
+            <button className="generate-btn idle" type="button" onClick={onConnections}>Go to Connections</button>
+          </>
+        )}
+
+        {hasConnected && (
+          <>
+            <p className="muted-note">Select the connected platforms to publish to. Upload is still disabled until publishing endpoints are implemented.</p>
+            <label className="publish-checkbox"><input type="checkbox" disabled /> Select all</label>
+            {visibleConnections.map(conn => (
+              <label key={conn.platform} className="publish-checkbox">
+                <input type="checkbox" disabled={conn.status !== 'connected' || !conn.can_publish} />
+                {PLATFORM_LABELS[conn.platform] || conn.name}
+                <span>{conn.status === 'connected' ? 'Connected' : 'Not connected'}</span>
+              </label>
+            ))}
+            <button className="generate-btn idle" type="button" disabled>Publishing API required</button>
+          </>
+        )}
+      </div>
+    </div>
   );
 }

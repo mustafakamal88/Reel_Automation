@@ -400,6 +400,46 @@ export async function generateReelScript(body: ReelContentGenerationRequest): Pr
   });
 }
 
+export interface YouTubeVideoAnalysisResponse {
+  status: 'not_configured' | 'ok';
+  message: string;
+  video_url?: string;
+  title?: string;
+  description_keywords?: string[];
+  tags?: string[];
+  category?: string;
+  views?: number;
+  likes?: number;
+  comments?: number;
+  inferred_topic?: string;
+  possible_target_keywords?: string[];
+  seo_suggestions?: string[];
+}
+
+export interface YouTubeChannelAnalysisResponse {
+  status: 'not_configured' | 'ok';
+  message: string;
+  channel_url?: string;
+  niche?: string;
+  strategy?: string;
+  top_performing_patterns?: string[];
+  view_drivers?: string[];
+}
+
+export async function analyzeYouTubeVideo(videoURL: string): Promise<YouTubeVideoAnalysisResponse> {
+  return apiFetch('/api/research/youtube/video', {
+    method: 'POST',
+    body: JSON.stringify({ video_url: videoURL }),
+  });
+}
+
+export async function analyzeYouTubeChannel(channelURL: string): Promise<YouTubeChannelAnalysisResponse> {
+  return apiFetch('/api/research/youtube/channel', {
+    method: 'POST',
+    body: JSON.stringify({ channel_url: channelURL }),
+  });
+}
+
 export async function getTrends(status?: string): Promise<{ trend_items: TrendItem[] }> {
   const qs = status ? `?status=${encodeURIComponent(status)}` : '';
   return apiFetch(`/api/trends${qs}`);

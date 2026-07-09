@@ -7,8 +7,7 @@ const VIEW_META: Record<View, { title: string; sub: string }> = {
   trendFinder:  { title: 'Trend Finder',   sub: 'Real keyword discovery from connected sources' },
   scriptStudio: { title: 'Script Studio',  sub: 'Generated scripts and platform copy' },
   clipStudio:   { title: 'Clip Generator', sub: 'Upload a video or provide a direct video URL, then download clips' },
-  publish:      { title: 'Publish',        sub: 'Future social publishing with honest connection status' },
-  connections:  { title: 'Connections',    sub: 'Real provider and account connection status' },
+  connections:  { title: 'Connections',    sub: 'Connect accounts to publish directly from Clip Generator' },
   settings:     { title: 'Settings',       sub: 'Workspace preferences and product configuration' },
 };
 

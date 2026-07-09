@@ -1,43 +1,34 @@
 import { useEffect, useState } from 'react';
-import { getPlatformConnections, getOAuthStartURL, ApiError } from '../lib/api/client';
-import type { PlatformStatus } from '../lib/api/client';
+import { ApiError, getOAuthStartURL, getPlatformConnections, type PlatformStatus } from '../lib/api/client';
 
-const PLATFORM_META: Record<string, { color: string; bg: string; short: string }> = {
-  youtube:   { color: 'var(--yt-color)', bg: 'var(--yt-bg)',   short: 'YT' },
-  tiktok:    { color: 'var(--tt-color)', bg: 'var(--tt-bg)',   short: 'TT' },
-  instagram: { color: 'var(--ig-color)', bg: 'var(--ig-bg)',   short: 'IG' },
-  facebook:  { color: 'var(--fb-color)', bg: 'var(--fb-bg)',   short: 'FB' },
-  threads:   { color: 'var(--th-color)', bg: 'var(--th-bg)',   short: 'TH' },
-  x:         { color: 'var(--x-color)',  bg: 'var(--x-bg)',    short: 'X'  },
+const PUBLISH_PLATFORMS = ['youtube', 'tiktok', 'instagram', 'facebook', 'x'];
+
+const PLATFORM_META: Record<string, { color: string; bg: string; short: string; label: string }> = {
+  youtube: { color: 'var(--yt-color)', bg: 'var(--yt-bg)', short: 'YT', label: 'YouTube Shorts' },
+  tiktok: { color: 'var(--tt-color)', bg: 'var(--tt-bg)', short: 'TT', label: 'TikTok' },
+  instagram: { color: 'var(--ig-color)', bg: 'var(--ig-bg)', short: 'IG', label: 'Instagram Reels' },
+  facebook: { color: 'var(--fb-color)', bg: 'var(--fb-bg)', short: 'FB', label: 'Facebook Reels' },
+  x: { color: 'var(--x-color)', bg: 'var(--x-bg)', short: 'X', label: 'X' },
 };
 
-function StatusBadge({ status }: { status: PlatformStatus['status'] }) {
-  const map: Record<PlatformStatus['status'], { label: string; color: string }> = {
-    not_connected:       { label: 'Not connected',       color: 'var(--text-dim)' },
-    connected:           { label: 'Connected',           color: 'var(--green)' },
-    expired:             { label: 'Token expired',       color: 'var(--yellow)' },
-    credentials_missing: { label: 'Credentials missing', color: 'var(--red)' },
-  };
-  const { label, color } = map[status] ?? { label: status, color: 'var(--text-dim)' };
-  return (
-    <span style={{
-      fontSize: 11,
-      fontFamily: 'var(--font-mono)',
-      color,
-      background: 'var(--bg-subtle)',
-      border: `1px solid ${color}33`,
-      borderRadius: 4,
-      padding: '2px 7px',
-    }}>
-      {label}
-    </span>
-  );
+const FALLBACK_CONNECTIONS: PlatformStatus[] = PUBLISH_PLATFORMS.map(platform => ({
+  platform,
+  name: PLATFORM_META[platform].label,
+  status: 'not_connected',
+  scopes: [],
+  can_publish: false,
+}));
+
+function neutralStatus(status: PlatformStatus['status']): string {
+  if (status === 'connected') return 'Connected';
+  return 'Not connected';
 }
 
 function ConnectionCard({ conn }: { conn: PlatformStatus }) {
-  const meta = PLATFORM_META[conn.platform] ?? { color: 'var(--accent)', bg: 'var(--bg-subtle)', short: conn.platform.toUpperCase().slice(0, 2) };
+  const meta = PLATFORM_META[conn.platform];
   const [connecting, setConnecting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const canAttemptConnect = conn.status === 'not_connected' || conn.status === 'expired';
 
   async function handleConnect() {
     setConnecting(true);
@@ -48,16 +39,16 @@ function ConnectionCard({ conn }: { conn: PlatformStatus }) {
     } catch (err) {
       if (err instanceof ApiError) {
         if (err.isCredentialsMissing) {
-          setError('Platform app credentials are missing. Add backend environment variables first.');
+          setError('OAuth app credentials are not configured yet.');
         } else if (err.isBackendOffline) {
-          setError('Backend offline — run: cd backend && go run ./cmd/api');
+          setError('Backend offline. Start the Go backend to connect accounts.');
         } else if (err.isNotImplemented) {
-          setError('OAuth not yet wired on backend. PKCE + state storage required before connecting.');
+          setError('OAuth is not fully wired on the backend yet.');
         } else {
           setError(err.message);
         }
       } else {
-        setError(err instanceof Error ? err.message : 'Unknown error');
+        setError(err instanceof Error ? err.message : 'Connection failed.');
       }
     } finally {
       setConnecting(false);
@@ -65,83 +56,31 @@ function ConnectionCard({ conn }: { conn: PlatformStatus }) {
   }
 
   return (
-    <div className="settings-card" style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-        <div style={{
-          width: 38, height: 38, borderRadius: 9,
-          background: meta.bg,
-          border: `1px solid ${meta.color}33`,
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-          fontFamily: 'var(--font-mono)', fontWeight: 700, fontSize: 13,
-          color: meta.color, flexShrink: 0,
-        }}>
+    <div className="settings-card connection-card">
+      <div className="connection-card-top">
+        <div className="connection-icon" style={{ background: meta.bg, borderColor: `${meta.color}33`, color: meta.color }}>
           {meta.short}
         </div>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontWeight: 600, fontSize: 14, color: 'var(--text-primary)' }}>{conn.name}</div>
-          {conn.handle && (
-            <div style={{ fontSize: 12, color: 'var(--text-dim)', fontFamily: 'var(--font-mono)' }}>
-              {conn.handle}
-            </div>
-          )}
+        <div>
+          <div className="connection-name">{meta.label}</div>
+          <div className={conn.status === 'connected' ? 'connection-status connected' : 'connection-status'}>
+            {neutralStatus(conn.status)}
+          </div>
         </div>
-        <StatusBadge status={conn.status} />
       </div>
 
-      <div style={{ fontSize: 11, color: 'var(--text-dim)', fontFamily: 'var(--font-mono)', lineHeight: 1.6 }}>
-        Scopes: {conn.scopes.join(' · ')}
-      </div>
+      <button className="generate-btn idle" type="button" onClick={handleConnect} disabled={!canAttemptConnect || conn.status === 'credentials_missing' || connecting}>
+        {connecting ? 'Opening OAuth...' : 'Connect'}
+      </button>
 
-      {conn.status === 'credentials_missing' && (
-        <div style={{
-          fontSize: 11, color: 'var(--red)', lineHeight: 1.6,
-          background: 'rgba(232,115,107,0.08)', border: '1px solid rgba(232,115,107,0.25)',
-          borderRadius: 6, padding: '8px 10px',
-        }}>
-          Platform app credentials are missing. Add backend environment variables first.
-        </div>
-      )}
+      {error && <div className="neutral-callout">{error}</div>}
 
-      {error && (
-        <div style={{
-          fontSize: 11, color: 'var(--red)', lineHeight: 1.6,
-          background: 'rgba(232,115,107,0.08)', border: '1px solid rgba(232,115,107,0.25)',
-          borderRadius: 6, padding: '8px 10px',
-        }}>
-          {error}
-        </div>
-      )}
-
-      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-        {(conn.status === 'not_connected') && (
-          <button
-            className="btn-int btn-int--primary"
-            onClick={handleConnect}
-            disabled={connecting}
-          >
-            {connecting ? 'Opening OAuth…' : 'Connect via OAuth'}
-          </button>
-        )}
-        {conn.status === 'credentials_missing' && (
-          <span style={{ fontSize: 11, color: 'var(--text-dim)', fontFamily: 'var(--font-mono)' }}>
-            Add {conn.platform.toUpperCase()}_CLIENT_ID / {conn.platform.toUpperCase()}_CLIENT_SECRET to .env
-          </span>
-        )}
-        {conn.status === 'connected' && (
-          <button className="btn-int" onClick={() => void 0} disabled>
-            Disconnect
-          </button>
-        )}
-        {conn.status === 'expired' && (
-          <button
-            className="btn-int btn-int--primary"
-            onClick={handleConnect}
-            disabled={connecting}
-          >
-            Reconnect
-          </button>
-        )}
-      </div>
+      <details className="advanced-details">
+        <summary>Advanced details</summary>
+        <div>Status: {conn.status}</div>
+        <div>Publishing permission: {conn.can_publish ? 'Available after account connection' : 'Not available'}</div>
+        {conn.scopes.length > 0 && <div>Requested scopes: {conn.scopes.join(', ')}</div>}
+      </details>
     </div>
   );
 }
@@ -158,7 +97,7 @@ export function SocialConnectionsPage() {
     getPlatformConnections()
       .then(res => {
         if (!cancelled) {
-          setPlatforms(res.platforms);
+          setPlatforms(res.platforms.filter(conn => PUBLISH_PLATFORMS.includes(conn.platform)));
           setFetchState('ok');
         }
       })
@@ -168,56 +107,39 @@ export function SocialConnectionsPage() {
           setFetchState('error');
         }
       });
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   return (
     <section className="page-section">
-      <div className="int-section-header">
-        <div className="int-section-title">Connections</div>
-        <div className="int-section-sub">
-          Real account connection status from the backend. Social platforms remain not connected until OAuth setup exists.
-        </div>
-        <div className="security-inline-warning">
-          <span className="security-warning-icon">!</span>
-          <span>
-            The frontend receives connection status only. It never displays access tokens, refresh tokens, or API keys.
-          </span>
+      <div className="page-hero compact">
+        <div>
+          <div className="page-eyebrow">Connections</div>
+          <h1>Connect accounts to publish directly from Clip Generator.</h1>
+          <p>OAuth setup is kept separate from clip creation. Sensitive credentials stay server-side.</p>
         </div>
       </div>
 
-      {fetchState === 'loading' && (
-        <div style={{ color: 'var(--text-dim)', fontSize: 13, padding: '24px 0' }}>
-          Loading connection status from backend…
-        </div>
-      )}
+      {fetchState === 'loading' && <div className="muted-note">Loading connection status from backend...</div>}
 
       {fetchState === 'error' && (
-        <div style={{
-          color: 'var(--red)', fontSize: 13, lineHeight: 1.7,
-          background: 'rgba(232,115,107,0.08)', border: '1px solid rgba(232,115,107,0.25)',
-          borderRadius: 8, padding: '14px 16px', marginTop: 12,
-        }}>
-          <strong>Cannot reach the Go backend.</strong><br />
-          {fetchError}<br />
-          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11 }}>
-            Start it with: cd backend &amp;&amp; go run ./cmd/api
-          </span>
-        </div>
+        <>
+          <div className="neutral-callout">
+            Cannot reach the Go backend. Showing neutral setup cards only. {fetchError}
+          </div>
+          <div className="connection-grid" style={{ marginTop: 14 }}>
+            {FALLBACK_CONNECTIONS.map(conn => <ConnectionCard key={conn.platform} conn={conn} />)}
+          </div>
+        </>
       )}
 
       {fetchState === 'ok' && (
-        <div style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))',
-          gap: 14, marginTop: 6,
-        }}>
-          {platforms.map(conn => (
-            <ConnectionCard key={conn.platform} conn={conn} />
-          ))}
+        <div className="connection-grid">
+          {platforms.map(conn => <ConnectionCard key={conn.platform} conn={conn} />)}
         </div>
       )}
-
     </section>
   );
 }

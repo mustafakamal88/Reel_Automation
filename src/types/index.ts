@@ -9,7 +9,6 @@ export type View =
   | 'trendFinder'
   | 'scriptStudio'
   | 'clipStudio'
-  | 'publish'
   | 'connections'
   | 'settings';
 
@@ -215,6 +214,10 @@ export interface Settings {
   contentStyle: string;
   riskTolerance: 'low' | 'medium' | 'high';
   brandVoice: string;
+  defaultTopText: string;
+  defaultBottomText: string;
+  defaultWatermark: string;
+  defaultLayoutMode: 'fit_with_bars' | 'fill_crop' | 'blurred_background';
 }
 
 // ─── Pipeline types ───────────────────────────────────────────

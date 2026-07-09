@@ -2,6 +2,7 @@ import type { StoredScriptPackage } from '../lib/storage';
 
 interface Props {
   latestScript: StoredScriptPackage | null;
+  onUseInClipGenerator?: () => void;
 }
 
 async function copyText(value: string) {
@@ -19,7 +20,7 @@ function TextBlock({ label, value }: { label: string; value?: string }) {
   );
 }
 
-export function ScriptStudioPage({ latestScript }: Props) {
+export function ScriptStudioPage({ latestScript, onUseInClipGenerator }: Props) {
   if (!latestScript) {
     return (
       <section className="page-section">
@@ -71,6 +72,7 @@ export function ScriptStudioPage({ latestScript }: Props) {
             <button className="generate-btn idle" type="button" onClick={() => void copyText(exportText)}>Copy all</button>
             <button className="generate-btn idle" type="button" onClick={() => void copyText(pkg.script)}>Copy script</button>
             <button className="generate-btn idle" type="button" onClick={() => void copyText(pkg.caption)}>Copy caption</button>
+            {onUseInClipGenerator && <button className="generate-btn idle" type="button" onClick={onUseInClipGenerator}>Use in Clip Generator</button>}
           </div>
         </div>
 

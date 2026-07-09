@@ -82,6 +82,8 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /api/trends/discover", s.handleDiscoverTrendCandidates)
 	mux.HandleFunc("POST /api/trends/discover", s.handleDiscoverTrends)
 	mux.HandleFunc("GET /api/trends", s.handleListTrends)
+	mux.HandleFunc("POST /api/research/youtube/video", s.handleAnalyzeYouTubeVideo)
+	mux.HandleFunc("POST /api/research/youtube/channel", s.handleAnalyzeYouTubeChannel)
 
 	mux.HandleFunc("POST /api/topics/score", s.handleScoreTopics)
 	mux.HandleFunc("GET /api/topics/scores", s.handleListTopicScores)

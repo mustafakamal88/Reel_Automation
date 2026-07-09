@@ -24,6 +24,14 @@ export function SettingsPage({ settings: initial, onSave }: Props) {
 
   return (
     <section className="page-section">
+      <div className="page-hero compact">
+        <div>
+          <div className="page-eyebrow">Settings</div>
+          <h1>Configure the creator workspace.</h1>
+          <p>Manage workspace preferences, provider readiness, publishing setup, and default branding without exposing secrets.</p>
+        </div>
+      </div>
+
       <div className="settings-grid">
         <div className="settings-card">
           <div className="settings-card-title">Workspace</div>
@@ -46,13 +54,31 @@ export function SettingsPage({ settings: initial, onSave }: Props) {
         </div>
 
         <div className="settings-card">
-          <div className="settings-card-title">Product Status</div>
-          <div style={{ display: 'grid', gap: 10 }}>
-            <StatusRow label="OpenAI" value="Configured when backend OPENAI_API_KEY is present" />
-            <StatusRow label="Trend source" value="Google Trends RSS through backend discovery" />
-            <StatusRow label="Social publishing" value="Not connected until OAuth/API setup exists" />
-            <StatusRow label="Workspace" value="Local browser preferences only" />
+          <div className="settings-card-title">Trend Data Providers</div>
+          <div className="status-list">
+            <StatusRow label="Google Trends RSS" value="Configured / active when backend provider is enabled" tone="good" />
+            <StatusRow label="YouTube Data API" value="Not configured" />
+            <StatusRow label="TikTok trend sources" value="Planned / not configured" />
+            <StatusRow label="Instagram trend sources" value="Planned / not configured" />
+            <StatusRow label="X and Facebook trend sources" value="Planned / not configured" />
           </div>
+        </div>
+
+        <div className="settings-card">
+          <div className="settings-card-title">AI / Script Provider</div>
+          <div className="status-list">
+            <StatusRow label="OpenAI" value="Configured when backend OPENAI_API_KEY is present" />
+          </div>
+          <div className="muted-note">API keys stay on the backend and are never displayed here.</div>
+        </div>
+
+        <div className="settings-card">
+          <div className="settings-card-title">Publishing Providers</div>
+          <div className="status-list">
+            <StatusRow label="OAuth credentials" value="Missing or configured on backend environment" />
+            <StatusRow label="Direct publishing" value="Disabled until real platform APIs are wired" />
+          </div>
+          <div className="muted-note">Publishing starts from Clip Generator after accounts are connected.</div>
         </div>
 
         <div className="settings-card">
@@ -82,9 +108,26 @@ export function SettingsPage({ settings: initial, onSave }: Props) {
         </div>
 
         <div className="settings-card">
-          <div className="settings-card-title">Publishing Guardrails</div>
-          <div style={{ fontSize: 13, color: 'var(--text-muted)', lineHeight: 1.7 }}>
-            Uploads are disabled until platform OAuth and API publishing support are configured. Manual ZIP downloads stay inside Clip Generator.
+          <div className="settings-card-title">Brand Defaults</div>
+          <div className="form-group">
+            <label className="form-label" htmlFor="default-top">Default top text</label>
+            <input id="default-top" className="form-input" value={settings.defaultTopText} onChange={event => setField('defaultTopText', event.target.value)} />
+          </div>
+          <div className="form-group">
+            <label className="form-label" htmlFor="default-bottom">Default bottom text</label>
+            <input id="default-bottom" className="form-input" value={settings.defaultBottomText} onChange={event => setField('defaultBottomText', event.target.value)} />
+          </div>
+          <div className="form-group">
+            <label className="form-label" htmlFor="default-watermark">Default watermark / channel name</label>
+            <input id="default-watermark" className="form-input" value={settings.defaultWatermark} onChange={event => setField('defaultWatermark', event.target.value)} />
+          </div>
+          <div className="form-group">
+            <label className="form-label" htmlFor="default-layout">Default layout mode</label>
+            <select id="default-layout" className="form-input" value={settings.defaultLayoutMode} onChange={event => setField('defaultLayoutMode', event.target.value as Settings['defaultLayoutMode'])}>
+              <option value="blurred_background">Blurred background</option>
+              <option value="fill_crop">Fill crop</option>
+              <option value="fit_with_bars">Fit with bars</option>
+            </select>
           </div>
         </div>
       </div>
@@ -92,11 +135,11 @@ export function SettingsPage({ settings: initial, onSave }: Props) {
   );
 }
 
-function StatusRow({ label, value }: { label: string; value: string }) {
+function StatusRow({ label, value, tone }: { label: string; value: string; tone?: 'good' }) {
   return (
-    <div style={{ border: '1px solid var(--border-card)', background: 'var(--bg-subtle)', borderRadius: 8, padding: 12 }}>
-      <div style={{ fontSize: 12, fontWeight: 800, color: 'var(--text-primary)' }}>{label}</div>
-      <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 5, lineHeight: 1.5 }}>{value}</div>
+    <div className="status-row">
+      <span>{label}</span>
+      <strong style={{ color: tone === 'good' ? 'var(--green)' : undefined }}>{value}</strong>
     </div>
   );
 }

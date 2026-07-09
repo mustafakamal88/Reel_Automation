@@ -3,12 +3,15 @@ import type { Platform } from '../types';
 import { PLATFORMS } from '../data/platforms';
 import {
   ApiError,
+  analyzeYouTubeChannel,
+  analyzeYouTubeVideo,
   discoverTrendCandidates,
   generateReelScript,
   type ReelContentPackage,
   type TrendCandidate,
   type TrendDiscoveryResponse,
 } from '../lib/api/client';
+import { storage } from '../lib/storage';
 
 const FILTERS: { id: Platform | 'all'; label: string; dot: string }[] = [
   { id: 'all', label: 'All sources', dot: '#a78bfa' },
@@ -36,7 +39,10 @@ const SOURCE_STATUS = [
   { id: 'fb', name: 'Facebook Reels', status: 'Not connected' },
 ] as const;
 
+type ResearchTab = 'keywords' | 'video' | 'channel';
+
 export function TrendFinderPage({ initialFilter = 'all', onFilterChange, onStatusChange, onScriptGenerated }: Props) {
+  const [tab, setTab] = useState<ResearchTab>('keywords');
   const [filter, setFilter] = useState<Platform | 'all'>(initialFilter);
   const [response, setResponse] = useState<TrendDiscoveryResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -44,6 +50,9 @@ export function TrendFinderPage({ initialFilter = 'all', onFilterChange, onStatu
   const [generatingID, setGeneratingID] = useState<string | null>(null);
   const [generated, setGenerated] = useState<Record<string, ReelContentPackage>>({});
   const [generationErrors, setGenerationErrors] = useState<Record<string, string>>({});
+  const [videoURL, setVideoURL] = useState('');
+  const [channelURL, setChannelURL] = useState('');
+  const [youtubeMessage, setYoutubeMessage] = useState<string | null>(null);
 
   const handleFilter = (f: Platform | 'all') => {
     setFilter(f);
@@ -56,7 +65,16 @@ export function TrendFinderPage({ initialFilter = 'all', onFilterChange, onStatu
     setError(null);
     discoverTrendCandidates({ region: 'US', language: 'en-US', limit: 20 })
       .then(data => {
-        if (!cancelled) setResponse(data);
+        if (!cancelled) {
+          setResponse(data);
+          if (data.provider_status === 'ok') {
+            storage.updateActivity(current => ({
+              ...current,
+              trendsFoundToday: data.candidates.length,
+              latestTrendPulled: new Date().toISOString(),
+            }));
+          }
+        }
       })
       .catch(err => {
         if (cancelled) return;
@@ -125,8 +143,66 @@ export function TrendFinderPage({ initialFilter = 'all', onFilterChange, onStatu
       });
   };
 
+  const handleVideoAnalyze = () => {
+    if (!videoURL.trim()) return;
+    setYoutubeMessage('Checking YouTube analyzer configuration...');
+    analyzeYouTubeVideo(videoURL.trim())
+      .then(res => setYoutubeMessage(res.message))
+      .catch(err => setYoutubeMessage(err instanceof Error ? err.message : 'YouTube video analysis is unavailable.'));
+  };
+
+  const handleChannelAnalyze = () => {
+    if (!channelURL.trim()) return;
+    setYoutubeMessage('Checking YouTube analyzer configuration...');
+    analyzeYouTubeChannel(channelURL.trim())
+      .then(res => setYoutubeMessage(res.message))
+      .catch(err => setYoutubeMessage(err instanceof Error ? err.message : 'YouTube channel analysis is unavailable.'));
+  };
+
   return (
     <section className="page-section">
+      <div className="page-hero compact">
+        <div>
+          <div className="page-eyebrow">Trend Intelligence</div>
+          <h1>Research creator demand before you make the clip.</h1>
+          <p>Start with live Google Trends keywords today. YouTube video and channel analysis will unlock when the YouTube Data API is configured.</p>
+        </div>
+      </div>
+
+      <div className="research-tabs" role="tablist" aria-label="Research mode">
+        <button className={tab === 'keywords' ? 'active' : ''} type="button" onClick={() => setTab('keywords')}>Trending Keywords</button>
+        <button className={tab === 'video' ? 'active' : ''} type="button" onClick={() => setTab('video')}>YouTube Video Analyzer</button>
+        <button className={tab === 'channel' ? 'active' : ''} type="button" onClick={() => setTab('channel')}>Channel Analyzer</button>
+      </div>
+
+      {tab === 'video' && (
+        <AnalyzerPanel
+          title="YouTube Video Analyzer"
+          description="Paste a YouTube video URL. When configured, TrendCortex will fetch public metadata through the YouTube Data API and summarize topic, niche, SEO signals, and content suggestions."
+          inputLabel="YouTube video URL"
+          value={videoURL}
+          onChange={setVideoURL}
+          onAnalyze={handleVideoAnalyze}
+          message={youtubeMessage || 'Add YouTube Data API key in Settings to analyze videos.'}
+          expected={['Title', 'Description keywords', 'Tags if available', 'Category', 'Views, likes, comments if available', 'Inferred topic or niche', 'Possible target keywords', 'SEO and content suggestions']}
+        />
+      )}
+
+      {tab === 'channel' && (
+        <AnalyzerPanel
+          title="Channel Analyzer"
+          description="Paste a YouTube channel URL. Future analysis will identify niche, strategy, top-performing patterns, posting strategy, hooks, topic clusters, and likely view drivers."
+          inputLabel="YouTube channel URL"
+          value={channelURL}
+          onChange={setChannelURL}
+          onAnalyze={handleChannelAnalyze}
+          message={youtubeMessage || 'Add YouTube Data API key in Settings to analyze channels.'}
+          expected={['Channel niche', 'Top videos', 'Content patterns', 'Posting strategy', 'Title and hook patterns', 'Topic clusters', 'Likely view drivers']}
+        />
+      )}
+
+      {tab === 'keywords' && (
+        <>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 10, marginBottom: 16 }}>
         {SOURCE_STATUS.map(source => {
           const connected = source.id === 'gt' && response?.provider_status === 'ok';
@@ -311,7 +387,51 @@ export function TrendFinderPage({ initialFilter = 'all', onFilterChange, onStatu
           ))}
         </div>
       )}
+        </>
+      )}
     </section>
+  );
+}
+
+function AnalyzerPanel({
+  title,
+  description,
+  inputLabel,
+  value,
+  onChange,
+  onAnalyze,
+  message,
+  expected,
+}: {
+  title: string;
+  description: string;
+  inputLabel: string;
+  value: string;
+  onChange: (value: string) => void;
+  onAnalyze: () => void;
+  message: string;
+  expected: string[];
+}) {
+  return (
+    <div className="settings-card analyzer-panel">
+      <div>
+        <div className="settings-card-title">{title}</div>
+        <div className="muted-note">{description}</div>
+      </div>
+      <label className="form-group">
+        <span className="form-label">{inputLabel}</span>
+        <input className="form-input" value={value} onChange={event => onChange(event.target.value)} placeholder="https://www.youtube.com/..." />
+      </label>
+      <button className="generate-btn idle" type="button" onClick={onAnalyze} disabled={!value.trim()}>
+        Check Analyzer
+      </button>
+      <div className="neutral-callout">{message}</div>
+      <div className="settings-card-title">When configured, analysis can include</div>
+      <div className="analyzer-grid">
+        {expected.map(item => <div key={item} className="small-capability">{item}</div>)}
+      </div>
+      <div className="muted-note">TrendCortex will not claim exact ranking keywords unless supported by authorized analytics or verified data.</div>
+    </div>
   );
 }
 

@@ -19,7 +19,6 @@ export const NAV_ITEMS: NavItem[] = [
   { id: 'trendFinder',  label: 'Trend Finder',   short: 'TF' },
   { id: 'scriptStudio', label: 'Script Studio',  short: 'SS' },
   { id: 'clipStudio',   label: 'Clip Generator', short: 'CG' },
-  { id: 'publish',      label: 'Publish',        short: 'PB' },
   { id: 'connections',  label: 'Connections',    short: 'CN' },
   { id: 'settings',     label: 'Settings',       short: 'ST' },
 ];
@@ -47,7 +46,7 @@ function SidebarChrome({ currentView, onNavigate, onAfterNavigate }: Props & { o
         </div>
         <div className="sidebar-logo-text">
           <div className="name">TrendCortex</div>
-          <div className="tagline">Catch · Create · Publish</div>
+          <div className="tagline">Research · Script · Clip</div>
         </div>
       </div>
 
