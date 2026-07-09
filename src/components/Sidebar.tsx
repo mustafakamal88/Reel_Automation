@@ -1,45 +1,37 @@
-import type { View, ApprovalStatus } from '../types';
+import type { View } from '../types';
 
 interface NavItem {
   id: View;
-  n: string;
   label: string;
+  short: string;
   badge?: string | number;
 }
 
 interface Props {
   currentView: View;
   onNavigate: (v: View) => void;
-  approvals: Record<string, ApprovalStatus>;
 }
 
 export const NAV_ITEMS: NavItem[] = [
-  { id: 'signals',     n: '01', label: 'Signals' },
-  { id: 'scoring',     n: '02', label: 'Scoring' },
-  { id: 'topics',      n: '03', label: "Today's 6" },
-  { id: 'workflow',    n: '04', label: 'Daily Workflow' },
-  { id: 'batch',       n: '05', label: 'Batch & Publish' },
-  { id: 'clipStudio',  n: '06', label: 'Clip Generator' },
-  { id: 'realPipeline', n: '07', label: 'Real Pipeline' },
-  { id: 'connections', n: '08', label: 'Connections' },
-  { id: 'competitors', n: '09', label: 'Competitors' },
-  { id: 'approvals',   n: '10', label: 'Approvals' },
-  { id: 'performance', n: '11', label: 'Performance' },
-  { id: 'pipeline',    n: '12', label: 'Pipeline' },
-  { id: 'settings',    n: '13', label: 'Settings' },
+  { id: 'dashboard',    label: 'Dashboard',      short: 'DB' },
+  { id: 'trendFinder',  label: 'Trend Finder',   short: 'TF' },
+  { id: 'scriptStudio', label: 'Script Studio',  short: 'SS' },
+  { id: 'clipStudio',   label: 'Clip Generator', short: 'CG' },
+  { id: 'exports',      label: 'Exports',        short: 'EX' },
+  { id: 'publish',      label: 'Publish',        short: 'PB' },
+  { id: 'connections',  label: 'Connections',    short: 'CN' },
+  { id: 'settings',     label: 'Settings',       short: 'ST' },
 ];
 
 const MOBILE_NAV_ITEMS: NavItem[] = [
-  { id: 'topics',      n: '01', label: "Today's 6" },
-  { id: 'batch',       n: '02', label: 'Publish' },
-  { id: 'clipStudio',  n: '03', label: 'Clips' },
-  { id: 'signals',     n: '04', label: 'Signals' },
-  { id: 'settings',    n: '05', label: 'Settings' },
+  { id: 'dashboard',    label: 'Home',    short: 'DB' },
+  { id: 'trendFinder',  label: 'Trends',  short: 'TF' },
+  { id: 'scriptStudio', label: 'Scripts', short: 'SS' },
+  { id: 'clipStudio',   label: 'Clips',   short: 'CG' },
+  { id: 'exports',      label: 'Exports', short: 'EX' },
 ];
 
-export function Sidebar({ currentView, onNavigate, approvals }: Props) {
-  const pendingCount = Object.values(approvals).filter(s => s === 'pending').length;
-
+export function Sidebar({ currentView, onNavigate }: Props) {
   return (
     <aside className="sidebar" role="navigation" aria-label="Main navigation">
       <div className="sidebar-logo">
@@ -48,16 +40,14 @@ export function Sidebar({ currentView, onNavigate, approvals }: Props) {
         </div>
         <div className="sidebar-logo-text">
           <div className="name">TrendCortex</div>
-          <div className="tagline">catch · create · publish</div>
+          <div className="tagline">Catch · Create · Publish</div>
         </div>
       </div>
 
       <nav className="sidebar-nav">
         {NAV_ITEMS.map(item => {
           const active = item.id === currentView;
-          const badge = item.id === 'approvals' && pendingCount > 0
-            ? String(pendingCount)
-            : item.badge != null
+          const badge = item.badge != null
               ? String(item.badge)
               : null;
 
@@ -73,7 +63,7 @@ export function Sidebar({ currentView, onNavigate, approvals }: Props) {
               <span
                 className="nav-item-num"
               >
-                {item.n}
+                {item.short}
               </span>
               <span
                 className="nav-item-label"
@@ -93,12 +83,12 @@ export function Sidebar({ currentView, onNavigate, approvals }: Props) {
       <div className="sidebar-footer">
         <div className="collector-status">
           <span className="collector-dot" aria-hidden="true" />
-          <span className="collector-label">Not configured</span>
+          <span className="collector-label">Backend connected</span>
         </div>
         <div className="user-card">
-          <div className="user-avatar" aria-hidden="true">JD</div>
+          <div className="user-avatar" aria-hidden="true">TC</div>
           <div>
-            <div className="user-name">Local workspace</div>
+            <div className="user-name">Workspace</div>
             <div className="user-role">No account connected</div>
           </div>
         </div>
@@ -107,7 +97,7 @@ export function Sidebar({ currentView, onNavigate, approvals }: Props) {
   );
 }
 
-export function MobileBottomNav({ currentView, onNavigate }: Omit<Props, 'approvals'>) {
+export function MobileBottomNav({ currentView, onNavigate }: Props) {
   return (
     <nav className="mobile-bottom-nav" aria-label="Mobile main navigation">
       {MOBILE_NAV_ITEMS.map(item => {
@@ -121,7 +111,7 @@ export function MobileBottomNav({ currentView, onNavigate }: Omit<Props, 'approv
             aria-current={active ? 'page' : undefined}
             type="button"
           >
-            <span className="mobile-nav-icon" aria-hidden="true">{item.n}</span>
+            <span className="mobile-nav-icon" aria-hidden="true">{item.short}</span>
             <span className="mobile-nav-label">{item.label}</span>
           </button>
         );

@@ -1,43 +1,29 @@
 import { useState, useCallback } from 'react';
-import type { View, ApprovalStatus } from './types';
+import type { View } from './types';
 import { storage } from './lib/storage';
 import { MobileBottomNav, Sidebar } from './components/Sidebar';
 import { Header } from './components/Header';
-import { SignalsPage } from './pages/Signals';
-import { ScoringPage } from './pages/Scoring';
-import { TopicsPage } from './pages/Topics';
-import { CompetitorsPage } from './pages/Competitors';
-import { ApprovalsPage } from './pages/Approvals';
-import { PerformancePage } from './pages/Performance';
-import { PipelinePage } from './pages/Pipeline';
-import { DailyWorkflowPage } from './pages/DailyWorkflow';
-import { DailyBatchPage } from './pages/DailyBatch';
+import { DashboardPage } from './pages/Dashboard';
+import { TrendFinderPage } from './pages/Signals';
+import { ScriptStudioPage } from './pages/ScriptStudio';
 import { ClipStudioPage } from './pages/ClipStudio';
-import { RealPipelinePage } from './pages/RealPipeline';
+import { ExportsPage } from './pages/Exports';
+import { PublishPage } from './pages/Publish';
 import { SocialConnectionsPage } from './pages/SocialConnections';
 import { SettingsPage } from './pages/Settings';
+import type { ReelContentPackage, TrendCandidate } from './lib/api/client';
 
 export default function App() {
   storage.migrate();
 
-  const [view, setView] = useState<View>(() => (storage.getView() as View) || 'signals');
-  const [approvals, setApprovals] = useState(() => storage.getApprovals());
+  const [view, setView] = useState<View>(() => storage.getView());
   const [settings, setSettings] = useState(() => storage.getSettings());
-  const [openTopicId, setOpenTopicId] = useState<string | null>(null);
-  const [signalsSubtitle, setSignalsSubtitle] = useState<string>('No live trend data connected yet');
+  const [latestScript, setLatestScript] = useState(() => storage.getScriptPackage());
+  const [trendSubtitle, setTrendSubtitle] = useState<string>('Real keyword discovery from connected sources');
 
   const navigate = useCallback((v: View) => {
     setView(v);
-    setOpenTopicId(null);
     storage.setView(v);
-  }, []);
-
-  const handleApprove = useCallback((id: string, status: ApprovalStatus) => {
-    setApprovals(prev => {
-      const next = { ...prev, [id]: status };
-      storage.setApprovals(next);
-      return next;
-    });
   }, []);
 
   const handleSaveSettings = useCallback((s: typeof settings) => {
@@ -45,46 +31,33 @@ export default function App() {
     storage.setSettings(s);
   }, []);
 
+  const handleScriptGenerated = useCallback((candidate: TrendCandidate, pkg: ReelContentPackage) => {
+    const stored = { candidate, package: pkg, savedAt: new Date().toISOString() };
+    setLatestScript(stored);
+    storage.setScriptPackage(stored);
+  }, []);
+
   return (
     <div className="app-shell">
       <Sidebar
         currentView={view}
         onNavigate={navigate}
-        approvals={approvals}
       />
 
       <main className="main">
         <Header
           view={view}
           region={settings.region}
-          subtitleOverride={view === 'signals' ? signalsSubtitle : undefined}
+          subtitleOverride={view === 'trendFinder' ? trendSubtitle : undefined}
         />
 
         <div className="scroll-area">
-          {view === 'signals' && <SignalsPage onStatusChange={setSignalsSubtitle} />}
-          {view === 'scoring' && <ScoringPage />}
-          {view === 'topics' && (
-            <TopicsPage
-              generated={false}
-              onApprove={handleApprove}
-              onNavigateToApprovals={() => navigate('approvals')}
-              openTopicId={openTopicId}
-              onOpenTopic={setOpenTopicId}
-            />
-          )}
-          {view === 'competitors' && <CompetitorsPage />}
-          {view === 'approvals' && (
-            <ApprovalsPage
-              approvals={approvals}
-              onApprove={handleApprove}
-            />
-          )}
-          {view === 'performance' && <PerformancePage />}
-          {view === 'pipeline' && <PipelinePage />}
-          {view === 'workflow' && <DailyWorkflowPage />}
-          {view === 'batch' && <DailyBatchPage />}
+          {view === 'dashboard' && <DashboardPage latestScript={latestScript} onNavigate={navigate} />}
+          {view === 'trendFinder' && <TrendFinderPage onStatusChange={setTrendSubtitle} onScriptGenerated={handleScriptGenerated} />}
+          {view === 'scriptStudio' && <ScriptStudioPage latestScript={latestScript} />}
           {view === 'clipStudio' && <ClipStudioPage />}
-          {view === 'realPipeline' && <RealPipelinePage />}
+          {view === 'exports' && <ExportsPage />}
+          {view === 'publish' && <PublishPage />}
           {view === 'connections' && <SocialConnectionsPage />}
           {view === 'settings' && (
             <SettingsPage

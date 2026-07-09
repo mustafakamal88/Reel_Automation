@@ -1,18 +1,9 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import {
   ApiError,
-  downloadAISceneVideo,
   downloadClipStudioZip,
-  generateAIScenes,
   generateClipStudio,
-  getAISceneGeneration,
-  getAISceneWorkerStatus,
   importClipStudioURL,
-  type AISceneJob,
-  type AISceneGenerateResponse,
-  type AISceneGenerationStatusResponse,
-  type AISceneWorkerJob,
-  type AISceneWorkerStatusResponse,
   uploadClipStudioSource,
   type ClipCTASize,
   type ClipLayoutMode,
@@ -21,8 +12,6 @@ import {
   type ClipStudioSourceResponse,
 } from '../lib/api/client';
 import {
-  aiSceneWorkerCanRun,
-  aiSceneWorkerConfigurationMessage,
   clipGenerateDisabledReason,
   clipPackageReady,
   getClipSourceStatus,
@@ -40,7 +29,7 @@ const SOURCE_MODELS: { value: ClipSourceModel; label: string }[] = [
 
 function errMsg(err: unknown, fallback: string): string {
   if (err instanceof ApiError) {
-    if (err.isBackendOffline) return 'Backend offline - run: cd backend && go run ./cmd/api';
+    if (err.isBackendOffline) return 'Backend offline. Start the Go backend or check VITE_API_BASE_URL.';
     return err.message;
   }
   if (err instanceof Error) return err.message;
@@ -68,89 +57,19 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
   );
 }
 
-function StatusPill({ children }: { children: React.ReactNode }) {
-  return (
-    <span style={{
-      fontSize: 10,
-      fontFamily: 'var(--font-mono)',
-      color: 'var(--text-dim)',
-      background: 'var(--bg-subtle)',
-      border: '1px solid var(--border-strong)',
-      borderRadius: 3,
-      padding: '2px 6px',
-      whiteSpace: 'nowrap',
-    }}>
-      {children}
-    </span>
-  );
-}
-
-function statusTone(status: string): { color: string; background: string; border: string } {
-  switch (status) {
-    case 'completed':
-      return { color: 'var(--green)', background: 'rgba(95,211,154,0.08)', border: 'rgba(95,211,154,0.25)' };
-    case 'failed':
-    case 'timed_out':
-    case 'error':
-      return { color: 'var(--red)', background: 'rgba(232,115,107,0.08)', border: 'rgba(232,115,107,0.25)' };
-    case 'waiting_for_manual_output':
-      return { color: '#f8c471', background: 'rgba(248,196,113,0.08)', border: 'rgba(248,196,113,0.25)' };
-    default:
-      return { color: 'var(--text-muted)', background: 'var(--bg-subtle)', border: 'var(--border)' };
-  }
-}
-
-function AISceneJobCard({ job, onCopy }: { job: AISceneJob; onCopy: (value: string) => void }) {
-  const tone = statusTone(job.status);
-  const statusLabel = job.status.replaceAll('_', ' ');
-  return (
-    <div style={{ border: '1px solid var(--border)', borderRadius: 6, padding: 10, background: 'var(--bg-subtle)' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'flex-start', flexWrap: 'wrap' }}>
-        <div>
-          <div style={{ fontSize: 12, fontWeight: 800, color: 'var(--text-primary)' }}>Scene {job.scene_number || job.scene_id}</div>
-          <div style={{ fontSize: 10, fontFamily: 'var(--font-mono)', color: 'var(--text-dim)', marginTop: 3 }}>{job.job_id || 'job pending'}</div>
-        </div>
-        <span style={{ fontSize: 10, fontWeight: 800, color: tone.color, background: tone.background, border: `1px solid ${tone.border}`, borderRadius: 4, padding: '3px 6px', textTransform: 'uppercase' }}>
-          {statusLabel}
-        </span>
-      </div>
-      <div style={{ fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.5, marginTop: 9 }}>{job.visual_prompt}</div>
-      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 8 }}>
-        <button className="generate-btn idle" type="button" onClick={() => onCopy(job.visual_prompt)} style={{ padding: '6px 9px', fontSize: 11 }}>
-          Copy prompt
-        </button>
-        <button className="generate-btn idle" type="button" onClick={() => onCopy(job.manual_output_path)} style={{ padding: '6px 9px', fontSize: 11 }}>
-          Copy output path
-        </button>
-      </div>
-      <div style={{ marginTop: 8, display: 'grid', gap: 5, fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.5 }}>
-        <div><strong style={{ color: 'var(--text-secondary)' }}>Expected file path:</strong> <code>{job.manual_output_path || 'outputs/<job-id>/output.mp4'}</code></div>
-        <div><strong style={{ color: 'var(--text-secondary)' }}>Timeout:</strong> {job.timeout_seconds || 120}s</div>
-        <div>{job.next_action}</div>
-        {(job.worker_message || job.error) && <div style={{ color: job.error ? 'var(--red)' : 'var(--text-muted)' }}>{job.worker_message || job.error}</div>}
-      </div>
-    </div>
-  );
-}
-
-type ClipStudioMode = 'video' | 'ai';
-type ErrorScope = ClipStudioMode | 'global';
-
 export function ClipStudioPage() {
-  const [activeMode, setActiveMode] = useState<ClipStudioMode>('video');
   const [sourceUrl, setSourceUrl] = useState('');
   const [source, setSource] = useState<ClipStudioSourceResponse | null>(null);
-  const [prompt, setPrompt] = useState('make funny 3-minute clips with top and bottom branding');
+  const [prompt, setPrompt] = useState('Make short branded clips with a strong hook and clear takeaway.');
   const [clipLength, setClipLength] = useState<'auto' | '15s' | '30s' | '60s' | '3min'>('auto');
   const [clipCount, setClipCount] = useState<1 | 3 | 6>(3);
   const [topText, setTopText] = useState('TREND CLIP');
-  const [bottomText, setBottomText] = useState('FOLLOW FOR THE FULL STORY');
+  const [bottomText, setBottomText] = useState('FOLLOW FOR MORE');
   const [watermark, setWatermark] = useState('@trendcortex');
   const [layoutMode, setLayoutMode] = useState<ClipLayoutMode>('blurred_background');
   const [captionText, setCaptionText] = useState('');
   const [ctaSize, setCtaSize] = useState<ClipCTASize>('small');
   const [rightsConfirmed, setRightsConfirmed] = useState(false);
-
   const [sourceModel, setSourceModel] = useState<ClipSourceModel>('user_upload');
   const [sourceTitle, setSourceTitle] = useState('');
   const [sourceCreator, setSourceCreator] = useState('');
@@ -165,23 +84,8 @@ export function ClipStudioPage() {
   const [downloadBusy, setDownloadBusy] = useState(false);
   const [result, setResult] = useState<ClipStudioGenerateResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [errorScope, setErrorScope] = useState<ErrorScope>('global');
-  const [aiPrompt, setAiPrompt] = useState('Realistic vertical scenes for a fast-paced trend explainer');
-  const [aiStyle, setAiStyle] = useState('realistic_editorial');
-  const [aiLength, setAiLength] = useState<30 | 60 | 180>(60);
-  const [aiBranding, setAiBranding] = useState('TREND CORTEX');
-  const [workerStatus, setWorkerStatus] = useState<AISceneWorkerStatusResponse | null>(null);
-  const [aiResult, setAiResult] = useState<AISceneGenerateResponse | null>(null);
-  const [aiGeneration, setAiGeneration] = useState<AISceneGenerationStatusResponse | null>(null);
-  const [aiGenerationID, setAiGenerationID] = useState<string | null>(null);
-  const [aiBusy, setAiBusy] = useState(false);
-  const [aiDownloadBusy, setAiDownloadBusy] = useState(false);
-  const [aiVideoDownloadBusy, setAiVideoDownloadBusy] = useState(false);
-  const [developerDetailsOpen, setDeveloperDetailsOpen] = useState(false);
 
   const packageReady = clipPackageReady(result);
-  const aiPackageReady = Boolean((aiGeneration?.zip_url && aiGeneration.zip_filename) || (aiResult?.download_url && aiResult.zip_filename));
-  const aiVideoReady = Boolean(aiGeneration?.downloadable && aiGeneration.video_url && aiGeneration.video_filename);
   const sourceStatus = useMemo(() => getClipSourceStatus(source, sourceUrl), [source, sourceUrl]);
   const generateDisabledReason = clipGenerateDisabledReason({ source, rightsConfirmed, prompt, busy, uploadBusy, urlImportBusy });
   const canGenerate = generateDisabledReason === null;
@@ -189,166 +93,10 @@ export function ClipStudioPage() {
     if (packageReady) return 'Package ready. Download the ZIP when you are ready.';
     return generateDisabledReason || sourceStatus.message;
   }, [generateDisabledReason, packageReady, sourceStatus.message]);
-  const currentError = error && (errorScope === 'global' || errorScope === activeMode) ? error : null;
-  const currentSceneJobs = useMemo<AISceneJob[]>(() => {
-    if (aiResult?.scene_jobs?.length) return aiResult.scene_jobs;
-    return (workerStatus?.jobs || []).map((job: AISceneWorkerJob, index: number) => ({
-      scene_number: index + 1,
-      scene_id: `worker-job-${index + 1}`,
-      job_id: job.id,
-      status: job.status,
-      visual_prompt: job.visual_prompt || '',
-      manual_output_path: job.manual_output_path || job.expected_output_path || `outputs/${job.id}/output.mp4`,
-      timeout_seconds: job.timeout_seconds || 120,
-      next_action: job.next_action || 'Manual worker mode: generate this scene in Pinokio/Wan2GP, then save it as output.mp4 in the shown job folder.',
-      worker_message: job.worker_message,
-      error: job.error,
-    }));
-  }, [aiResult?.scene_jobs, workerStatus?.jobs]);
-  const aiWorkerCanRun = aiSceneWorkerCanRun(workerStatus);
-  const aiWorkerConfigurationMessage = aiSceneWorkerConfigurationMessage(workerStatus);
-  const aiProgressPercent = aiGeneration?.progress_percent ?? (aiBusy ? 15 : aiResult?.success ? 100 : 0);
-  const aiStatusText = aiGeneration?.current_step
-    || (aiWorkerConfigurationMessage || (aiBusy ? 'Creating scenes' : aiResult?.success ? 'Video ready' : 'Preparing scene plan'));
-  const aiStatusDetail = aiWorkerConfigurationMessage || (aiGeneration?.status === 'generator_not_configured'
-    ? 'Automatic AI video generation is not configured yet.'
-    : aiGeneration?.notes || aiGeneration?.estimated_next_action || aiResult?.notes || '');
-  const aiNeedsConfiguration = !aiWorkerCanRun || aiGeneration?.status === 'generator_not_configured';
-  const aiButtonLabel = aiNeedsConfiguration ? 'Configure generator' : aiBusy ? 'Generating video...' : 'Generate Video';
-  const aiGenerateDisabled = aiBusy || !aiPrompt.trim() || !aiWorkerCanRun;
-  const aiShowProgress = aiWorkerCanRun || aiBusy || Boolean(aiGeneration && aiGeneration.status !== 'generator_not_configured');
-
-  useEffect(() => {
-    if (activeMode === 'ai') void refreshWorkerStatus();
-  }, [activeMode]);
-
-  useEffect(() => {
-    if (!aiGenerationID) return undefined;
-    let cancelled = false;
-    const poll = async () => {
-      try {
-        const next = await getAISceneGeneration(aiGenerationID);
-        if (cancelled) return;
-        setAiGeneration(next);
-        setAiResult(previous => previous ? {
-          ...previous,
-          scene_jobs: next.scene_jobs || previous.scene_jobs,
-          scene_prompts: next.scene_prompts || previous.scene_prompts,
-          scene_job_ids: next.scene_job_ids || previous.scene_job_ids,
-          generation_status: next.status,
-          notes: next.notes || previous.notes,
-          zip_filename: next.zip_filename || previous.zip_filename,
-          download_url: next.zip_url || previous.download_url,
-          included_files: next.included_files || previous.included_files,
-        } : previous);
-        if (next.status === 'completed' || next.status === 'failed' || next.status === 'timed_out' || next.status === 'generator_not_configured') {
-          setAiBusy(false);
-          return;
-        }
-      } catch (err) {
-        if (!cancelled) {
-          setAiBusy(false);
-          setErrorScope('ai');
-          setError(errMsg(err, 'AI scene generation status unavailable'));
-        }
-      }
-    };
-    void poll();
-    const id = window.setInterval(() => void poll(), 1500);
-    return () => {
-      cancelled = true;
-      window.clearInterval(id);
-    };
-  }, [aiGenerationID]);
-
-  async function refreshWorkerStatus() {
-    try {
-      setWorkerStatus(await getAISceneWorkerStatus());
-    } catch (err) {
-      setWorkerStatus({ configured: false, status: 'error', message: errMsg(err, 'Worker status unavailable') });
-    }
-  }
-
-  async function copyText(value: string) {
-    if (!value) return;
-    await navigator.clipboard?.writeText(value);
-  }
-
-  async function handleGenerateAIScenes() {
-    if (aiNeedsConfiguration) {
-      setDeveloperDetailsOpen(true);
-      setErrorScope('ai');
-      setError('Automatic AI video generation is not configured yet.');
-      return;
-    }
-    setAiBusy(true);
-    setErrorScope('ai');
-    setError(null);
-    setAiGeneration(null);
-    setAiGenerationID(null);
-    try {
-      const generated = await generateAIScenes({
-        prompt: aiPrompt,
-        style_preset: aiStyle,
-        target_length_seconds: aiLength,
-        branding: {
-          top_banner_text: aiBranding,
-          bottom_banner_text: 'FOLLOW FOR MORE',
-          watermark_text: watermark,
-          cta_text: 'FOLLOW FOR MORE',
-          font_style_preset: 'bold_editorial',
-          top_banner_color: '#101828',
-          bottom_banner_color: '#0f766e',
-        },
-      });
-      setAiResult(generated);
-      if (generated.generation_id) {
-        setAiGenerationID(generated.generation_id);
-      } else if (!generated.success) {
-        setAiBusy(false);
-        setError(generated.notes || 'Connect local AI worker to generate AI scenes.');
-      }
-      await refreshWorkerStatus();
-    } catch (err) {
-      setError(errMsg(err, 'AI scene generation failed'));
-      setAiBusy(false);
-    }
-  }
-
-  async function handleDownloadAIScenes() {
-    const url = aiGeneration?.zip_url || aiResult?.download_url;
-    const filename = aiGeneration?.zip_filename || aiResult?.zip_filename;
-    if (!url || !filename) return;
-    setAiDownloadBusy(true);
-    setErrorScope('ai');
-    setError(null);
-    try {
-      await downloadClipStudioZip(url, filename);
-    } catch (err) {
-      setError(errMsg(err, 'AI scene ZIP download failed'));
-    } finally {
-      setAiDownloadBusy(false);
-    }
-  }
-
-  async function handleDownloadAIVideo() {
-    if (!aiGeneration?.video_url || !aiGeneration.video_filename) return;
-    setAiVideoDownloadBusy(true);
-    setErrorScope('ai');
-    setError(null);
-    try {
-      await downloadAISceneVideo(aiGeneration.video_url, aiGeneration.video_filename);
-    } catch (err) {
-      setError(errMsg(err, 'AI video download failed'));
-    } finally {
-      setAiVideoDownloadBusy(false);
-    }
-  }
 
   async function handleUpload(file: File | undefined) {
     if (!file) return;
     setUploadBusy(true);
-    setErrorScope('video');
     setError(null);
     setResult(null);
     try {
@@ -367,7 +115,6 @@ export function ClipStudioPage() {
     const trimmedURL = sourceUrl.trim();
     if (!trimmedURL) return;
     setUrlImportBusy(true);
-    setErrorScope('video');
     setError(null);
     setResult(null);
     try {
@@ -396,13 +143,11 @@ export function ClipStudioPage() {
 
   async function handleGenerate() {
     if (!source || !sourceCanGenerate(source)) {
-      setErrorScope('video');
       setError(sourceStatus.message);
       return;
     }
     const activeSource = source;
     setBusy(true);
-    setErrorScope('video');
     setError(null);
     setResult(null);
     try {
@@ -445,9 +190,7 @@ export function ClipStudioPage() {
         },
       });
       setResult(generated);
-      if (!generated.success) {
-        setError(generated.notes || activeSource.message || 'Clip generation did not complete');
-      }
+      if (!generated.success) setError(generated.notes || activeSource.message || 'Clip generation did not complete.');
     } catch (err) {
       setError(errMsg(err, 'Clip generation failed'));
     } finally {
@@ -458,7 +201,6 @@ export function ClipStudioPage() {
   async function handleDownload() {
     if (!result?.download_url || !result.zip_filename) return;
     setDownloadBusy(true);
-    setErrorScope('video');
     setError(null);
     try {
       await downloadClipStudioZip(result.download_url, result.zip_filename);
@@ -471,354 +213,145 @@ export function ClipStudioPage() {
 
   return (
     <section className="page-section">
-      <div style={{ maxWidth: 920, marginBottom: 14 }}>
-        <div style={{ fontSize: 18, fontWeight: 800, color: 'var(--text-primary)' }}>Clip Generator</div>
-        <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>
-          Paste a URL or upload a video, describe the clips you want, then download a ZIP package.
+      <div className="settings-card" style={{ display: 'flex', flexDirection: 'column', gap: 14, maxWidth: 980 }}>
+        <div>
+          <div style={{ fontSize: 18, fontWeight: 800, color: 'var(--text-primary)' }}>Clip from Video</div>
+          <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>
+            Upload a source video or provide a direct downloadable video URL, then export a branded ZIP package.
+          </div>
         </div>
-      </div>
 
-      <div role="tablist" aria-label="Clip generator mode" style={{
-        display: 'inline-flex',
-        gap: 4,
-        background: 'var(--bg-subtle)',
-        border: '1px solid var(--border-strong)',
-        borderRadius: 6,
-        padding: 4,
-        marginBottom: 16,
-      }}>
-        {([
-          ['video', 'Clip from Video'],
-          ['ai', 'AI Scene Generator'],
-        ] as const).map(([mode, label]) => (
-          <button
-            key={mode}
-            type="button"
-            role="tab"
-            aria-selected={activeMode === mode}
-            onClick={() => setActiveMode(mode)}
-            style={{
-              border: 0,
-              borderRadius: 4,
-              padding: '8px 12px',
-              cursor: 'pointer',
-              fontSize: 12,
-              fontWeight: 800,
-              color: activeMode === mode ? '#ffffff' : 'var(--text-secondary)',
-              background: activeMode === mode ? '#15121f' : 'transparent',
-            }}
-          >
-            {label}
+        {error && (
+          <div style={{ fontSize: 12, color: 'var(--red)', lineHeight: 1.6, background: 'rgba(232,115,107,0.08)', border: '1px solid rgba(232,115,107,0.25)', borderRadius: 6, padding: '8px 10px' }}>
+            {error}
+          </div>
+        )}
+
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 10, alignItems: 'end' }}>
+          <Field label="Direct video URL or reference URL">
+            <input
+              value={sourceUrl}
+              onChange={event => {
+                setSourceUrl(event.target.value);
+                setSource(null);
+                setResult(null);
+              }}
+              placeholder="https://example.com/source.mp4"
+              style={inputStyle()}
+            />
+          </Field>
+          <Field label="Upload video">
+            <input
+              type="file"
+              accept="video/mp4,video/quicktime,video/webm,.mp4,.mov,.webm"
+              onChange={event => void handleUpload(event.target.files?.[0])}
+              style={inputStyle()}
+            />
+          </Field>
+        </div>
+
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          <button className="generate-btn idle" onClick={handleImportURL} disabled={!sourceUrl.trim() || urlImportBusy} type="button">
+            {urlImportBusy ? 'Checking URL...' : 'Import URL'}
           </button>
-        ))}
+        </div>
+
+        <div style={{ fontSize: 12, color: sourceStatus.tone === 'danger' ? 'var(--red)' : sourceStatus.tone === 'ready' ? 'var(--green)' : 'var(--text-muted)', background: sourceStatus.tone === 'danger' ? 'rgba(232,115,107,0.08)' : sourceStatus.tone === 'ready' ? 'rgba(95,211,154,0.08)' : 'var(--bg-subtle)', border: sourceStatus.tone === 'danger' ? '1px solid rgba(232,115,107,0.25)' : sourceStatus.tone === 'ready' ? '1px solid rgba(95,211,154,0.25)' : '1px solid var(--border)', borderRadius: 6, padding: '8px 10px' }}>
+          <div style={{ fontWeight: 800, color: 'inherit', marginBottom: 3 }}>{sourceStatus.label}</div>
+          <div>{clipStatusMessage}</div>
+        </div>
+
+        <div style={{ fontSize: 12, color: 'var(--text-muted)', background: 'var(--bg-subtle)', border: '1px solid var(--border)', borderRadius: 6, padding: '8px 10px', lineHeight: 1.5 }}>
+          Platform watch URLs are saved as reference only. Upload the source file or provide a direct downloadable video URL to generate clips.
+        </div>
+
+        <Field label="Prompt / instruction">
+          <textarea value={prompt} onChange={event => setPrompt(event.target.value)} rows={4} placeholder="Describe the clips you want." style={{ ...inputStyle(), resize: 'vertical', minHeight: 112, fontSize: 13 }} />
+        </Field>
+
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 10 }}>
+          <Field label="Clip length">
+            <select value={clipLength} onChange={event => setClipLength(event.target.value as typeof clipLength)} style={inputStyle()}>
+              <option value="auto">Auto</option>
+              <option value="15s">15s</option>
+              <option value="30s">30s</option>
+              <option value="60s">60s</option>
+              <option value="3min">3min</option>
+            </select>
+          </Field>
+          <Field label="Number of clips">
+            <select value={clipCount} onChange={event => setClipCount(Number(event.target.value) as 1 | 3 | 6)} style={inputStyle()}>
+              <option value={1}>1</option>
+              <option value={3}>3</option>
+              <option value={6}>6</option>
+            </select>
+          </Field>
+          <Field label="Layout mode">
+            <select value={layoutMode} onChange={event => setLayoutMode(event.target.value as ClipLayoutMode)} style={inputStyle()}>
+              <option value="blurred_background">Blurred background</option>
+              <option value="fill_crop">Fill crop</option>
+              <option value="fit_with_bars">Fit with bars</option>
+            </select>
+          </Field>
+          <Field label="CTA size">
+            <select value={ctaSize} onChange={event => setCtaSize(event.target.value as ClipCTASize)} style={inputStyle()}>
+              <option value="small">Small</option>
+              <option value="medium">Medium</option>
+              <option value="large">Large</option>
+            </select>
+          </Field>
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 10 }}>
+          <Field label="Top text"><input value={topText} onChange={event => setTopText(event.target.value)} style={inputStyle()} /></Field>
+          <Field label="Bottom text"><input value={bottomText} onChange={event => setBottomText(event.target.value)} style={inputStyle()} /></Field>
+          <Field label="Watermark / channel name"><input value={watermark} onChange={event => setWatermark(event.target.value)} style={inputStyle()} /></Field>
+        </div>
+
+        <Field label="Caption text optional">
+          <textarea value={captionText} onChange={event => setCaptionText(event.target.value)} rows={2} placeholder="Leave blank to hide captions." style={{ ...inputStyle(), resize: 'vertical', minHeight: 70, fontSize: 13 }} />
+        </Field>
+
+        <label style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 12, color: 'var(--text-secondary)' }}>
+          <input type="checkbox" checked={rightsConfirmed} onChange={event => setRightsConfirmed(event.target.checked)} />
+          I confirm I have rights or permission to use this source.
+        </label>
+
+        <details style={{ borderTop: '1px solid var(--border)', paddingTop: 12 }}>
+          <summary style={{ cursor: 'pointer', fontSize: 12, fontWeight: 700, color: 'var(--text-secondary)' }}>
+            Rights & attribution
+          </summary>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 10, marginTop: 12 }}>
+            <Field label="Source model">
+              <select value={sourceModel} onChange={event => setSourceModel(event.target.value as ClipSourceModel)} style={inputStyle()}>
+                {SOURCE_MODELS.map(item => <option key={item.value} value={item.value}>{item.label}</option>)}
+              </select>
+            </Field>
+            <Field label="Source title"><input value={sourceTitle} onChange={event => setSourceTitle(event.target.value)} style={inputStyle()} /></Field>
+            <Field label="Source creator"><input value={sourceCreator} onChange={event => setSourceCreator(event.target.value)} style={inputStyle()} /></Field>
+            <Field label="License"><input value={sourceLicense} onChange={event => setSourceLicense(event.target.value)} style={inputStyle()} /></Field>
+            <Field label="Attribution text"><input value={attributionText} onChange={event => setAttributionText(event.target.value)} style={inputStyle()} /></Field>
+            <Field label="Copyright overlay"><input value={copyrightOverlayText} onChange={event => setCopyrightOverlayText(event.target.value)} style={inputStyle()} /></Field>
+            <Field label="Platform source"><input value={platformSource} onChange={event => setPlatformSource(event.target.value)} style={inputStyle()} /></Field>
+          </div>
+        </details>
+
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <button className="generate-btn idle" onClick={handleGenerate} disabled={!canGenerate} title={generateDisabledReason || undefined} type="button">
+            {busy ? 'Generating clips...' : 'Generate Clips'}
+          </button>
+          <button className="generate-btn idle" onClick={handleDownload} disabled={downloadBusy || !packageReady} type="button" style={{ opacity: packageReady ? 1 : 0.55 }}>
+            {downloadBusy ? 'Downloading...' : 'Download ZIP'}
+          </button>
+        </div>
+
+        {result?.notes && <div style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.6 }}>{result.notes}</div>}
+        {(result?.included_files?.length ?? 0) > 0 && (
+          <div style={{ fontSize: 11, color: 'var(--text-dim)', fontFamily: 'var(--font-mono)', lineHeight: 1.6 }}>
+            ZIP includes {result?.included_files.length} file(s), including clip folders, thumbnails, attribution, and manifest when generation completes.
+          </div>
+        )}
       </div>
-
-      {currentError && (
-        <div style={{
-          fontSize: 12,
-          color: 'var(--red)',
-          lineHeight: 1.6,
-          marginBottom: 16,
-          background: 'rgba(232,115,107,0.08)',
-          border: '1px solid rgba(232,115,107,0.25)',
-          borderRadius: 6,
-          padding: '8px 10px',
-        }}>
-          {currentError}
-        </div>
-      )}
-
-      {activeMode === 'video' && (
-        <div className="settings-card" style={{ display: 'flex', flexDirection: 'column', gap: 14, maxWidth: 920 }}>
-          <div style={{ fontSize: 14, fontWeight: 800, color: 'var(--text-primary)' }}>Clip from Video</div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 10, alignItems: 'end' }}>
-            <Field label="Paste video URL">
-              <input
-                value={sourceUrl}
-                onChange={event => {
-                  setSourceUrl(event.target.value);
-                  setSource(null);
-                  setResult(null);
-                }}
-                placeholder="https://example.com/source.mp4"
-                style={inputStyle()}
-              />
-            </Field>
-            <Field label="Upload video">
-              <input
-                type="file"
-                accept="video/mp4,video/quicktime,video/webm,.mp4,.mov,.webm"
-                onChange={event => void handleUpload(event.target.files?.[0])}
-                style={inputStyle()}
-              />
-            </Field>
-          </div>
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-            <button
-              className="generate-btn idle"
-              onClick={handleImportURL}
-              disabled={!sourceUrl.trim() || urlImportBusy}
-              type="button"
-            >
-              <span className="generate-btn-dot" style={{ background: sourceUrl.trim() ? '#15121f' : '#6b7280' }} />
-              {urlImportBusy ? 'Checking URL...' : 'Import URL'}
-            </button>
-          </div>
-
-          <div style={{
-            fontSize: 12,
-            color: sourceStatus.tone === 'danger' ? 'var(--red)' : sourceStatus.tone === 'ready' ? 'var(--green)' : 'var(--text-muted)',
-            background: sourceStatus.tone === 'danger' ? 'rgba(232,115,107,0.08)' : sourceStatus.tone === 'ready' ? 'rgba(95,211,154,0.08)' : 'var(--bg-subtle)',
-            border: sourceStatus.tone === 'danger' ? '1px solid rgba(232,115,107,0.25)' : sourceStatus.tone === 'ready' ? '1px solid rgba(95,211,154,0.25)' : '1px solid var(--border)',
-            borderRadius: 6,
-            padding: '8px 10px',
-          }}>
-            <div style={{ fontWeight: 800, color: 'inherit', marginBottom: 3 }}>{sourceStatus.label}</div>
-            <div>{clipStatusMessage}</div>
-          </div>
-
-          <Field label="Prompt / instruction">
-            <textarea
-              value={prompt}
-              onChange={event => setPrompt(event.target.value)}
-              rows={4}
-              placeholder="make funny 3-minute clips with top and bottom branding"
-              style={{ ...inputStyle(), resize: 'vertical', minHeight: 112, fontSize: 13 }}
-            />
-          </Field>
-
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 10 }}>
-            <Field label="Clip length">
-              <select value={clipLength} onChange={event => setClipLength(event.target.value as typeof clipLength)} style={inputStyle()}>
-                <option value="auto">Auto</option>
-                <option value="15s">15s</option>
-                <option value="30s">30s</option>
-                <option value="60s">60s</option>
-                <option value="3min">3min</option>
-              </select>
-            </Field>
-            <Field label="Number of clips">
-              <select value={clipCount} onChange={event => setClipCount(Number(event.target.value) as 1 | 3 | 6)} style={inputStyle()}>
-                <option value={1}>1</option>
-                <option value={3}>3</option>
-                <option value={6}>6</option>
-              </select>
-            </Field>
-            <Field label="Layout mode">
-              <select value={layoutMode} onChange={event => setLayoutMode(event.target.value as ClipLayoutMode)} style={inputStyle()}>
-                <option value="blurred_background">Blurred background</option>
-                <option value="fill_crop">Fill crop</option>
-                <option value="fit_with_bars">Fit with bars</option>
-              </select>
-            </Field>
-            <Field label="CTA size">
-              <select value={ctaSize} onChange={event => setCtaSize(event.target.value as ClipCTASize)} style={inputStyle()}>
-                <option value="small">Small</option>
-                <option value="medium">Medium</option>
-                <option value="large">Large</option>
-              </select>
-            </Field>
-          </div>
-
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 10 }}>
-            <Field label="Top text">
-              <input value={topText} onChange={event => setTopText(event.target.value)} style={inputStyle()} />
-            </Field>
-            <Field label="Bottom text">
-              <input value={bottomText} onChange={event => setBottomText(event.target.value)} style={inputStyle()} />
-            </Field>
-            <Field label="Watermark / channel name">
-              <input value={watermark} onChange={event => setWatermark(event.target.value)} style={inputStyle()} />
-            </Field>
-          </div>
-
-          <Field label="Caption text optional">
-            <textarea
-              value={captionText}
-              onChange={event => setCaptionText(event.target.value)}
-              rows={2}
-              placeholder="Only this text appears on the video. Leave blank to hide captions."
-              style={{ ...inputStyle(), resize: 'vertical', minHeight: 70, fontSize: 13 }}
-            />
-          </Field>
-
-          <label style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 12, color: 'var(--text-secondary)' }}>
-            <input type="checkbox" checked={rightsConfirmed} onChange={event => setRightsConfirmed(event.target.checked)} />
-            I confirm I have rights or permission to use this source.
-          </label>
-
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-            <button className="generate-btn idle" onClick={handleGenerate} disabled={!canGenerate} title={generateDisabledReason || undefined} type="button">
-              <span className="generate-btn-dot" style={{ background: canGenerate ? '#15121f' : '#6b7280' }} />
-              {busy ? 'Generating clips...' : 'Generate Clips'}
-            </button>
-            <button className="generate-btn idle" onClick={handleDownload} disabled={downloadBusy || !packageReady} type="button">
-              <span className="generate-btn-dot" style={{ background: packageReady ? '#15121f' : '#6b7280' }} />
-              {downloadBusy ? 'Downloading...' : 'Download ZIP'}
-            </button>
-          </div>
-
-          <details style={{ borderTop: '1px solid var(--border)', paddingTop: 12 }}>
-            <summary style={{ cursor: 'pointer', fontSize: 12, fontWeight: 700, color: 'var(--text-secondary)' }}>
-              Advanced / Rights & Attribution
-            </summary>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 10, marginTop: 12 }}>
-              <Field label="Source model">
-                <select value={sourceModel} onChange={event => setSourceModel(event.target.value as ClipSourceModel)} style={inputStyle()}>
-                  {SOURCE_MODELS.map(item => <option key={item.value} value={item.value}>{item.label}</option>)}
-                </select>
-              </Field>
-              <Field label="Source title">
-                <input value={sourceTitle} onChange={event => setSourceTitle(event.target.value)} style={inputStyle()} />
-              </Field>
-              <Field label="Source creator">
-                <input value={sourceCreator} onChange={event => setSourceCreator(event.target.value)} style={inputStyle()} />
-              </Field>
-              <Field label="License">
-                <input value={sourceLicense} onChange={event => setSourceLicense(event.target.value)} style={inputStyle()} />
-              </Field>
-              <Field label="Attribution text">
-                <input value={attributionText} onChange={event => setAttributionText(event.target.value)} style={inputStyle()} />
-              </Field>
-              <Field label="Copyright overlay">
-                <input value={copyrightOverlayText} onChange={event => setCopyrightOverlayText(event.target.value)} style={inputStyle()} />
-              </Field>
-              <Field label="Platform source">
-                <input value={platformSource} onChange={event => setPlatformSource(event.target.value)} style={inputStyle()} />
-              </Field>
-            </div>
-          </details>
-
-          {result && result.notes && (
-            <div style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.6 }}>
-              {result.notes}
-            </div>
-          )}
-        </div>
-      )}
-
-      {activeMode === 'ai' && (
-        <div className="settings-card" style={{ display: 'flex', flexDirection: 'column', gap: 14, maxWidth: 920 }}>
-          <div>
-            <div style={{ fontSize: 14, fontWeight: 800, color: 'var(--text-primary)' }}>AI Scene Generator</div>
-            <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 3 }}>
-              Prompt to video with progress and export-ready downloads.
-            </div>
-          </div>
-
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 10 }}>
-            <Field label="Style preset">
-              <select value={aiStyle} onChange={event => setAiStyle(event.target.value)} style={inputStyle()}>
-                <option value="realistic_editorial">Realistic editorial</option>
-                <option value="cinematic_documentary">Cinematic documentary</option>
-                <option value="ugc_phone_camera">UGC phone camera</option>
-              </select>
-            </Field>
-            <Field label="Target length">
-              <select value={aiLength} onChange={event => setAiLength(Number(event.target.value) as 30 | 60 | 180)} style={inputStyle()}>
-                <option value={30}>30s</option>
-                <option value={60}>60s</option>
-                <option value={180}>3min</option>
-              </select>
-            </Field>
-            <Field label="Branding text">
-              <input value={aiBranding} onChange={event => setAiBranding(event.target.value)} style={inputStyle()} />
-            </Field>
-          </div>
-
-          <Field label="Prompt">
-            <textarea
-              value={aiPrompt}
-              onChange={event => setAiPrompt(event.target.value)}
-              rows={4}
-              style={{ ...inputStyle(), resize: 'vertical', minHeight: 104, fontSize: 13 }}
-            />
-          </Field>
-
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-            <button className="generate-btn idle" onClick={handleGenerateAIScenes} disabled={aiGenerateDisabled} type="button">
-              <span className="generate-btn-dot" style={{ background: aiNeedsConfiguration ? '#991b1b' : '#15121f' }} />
-              {aiButtonLabel}
-            </button>
-            <button className="generate-btn idle" onClick={handleDownloadAIVideo} disabled={aiVideoDownloadBusy || !aiVideoReady} type="button">
-              <span className="generate-btn-dot" style={{ background: aiVideoReady ? '#15121f' : '#6b7280' }} />
-              {aiVideoDownloadBusy ? 'Downloading...' : 'Download Video'}
-            </button>
-            <button className="generate-btn idle" onClick={handleDownloadAIScenes} disabled={aiDownloadBusy || !aiPackageReady} type="button">
-              <span className="generate-btn-dot" style={{ background: aiPackageReady ? '#15121f' : '#6b7280' }} />
-              {aiDownloadBusy ? 'Downloading...' : 'Download ZIP'}
-            </button>
-          </div>
-
-          <div style={{ border: '1px solid var(--border)', borderRadius: 6, background: 'var(--bg-subtle)', padding: 12, display: 'grid', gap: 8 }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'center' }}>
-              <div style={{ fontSize: 13, fontWeight: 800, color: 'var(--text-primary)' }}>{aiStatusText}</div>
-              {aiShowProgress && (
-                <div style={{ fontSize: 12, fontFamily: 'var(--font-mono)', color: 'var(--text-secondary)' }}>{Math.max(0, Math.min(100, aiProgressPercent))}%</div>
-              )}
-            </div>
-            {aiShowProgress && (
-              <div aria-label="AI video generation progress" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.max(0, Math.min(100, aiProgressPercent))} style={{ height: 10, background: '#111827', borderRadius: 6, overflow: 'hidden', border: '1px solid var(--border-strong)' }}>
-                <div style={{ width: `${Math.max(0, Math.min(100, aiProgressPercent))}%`, height: '100%', background: aiNeedsConfiguration ? '#f8c471' : '#0f766e', transition: 'width 200ms ease' }} />
-              </div>
-            )}
-            {aiStatusDetail && (
-              <div style={{ fontSize: 12, color: aiNeedsConfiguration ? '#f8c471' : 'var(--text-muted)', lineHeight: 1.5 }}>
-                {aiStatusDetail}
-              </div>
-            )}
-            {aiGeneration?.status === 'completed' && (
-              <div style={{ fontSize: 12, color: 'var(--green)', fontWeight: 800 }}>
-                Video ready
-              </div>
-            )}
-          </div>
-
-          <details open={developerDetailsOpen} onToggle={event => setDeveloperDetailsOpen(event.currentTarget.open)} style={{ borderTop: '1px solid var(--border)', paddingTop: 12 }}>
-            <summary style={{ cursor: 'pointer', fontSize: 12, fontWeight: 700, color: 'var(--text-secondary)' }}>
-              Developer / Manual Worker Details
-            </summary>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginTop: 12 }}>
-              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                <button className="generate-btn idle" onClick={refreshWorkerStatus} type="button">
-                  <span className="generate-btn-dot" style={{ background: workerStatus?.configured ? '#0f766e' : '#991b1b' }} />
-                  Refresh worker jobs
-                </button>
-                {workerStatus?.dashboard_url && (
-                  <a className="generate-btn idle" href={workerStatus.dashboard_url} target="_blank" rel="noreferrer" style={{ textDecoration: 'none' }}>
-                    <span className="generate-btn-dot" style={{ background: '#0f766e' }} />
-                    Open worker dashboard
-                  </a>
-                )}
-              </div>
-              {(aiResult || aiGeneration) && (
-                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                  <StatusPill>{aiResult?.renderer_version || aiGeneration?.renderer_version}</StatusPill>
-                  <StatusPill>worker: {String(aiResult?.worker_url_configured ?? aiGeneration?.worker_url_configured ?? workerStatus?.configured ?? false)}</StatusPill>
-                  <StatusPill>status: {aiGeneration?.status || aiResult?.generation_status || workerStatus?.status || 'planned'}</StatusPill>
-                  <StatusPill>mode: {workerStatus?.generator_mode || 'unknown'}</StatusPill>
-                  {workerStatus?.generator_mode === 'dev_stub' && <StatusPill>dev stub</StatusPill>}
-                  <StatusPill>model: {aiResult?.model_hint || aiGeneration?.model_hint || workerStatus?.model_hint || 'auto'}</StatusPill>
-                  {workerStatus?.output_dir && <StatusPill>output: {workerStatus.output_dir}</StatusPill>}
-                  {aiGenerationID && <StatusPill>generation: {aiGenerationID}</StatusPill>}
-                  {(aiGeneration?.zip_filename || aiResult?.zip_filename) && <StatusPill>{aiGeneration?.zip_filename || aiResult?.zip_filename}</StatusPill>}
-                </div>
-              )}
-              {currentSceneJobs.length > 0 ? (
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 8 }}>
-                  {currentSceneJobs.map(job => (
-                    <AISceneJobCard key={job.job_id || job.scene_id} job={job} onCopy={copyText} />
-                  ))}
-                </div>
-              ) : (
-                <div style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.5 }}>
-                  No worker scene jobs yet.
-                </div>
-              )}
-            </div>
-          </details>
-        </div>
-      )}
     </section>
   );
 }

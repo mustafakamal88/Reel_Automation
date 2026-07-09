@@ -24,9 +24,19 @@ interface Props {
   initialFilter?: Platform | 'all';
   onFilterChange?: (f: Platform | 'all') => void;
   onStatusChange?: (status: string) => void;
+  onScriptGenerated?: (candidate: TrendCandidate, pkg: ReelContentPackage) => void;
 }
 
-export function SignalsPage({ initialFilter = 'all', onFilterChange, onStatusChange }: Props) {
+const SOURCE_STATUS = [
+  { id: 'gt', name: 'Google Trends RSS', status: 'Connected through backend RSS discovery' },
+  { id: 'yt', name: 'YouTube niche finder', status: 'Not connected' },
+  { id: 'tt', name: 'TikTok trends', status: 'Not connected' },
+  { id: 'ig', name: 'Instagram Reels', status: 'Not connected' },
+  { id: 'x', name: 'X', status: 'Not connected' },
+  { id: 'fb', name: 'Facebook Reels', status: 'Not connected' },
+] as const;
+
+export function TrendFinderPage({ initialFilter = 'all', onFilterChange, onStatusChange, onScriptGenerated }: Props) {
   const [filter, setFilter] = useState<Platform | 'all'>(initialFilter);
   const [response, setResponse] = useState<TrendDiscoveryResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -101,6 +111,7 @@ export function SignalsPage({ initialFilter = 'all', onFilterChange, onStatusCha
     })
       .then(data => {
         setGenerated(prev => ({ ...prev, [candidate.id]: data.package }));
+        onScriptGenerated?.(candidate, data.package);
       })
       .catch(err => {
         if (err instanceof ApiError) {
@@ -116,6 +127,20 @@ export function SignalsPage({ initialFilter = 'all', onFilterChange, onStatusCha
 
   return (
     <section className="page-section">
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 10, marginBottom: 16 }}>
+        {SOURCE_STATUS.map(source => {
+          const connected = source.id === 'gt' && response?.provider_status === 'ok';
+          return (
+            <div key={source.id} className="settings-card" style={{ padding: '12px 14px', borderRadius: 8 }}>
+              <div style={{ fontSize: 12, fontWeight: 800, color: 'var(--text-primary)' }}>{source.name}</div>
+              <div style={{ fontSize: 11, color: connected ? 'var(--green)' : 'var(--text-dim)', marginTop: 5 }}>
+                {connected ? 'Connected' : source.status}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
       <div className="filter-bar" role="group" aria-label="Filter by source">
         {FILTERS.map(f => {
           const active = f.id === filter;
@@ -145,7 +170,7 @@ export function SignalsPage({ initialFilter = 'all', onFilterChange, onStatusCha
         <div className="empty-state">
           <div className="empty-icon">ST</div>
           <div className="empty-title">Loading real trend candidates.</div>
-          <div className="empty-desc">Requesting backend discovery provider status.</div>
+          <div className="empty-desc">Checking Google Trends RSS through the backend.</div>
         </div>
       )}
 
@@ -161,7 +186,7 @@ export function SignalsPage({ initialFilter = 'all', onFilterChange, onStatusCha
         <div className="empty-state">
           <div className="empty-icon">NC</div>
           <div className="empty-title">No trend provider configured.</div>
-          <div className="empty-desc">{response.message || 'Configure a real backend trend provider to collect signals.'}</div>
+          <div className="empty-desc">{response.message || 'Configure a real backend trend provider to collect trends.'}</div>
         </div>
       )}
 
@@ -250,7 +275,7 @@ export function SignalsPage({ initialFilter = 'all', onFilterChange, onStatusCha
                   </button>
                   {generated[candidate.id] && (
                     <span style={{ alignSelf: 'center', fontSize: 12, color: 'var(--green)' }}>
-                      Script package ready
+                      Script ready in Script Studio
                     </span>
                   )}
                 </div>
@@ -334,23 +359,6 @@ function GeneratedPackageView({ pkg }: { pkg: ReelContentPackage }) {
       <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text-dim)', textTransform: 'uppercase' }}>
         {pkg.provider_metadata.provider} · {pkg.provider_metadata.model} · {pkg.provider_metadata.source}
       </div>
-      <button
-        type="button"
-        disabled
-        title="Prepared for Phase 4I/4J pipeline handoff"
-        style={{
-          justifySelf: 'start',
-          border: '1px solid var(--border-card)',
-          background: '#151a21',
-          color: 'var(--text-dim)',
-          borderRadius: 6,
-          padding: '7px 10px',
-          fontFamily: 'inherit',
-          fontSize: 12,
-        }}
-      >
-        Use in Pipeline
-      </button>
     </div>
   );
 }

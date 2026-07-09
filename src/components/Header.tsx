@@ -3,19 +3,14 @@ import type { View } from '../types';
 import { getHealth } from '../lib/api/client';
 
 const VIEW_META: Record<View, { title: string; sub: string }> = {
-  signals:     { title: 'Signals',           sub: 'No live trend data connected yet' },
-  scoring:     { title: 'Topic Scoring',     sub: 'Real scores will appear after trend sources are connected' },
-  topics:      { title: "Today's 6",         sub: 'No real reels generated yet' },
-  workflow:    { title: 'Daily Workflow',    sub: 'No automation run yet' },
-  batch:       { title: 'Batch & Publish',  sub: 'No uploads have been attempted' },
-  clipStudio:  { title: 'Clip Generator',   sub: 'Paste URL or upload video, prompt, generate clips' },
-  realPipeline: { title: 'Real Automation Pipeline', sub: 'Trend discovery → scoring → daily batch → video/export/publish jobs — backed by Postgres' },
-  connections: { title: 'Social Connections', sub: 'Connect platform accounts via OAuth — no passwords, official APIs only' },
-  competitors: { title: 'Competitor Tracker', sub: 'No competitor tracking configured' },
-  approvals:   { title: 'Approvals',        sub: 'No reels awaiting approval' },
-  performance: { title: 'Performance',      sub: 'No real publishing history yet' },
-  pipeline:    { title: 'Pipeline Studio',  sub: 'Run the Phase 4D render + ZIP test to generate the first local export' },
-  settings:    { title: 'Settings',         sub: 'Brand profile, integrations, publishing accounts, and secret management' },
+  dashboard:    { title: 'Dashboard',      sub: 'Trend discovery, scripts, clips, exports, and publishing readiness' },
+  trendFinder:  { title: 'Trend Finder',   sub: 'Real keyword discovery from connected sources' },
+  scriptStudio: { title: 'Script Studio',  sub: 'Generated scripts and platform copy' },
+  clipStudio:   { title: 'Clip Generator', sub: 'Upload a video or provide a direct video URL, then export clips' },
+  exports:      { title: 'Exports',        sub: 'ZIP packages ready for manual publishing' },
+  publish:      { title: 'Publish',        sub: 'Future social publishing with honest connection status' },
+  connections:  { title: 'Connections',    sub: 'Real provider and account connection status' },
+  settings:     { title: 'Settings',       sub: 'Workspace preferences and product configuration' },
 };
 
 interface Props {
@@ -58,7 +53,7 @@ export function Header({ view, region = 'US · Global', subtitleOverride }: Prop
           className="generate-btn-dot"
           style={{ background: backendConnected ? 'var(--green)' : '#15121f' }}
         />
-        {backendConnected ? 'Backend connected' : 'No automation run yet'}
+        {backendConnected ? 'Backend connected' : 'Backend offline'}
       </div>
     </header>
   );

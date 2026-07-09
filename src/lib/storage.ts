@@ -1,4 +1,5 @@
-import type { ApprovalStatus, Settings, WorkflowStatus } from '../types';
+import type { ApprovalStatus, Settings, View, WorkflowStatus } from '../types';
+import type { ReelContentPackage, TrendCandidate } from './api/client';
 
 const STORAGE_VERSION = 'phase-4f-real-empty-state';
 const KEY_STORAGE_VERSION = 'trendcortex_storage_version';
@@ -7,6 +8,13 @@ const KEY_SETTINGS = 'signal_settings';
 const KEY_VIEW = 'signal_view';
 const KEY_GENERATED = 'signal_generated';
 const KEY_WORKFLOW_STATUSES = 'signal_workflow_statuses';
+const KEY_SCRIPT_STUDIO = 'trendcortex_script_studio_package';
+
+export interface StoredScriptPackage {
+  candidate: TrendCandidate;
+  package: ReelContentPackage;
+  savedAt: string;
+}
 
 const LEGACY_STORED_DATA_KEYS = [
   KEY_APPROVALS,
@@ -53,6 +61,30 @@ export const DEFAULT_SETTINGS: Settings = {
 };
 
 export const DEFAULT_APPROVALS: Record<string, ApprovalStatus> = {
+};
+
+const VALID_VIEWS: View[] = [
+  'dashboard',
+  'trendFinder',
+  'scriptStudio',
+  'clipStudio',
+  'exports',
+  'publish',
+  'connections',
+  'settings',
+];
+
+const LEGACY_VIEW_MAP: Record<string, View> = {
+  signals: 'trendFinder',
+  batch: 'exports',
+  topics: 'exports',
+  workflow: 'dashboard',
+  pipeline: 'clipStudio',
+  realPipeline: 'dashboard',
+  scoring: 'trendFinder',
+  competitors: 'dashboard',
+  approvals: 'dashboard',
+  performance: 'dashboard',
 };
 
 function containsLegacyStoredData(value: unknown): boolean {
@@ -130,11 +162,20 @@ export const storage = {
     safeSet(KEY_SETTINGS, v);
   },
 
-  getView(): string {
-    return safeGet(KEY_VIEW, 'signals');
+  getView(): View {
+    const stored = safeGet(KEY_VIEW, 'dashboard');
+    if (VALID_VIEWS.includes(stored as View)) return stored as View;
+    return LEGACY_VIEW_MAP[stored] ?? 'dashboard';
   },
-  setView(v: string): void {
+  setView(v: View): void {
     safeSet(KEY_VIEW, v);
+  },
+
+  getScriptPackage(): StoredScriptPackage | null {
+    return safeGet<StoredScriptPackage | null>(KEY_SCRIPT_STUDIO, null);
+  },
+  setScriptPackage(v: StoredScriptPackage): void {
+    safeSet(KEY_SCRIPT_STUDIO, v);
   },
 
   getWorkflowStatuses(): Record<string, WorkflowStatus> {

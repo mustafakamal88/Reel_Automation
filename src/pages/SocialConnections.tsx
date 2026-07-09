@@ -174,17 +174,14 @@ export function SocialConnectionsPage() {
   return (
     <section className="page-section">
       <div className="int-section-header">
-        <div className="int-section-title">Social Platform Connections</div>
+        <div className="int-section-title">Connections</div>
         <div className="int-section-sub">
-          Connect your publishing accounts via official OAuth. TrendCortex never asks for
-          your social media password — only the platform's own login flow is used.
+          Real account connection status from the backend. Social platforms remain not connected until OAuth setup exists.
         </div>
         <div className="security-inline-warning">
-          <span className="security-warning-icon">⚠</span>
+          <span className="security-warning-icon">!</span>
           <span>
-            All OAuth tokens are stored <strong>encrypted server-side</strong> in the Go backend.
-            The frontend only receives connection status — never raw access or refresh tokens.
-            No platform credentials are stored in the browser or environment variables.
+            The frontend receives connection status only. It never displays access tokens, refresh tokens, or API keys.
           </span>
         </div>
       </div>
@@ -221,25 +218,6 @@ export function SocialConnectionsPage() {
         </div>
       )}
 
-      <div style={{ marginTop: 28 }}>
-        <div className="int-section-title" style={{ marginBottom: 12 }}>OAuth Flow</div>
-        <div className="security-endpoints-card">
-          {([
-            { method: 'GET',  path: '/platforms/connections',       note: 'Connection status for all platforms (no tokens returned)' },
-            { method: 'GET',  path: '/oauth/{platform}/start',      note: 'Returns authorize_url → browser redirects to platform login' },
-            { method: 'GET',  path: '/oauth/{platform}/callback',   note: 'Receives code, exchanges for tokens, stores encrypted server-side' },
-            { method: 'POST', path: '/platforms/{platform}/disconnect', note: 'Revokes token and removes encrypted credentials (501 until implemented)' },
-            { method: 'POST', path: '/platforms/{platform}/refresh',    note: 'Refreshes access token via stored refresh token (501 until implemented)' },
-            { method: 'POST', path: '/platforms/{platform}/test',       note: 'Live credential probe via provider API (501 until implemented)' },
-          ] as const).map(e => (
-            <div key={e.path} className="security-endpoint-row">
-              <span className={`http-method http-method--${e.method.toLowerCase()}`}>{e.method}</span>
-              <code className="int-code security-endpoint-path">{e.path}</code>
-              <span className="security-endpoint-note">{e.note}</span>
-            </div>
-          ))}
-        </div>
-      </div>
     </section>
   );
 }

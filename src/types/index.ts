@@ -5,17 +5,12 @@ export type RiskLevel = 'Low' | 'Med' | 'High';
 export type ApprovalStatus = 'pending' | 'approved' | 'rejected';
 
 export type View =
-  | 'signals'
-  | 'scoring'
-  | 'topics'
-  | 'competitors'
-  | 'approvals'
-  | 'performance'
-  | 'pipeline'
-  | 'workflow'
-  | 'batch'
+  | 'dashboard'
+  | 'trendFinder'
+  | 'scriptStudio'
   | 'clipStudio'
-  | 'realPipeline'
+  | 'exports'
+  | 'publish'
   | 'connections'
   | 'settings';
 
