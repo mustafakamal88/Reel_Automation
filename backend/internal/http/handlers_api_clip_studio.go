@@ -126,11 +126,15 @@ type clipStudioGenerateResponse struct {
 }
 
 type aiSceneWorkerStatusResponse struct {
-	Configured   bool                 `json:"configured"`
-	Status       string               `json:"status"`
-	Message      string               `json:"message"`
-	DashboardURL string               `json:"dashboard_url,omitempty"`
-	Jobs         []renderer.WorkerJob `json:"jobs,omitempty"`
+	Configured            bool                 `json:"configured"`
+	Status                string               `json:"status"`
+	Message               string               `json:"message"`
+	DashboardURL          string               `json:"dashboard_url,omitempty"`
+	GeneratorMode         string               `json:"generator_mode,omitempty"`
+	AutoCommandConfigured bool                 `json:"auto_command_configured,omitempty"`
+	ModelHint             string               `json:"model_hint,omitempty"`
+	OutputDir             string               `json:"output_dir,omitempty"`
+	Jobs                  []renderer.WorkerJob `json:"jobs,omitempty"`
 }
 
 type aiScenePlanRequest struct {
@@ -682,11 +686,15 @@ func (s *Server) handleAISceneWorkerStatus(w http.ResponseWriter, r *http.Reques
 		message += "; jobs unavailable: " + jobsErr.Error()
 	}
 	jsonOK(w, aiSceneWorkerStatusResponse{
-		Configured:   true,
-		Status:       firstNonEmpty(health.Status, "ok"),
-		Message:      message,
-		DashboardURL: strings.TrimRight(s.cfg.LocalAIWorkerURL, "/"),
-		Jobs:         jobs,
+		Configured:            true,
+		Status:                firstNonEmpty(health.Status, "ok"),
+		Message:               message,
+		DashboardURL:          strings.TrimRight(s.cfg.LocalAIWorkerURL, "/"),
+		GeneratorMode:         health.GeneratorMode,
+		AutoCommandConfigured: health.AutoCommandConfigured,
+		ModelHint:             health.ModelHint,
+		OutputDir:             health.OutputDir,
+		Jobs:                  jobs,
 	})
 }
 
@@ -1153,7 +1161,7 @@ func aiSceneProgressForStatus(status string, downloadable bool) (int, string, st
 	case "packaging":
 		return 90, "Packaging download", "Preparing download files."
 	case "generator_not_configured":
-		return 30, "Sending to local AI worker", "Configure generator"
+		return 0, "Generator not configured", "Configure generator"
 	case "failed", "timed_out":
 		return 30, "Generation failed", "Retry after fixing the generator."
 	default:

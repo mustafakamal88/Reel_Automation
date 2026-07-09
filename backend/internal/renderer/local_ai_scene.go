@@ -60,8 +60,12 @@ type WorkerClient struct {
 }
 
 type WorkerHealth struct {
-	Status  string `json:"status"`
-	Message string `json:"message,omitempty"`
+	Status                string `json:"status"`
+	Message               string `json:"message,omitempty"`
+	GeneratorMode         string `json:"generator_mode,omitempty"`
+	AutoCommandConfigured bool   `json:"auto_command_configured,omitempty"`
+	ModelHint             string `json:"model_hint,omitempty"`
+	OutputDir             string `json:"output_dir,omitempty"`
 }
 
 type WorkerJob struct {

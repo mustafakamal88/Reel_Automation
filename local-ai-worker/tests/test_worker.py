@@ -130,11 +130,13 @@ def test_debug_config_does_not_expose_token(tmp_path: Path) -> None:
         "token_configured": True,
         "generator_mode": "manual",
         "auto_command_configured": False,
+        "model_hint": "auto",
+        "output_dir": str(tmp_path),
     }
     assert "secret" not in json.dumps(body)
 
 
-def test_generate_job(tmp_path: Path) -> None:
+def test_manual_mode_returns_generator_not_configured_immediately(tmp_path: Path) -> None:
     app = make_app(tmp_path, token="secret")
 
     status, _, body = request_json(
@@ -154,10 +156,11 @@ def test_generate_job(tmp_path: Path) -> None:
 
     assert status == 200
     assert body["id"].startswith("job_")
-    assert body["status"] == "pending"
+    assert body["status"] == "generator_not_configured"
     assert body["manual_output_path"].endswith(f"{body['id']}/output.mp4")
     assert body["timeout_seconds"] == 120
-    assert "Pinokio/Wan2GP" in body["next_action"]
+    assert body["progress_percent"] == 0
+    assert body["worker_message"] == "Automatic AI video generation is not configured yet."
     assert (tmp_path / body["id"] / "job.json").exists()
 
 
@@ -169,19 +172,18 @@ def test_pending_job_status(tmp_path: Path) -> None:
     status, _, body = request_json(app, "GET", f"/jobs/{job_id}")
 
     assert status == 200
-    assert body["status"] == "pending"
+    assert body["status"] == "generator_not_configured"
     assert body["visual_prompt"] == "Prompt"
     assert body["expected_output_path"].endswith(f"{job_id}/output.mp4")
     assert body["manual_output_path"].endswith(f"{job_id}/output.mp4")
-    assert body["worker_message"] == "Place generated MP4 at outputs/<job-id>/output.mp4"
+    assert body["worker_message"] == "Automatic AI video generation is not configured yet."
 
 
-def test_completed_job_status_when_output_file_exists(tmp_path: Path) -> None:
-    app = make_app(tmp_path)
+def test_completed_job_status_after_auto_command_output(tmp_path: Path) -> None:
+    command = "ffmpeg -y -f lavfi -i color=c=black:s=360x640:d=0.2 -pix_fmt yuv420p {output_path}"
+    app = make_app(tmp_path, generator_mode="auto_command", generator_command=command)
     _, _, generated = request_json(app, "POST", "/generate-scene", body={"visual_prompt": "Prompt"})
     job_id = generated["id"]
-    output_path = tmp_path / job_id / "output.mp4"
-    output_path.write_bytes(b"\x00\x00\x00\x18ftypmp42mp4 bytes")
 
     status, _, body = request_json(app, "GET", f"/jobs/{job_id}")
 
@@ -196,22 +198,19 @@ def test_dashboard_mentions_manual_output_path(tmp_path: Path) -> None:
 
     assert status == 200
     text = body.decode("utf-8")
-    assert "Manual worker mode" in text
-    assert "outputs/&lt;job-id&gt;/output.mp4" in text
+    assert "Automatic AI video generation is not configured yet." in text
 
 
 def test_output_download(tmp_path: Path) -> None:
-    app = make_app(tmp_path)
+    app = make_app(tmp_path, generator_mode="dev_stub")
     _, _, generated = request_json(app, "POST", "/generate-scene", body={"visual_prompt": "Prompt"})
     job_id = generated["id"]
-    output_path = tmp_path / job_id / "output.mp4"
-    output_path.write_bytes(b"\x00\x00\x00\x18ftypmp42mp4 bytes")
 
     status, headers, body = request(app, "GET", f"/jobs/{job_id}/output")
 
     assert status == 200
     assert headers["content-type"].startswith("video/mp4")
-    assert body == b"\x00\x00\x00\x18ftypmp42mp4 bytes"
+    assert len(body) > 0
 
 
 def test_auto_command_not_configured_returns_immediately(tmp_path: Path) -> None:
@@ -223,12 +222,12 @@ def test_auto_command_not_configured_returns_immediately(tmp_path: Path) -> None
 
     assert status == 200
     assert body["status"] == "generator_not_configured"
-    assert body["progress_percent"] == 30
-    assert body["worker_message"] == "AI video generator is connected but automatic model generation is not configured yet."
+    assert body["progress_percent"] == 0
+    assert body["worker_message"] == "Automatic AI video generation is not configured yet."
 
 
 def test_auto_command_success_creates_downloadable_video(tmp_path: Path) -> None:
-    command = "python3 -c 'from pathlib import Path; Path(\"{output_path}\").write_bytes(b\"\\x00\\x00\\x00\\x18ftypmp42ok\")'"
+    command = "ffmpeg -y -f lavfi -i color=c=black:s=360x640:d=0.2 -pix_fmt yuv420p {output_path}"
     app = make_app(tmp_path, generator_mode="auto_command", generator_command=command)
 
     _, _, generated = request_json(app, "POST", "/generate-scene", body={"visual_prompt": "Prompt"})
@@ -240,3 +239,37 @@ def test_auto_command_success_creates_downloadable_video(tmp_path: Path) -> None
     assert body["progress_percent"] == 100
     assert body["downloadable"] is True
     assert (tmp_path / job_id / "output.mp4").exists()
+
+
+def test_auto_command_writes_prompt_file(tmp_path: Path) -> None:
+    command = "ffmpeg -y -f lavfi -i color=c=black:s=360x640:d=0.2 -pix_fmt yuv420p {output_path}"
+    app = make_app(tmp_path, generator_mode="auto_command", generator_command=command)
+
+    _, _, generated = request_json(app, "POST", "/generate-scene", body={"visual_prompt": "Prompt text"})
+
+    assert (tmp_path / generated["id"] / "prompt.txt").read_text(encoding="utf-8") == "Prompt text"
+
+
+def test_auto_command_failure_surfaces_real_error(tmp_path: Path) -> None:
+    app = make_app(tmp_path, generator_mode="auto_command", generator_command="python3 -c 'import sys; print(\"real generator error\", file=sys.stderr); sys.exit(7)'")
+
+    _, _, generated = request_json(app, "POST", "/generate-scene", body={"visual_prompt": "Prompt"})
+    status, _, body = request_json(app, "GET", f"/jobs/{generated['id']}")
+
+    assert status == 200
+    assert body["status"] == "failed"
+    assert "real generator error" in body["error"]
+
+
+def test_dev_stub_success_works_only_when_enabled(tmp_path: Path) -> None:
+    manual_app = make_app(tmp_path / "manual", generator_mode="manual")
+    _, _, manual = request_json(manual_app, "POST", "/generate-scene", body={"visual_prompt": "Prompt"})
+    assert manual["status"] == "generator_not_configured"
+
+    stub_app = make_app(tmp_path / "stub", generator_mode="dev_stub")
+    _, _, generated = request_json(stub_app, "POST", "/generate-scene", body={"visual_prompt": "Prompt"})
+    status, _, body = request_json(stub_app, "GET", f"/jobs/{generated['id']}")
+
+    assert status == 200
+    assert body["status"] == "completed"
+    assert body["worker_message"] == "Dev stub output is ready."

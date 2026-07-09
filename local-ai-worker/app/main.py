@@ -102,6 +102,8 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             "token_configured": auth_required,
             "generator_mode": cfg.generator_mode,
             "auto_command_configured": bool(cfg.generator_command),
+            "model_hint": cfg.model_hint,
+            "output_dir": str(cfg.output_dir),
         }
 
     @asynccontextmanager
@@ -160,12 +162,6 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         if not path.exists() or path.stat().st_size <= 0:
             return False
         try:
-            header = path.read_bytes()[:64]
-        except OSError:
-            return False
-        if b"ftyp" in header:
-            return True
-        try:
             completed = subprocess.run(
                 ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=nw=1:nk=1", str(path)],
                 stdout=subprocess.DEVNULL,
@@ -174,8 +170,14 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
                 check=False,
             )
             return completed.returncode == 0
-        except (OSError, subprocess.SubprocessError):
+        except subprocess.SubprocessError:
             return False
+        except OSError:
+            # Test/dev machines may not have ffprobe installed. Production installs should.
+            try:
+                return b"ftyp" in path.read_bytes()[:64]
+            except OSError:
+                return False
 
     def refresh_job(job: dict[str, Any]) -> dict[str, Any]:
         out = output_file(job["id"])
@@ -198,13 +200,13 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         mode = job.get("generator_mode", cfg.generator_mode)
         next_action = job.get(
             "next_action",
-            "Manual worker mode: generate this scene in Pinokio/Wan2GP, then save it as output.mp4 in the shown job folder.",
+            "Configure WORKER_GENERATOR_COMMAND to enable automatic prompt-to-video generation.",
         )
         worker_message = job.get("worker_message", "")
         if status == "generator_not_configured" and not worker_message:
-            worker_message = "AI video generator is connected but automatic model generation is not configured yet."
+            worker_message = "Automatic AI video generation is not configured yet."
         elif status == "pending" and mode == "manual" and not worker_message:
-            worker_message = "Place generated MP4 at outputs/<job-id>/output.mp4"
+            worker_message = "Automatic AI video generation is not configured yet."
         return JobSummary(
             id=job["id"],
             status=status,
@@ -241,15 +243,24 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         job = read_job(job_id)
         mode = job.get("generator_mode", cfg.generator_mode)
         if mode == "manual":
-            logger.info("job pending id=%s expected_output=%s", job_id, output_file(job_id))
+            job["status"] = "generator_not_configured"
+            job["progress_percent"] = 0
+            job["current_step"] = "Generator not configured"
+            job["worker_message"] = "Automatic AI video generation is not configured yet."
+            job["estimated_next_action"] = "Set WORKER_GENERATOR_MODE=auto_command and WORKER_GENERATOR_COMMAND."
+            job["next_action"] = "Configure WORKER_GENERATOR_COMMAND to enable automatic prompt-to-video generation."
+            job["updated_at"] = now_iso()
+            write_job(job)
+            logger.info("manual generator mode rejected automatic job id=%s", job_id)
             return
         if mode == "auto_command":
             if not cfg.generator_command:
                 job["status"] = "generator_not_configured"
-                job["progress_percent"] = 30
+                job["progress_percent"] = 0
                 job["current_step"] = "Generator not configured"
-                job["worker_message"] = "AI video generator is connected but automatic model generation is not configured yet."
+                job["worker_message"] = "Automatic AI video generation is not configured yet."
                 job["estimated_next_action"] = "Configure WORKER_GENERATOR_COMMAND."
+                job["next_action"] = "Configure WORKER_GENERATOR_COMMAND to enable automatic prompt-to-video generation."
                 job["updated_at"] = now_iso()
                 write_job(job)
                 return
@@ -282,6 +293,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
                     timeout=max(30, int(job.get("timeout_seconds", 120))),
                     check=False,
                 )
+                logger.info("generator command completed id=%s returncode=%s", job_id, completed.returncode)
                 job = read_job(job_id)
                 if completed.returncode != 0:
                     job["status"] = "failed"
@@ -323,7 +335,26 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             return
         time.sleep(0.05)
         out = output_file(job_id)
-        out.write_bytes(b"\x00\x00\x00\x18ftypmp42trendcortex worker dev stub output\n")
+        try:
+            subprocess.run(
+                [
+                    "ffmpeg",
+                    "-y",
+                    "-f",
+                    "lavfi",
+                    "-i",
+                    "color=c=black:s=360x640:d=0.2",
+                    "-pix_fmt",
+                    "yuv420p",
+                    str(out),
+                ],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=10,
+                check=True,
+            )
+        except (OSError, subprocess.SubprocessError):
+            out.write_bytes(b"\x00\x00\x00\x18ftypmp42trendcortex worker dev stub output\n")
         job = read_job(job_id)
         job["status"] = "completed"
         job["progress_percent"] = 100
@@ -348,6 +379,11 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
                 "</tr>"
             )
         body = "\n".join(rows) or "<tr><td colspan='5'>No jobs yet.</td></tr>"
+        mode_note = "Automatic AI video generation is not configured yet."
+        if cfg.generator_mode == "auto_command" and cfg.generator_command:
+            mode_note = "Automatic command mode is configured. Jobs run WORKER_GENERATOR_COMMAND and complete only after output.mp4 validates."
+        elif cfg.generator_mode == "dev_stub":
+            mode_note = "Dev stub mode is enabled for tests only."
         return f"""<!doctype html>
 <html>
 <head>
@@ -366,7 +402,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
   <h1>TrendCortex Local AI Worker</h1>
   <p>Output directory: <code>{html.escape(str(cfg.output_dir))}</code></p>
   <p><strong>Generator mode:</strong> <code>{html.escape(cfg.generator_mode)}</code></p>
-  <p><strong>Manual worker mode:</strong> generate each scene in Pinokio/Wan2GP, then place generated MP4 at <code>outputs/&lt;job-id&gt;/output.mp4</code>.</p>
+  <p><strong>Mode status:</strong> {html.escape(mode_note)}</p>
   <table>
     <thead><tr><th>Job</th><th>Status</th><th>Visual prompt</th><th>Expected output file</th><th>Worker message</th></tr></thead>
     <tbody>{body}</tbody>
@@ -398,7 +434,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         created = now_iso()
         job = {
             "id": job_id,
-            "status": "pending",
+            "status": "generator_not_configured" if cfg.generator_mode == "manual" or (cfg.generator_mode == "auto_command" and not cfg.generator_command) else "pending",
             "generator_mode": cfg.generator_mode,
             "created_at": created,
             "updated_at": created,
@@ -406,10 +442,10 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             "expected_output_path": str(output_file(job_id)),
             "manual_output_path": str(output_file(job_id)),
             "timeout_seconds": 120,
-            "progress_percent": 30 if cfg.generator_mode == "auto_command" else 0,
-            "current_step": "Sending to local AI worker" if cfg.generator_mode == "auto_command" else "Waiting for manual output",
-            "next_action": "Manual worker mode: generate this scene in Pinokio/Wan2GP, then save it as output.mp4 in the shown job folder.",
-            "worker_message": "Place generated MP4 at outputs/<job-id>/output.mp4" if cfg.generator_mode == "manual" else "",
+            "progress_percent": 30 if cfg.generator_mode == "auto_command" and cfg.generator_command else 0,
+            "current_step": "Sending to local AI worker" if cfg.generator_mode == "auto_command" and cfg.generator_command else "Generator not configured",
+            "next_action": "Configure WORKER_GENERATOR_COMMAND to enable automatic prompt-to-video generation.",
+            "worker_message": "Automatic AI video generation is not configured yet." if cfg.generator_mode == "manual" or (cfg.generator_mode == "auto_command" and not cfg.generator_command) else ("Dev stub mode enabled for testing only." if cfg.generator_mode == "dev_stub" else ""),
             "estimated_next_action": "Generate output.mp4 with configured local model.",
         }
         write_job(job)
@@ -422,7 +458,8 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             output_file(job_id),
             scene.visual_prompt,
         )
-        background_tasks.add_task(background_process, job_id)
+        if job["status"] != "generator_not_configured":
+            background_tasks.add_task(background_process, job_id)
         return summarize(job).model_dump()
 
     @app.get("/jobs", dependencies=[auth_dep])

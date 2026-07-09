@@ -476,9 +476,9 @@ func TestAISceneGeneratorNotConfiguredReturnsImmediatePollStatus(t *testing.T) {
 		case r.URL.Path == "/health":
 			_, _ = w.Write([]byte(`{"status":"ok","message":"worker connected","auto_command_configured":false}`))
 		case r.URL.Path == "/generate-scene":
-			_, _ = w.Write([]byte(`{"id":"job-1","status":"generator_not_configured","worker_message":"AI video generator is connected but automatic model generation is not configured yet."}`))
+			_, _ = w.Write([]byte(`{"id":"job-1","status":"generator_not_configured","worker_message":"Automatic AI video generation is not configured yet."}`))
 		case r.URL.Path == "/jobs/job-1":
-			_, _ = w.Write([]byte(`{"id":"job-1","status":"generator_not_configured","worker_message":"AI video generator is connected but automatic model generation is not configured yet."}`))
+			_, _ = w.Write([]byte(`{"id":"job-1","status":"generator_not_configured","worker_message":"Automatic AI video generation is not configured yet."}`))
 		default:
 			stdhttp.NotFound(w, r)
 		}
@@ -496,7 +496,7 @@ func TestAISceneGeneratorNotConfiguredReturnsImmediatePollStatus(t *testing.T) {
 		t.Fatalf("decode response: %v", err)
 	}
 	status := waitForAISceneStatus(t, s, got.GenerationID, "generator_not_configured")
-	if status.ProgressPercent != 30 || status.EstimatedNextAction != "Configure generator" {
+	if status.ProgressPercent != 0 || status.CurrentStep != "Generator not configured" || status.EstimatedNextAction != "Configure generator" {
 		t.Fatalf("unexpected generator_not_configured status: %+v", status)
 	}
 }

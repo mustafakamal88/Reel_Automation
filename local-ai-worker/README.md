@@ -5,7 +5,7 @@ This is the local/GPU worker that TrendCortex can call for `local_ai_scene_v1` s
 The worker supports three generator modes:
 
 - `auto_command`: production/local automation mode. TrendCortex submits scene prompts and the worker runs your configured generator command to create `output.mp4`.
-- `manual`: developer-only fallback. TrendCortex creates pending job folders and you place an externally generated MP4 into the expected output path.
+- `manual`: not configured. The worker returns `generator_not_configured` immediately; TrendCortex does not wait for `output.mp4`.
 - `dev_stub`: test-only mode. It writes a tiny stub output and must not be used for production videos.
 
 Production should use `auto_command`. The worker never fakes production AI generation; a job is completed only when `output.mp4` exists and passes the worker's MP4 validation.
@@ -58,9 +58,22 @@ Dashboard:
 
 Open `http://127.0.0.1:8787/` to see pending/completed jobs, prompts, and expected output paths.
 
+## Dev Stub Test
+
+`dev_stub` is test-only. It lets you verify the end-to-end UI without a real video model.
+
+```bash
+cd local-ai-worker
+WORKER_GENERATOR_MODE=dev_stub \
+WORKER_TOKEN=trend-worker-123 \
+python3 -m uvicorn app.main:app --host 127.0.0.1 --port 8787
+```
+
+The frontend shows a `dev stub` badge when this mode is active. Do not use this as production generation.
+
 ## Auto Command Mode
 
-Set `WORKER_GENERATOR_MODE=auto_command` and provide `WORKER_GENERATOR_COMMAND`. The command is run once per scene job and must create a valid MP4 at `{output_path}`.
+Set `WORKER_GENERATOR_MODE=auto_command` and provide `WORKER_GENERATOR_COMMAND`. The command is run once per scene job and must create a valid MP4 at `{output_path}`. The worker writes the submitted prompt to `{prompt_file}` before running the command.
 
 Supported placeholders:
 
@@ -77,11 +90,29 @@ Example shape:
 
 ```bash
 WORKER_GENERATOR_MODE=auto_command \
-WORKER_GENERATOR_COMMAND='your-generator --prompt-file {prompt_file} --duration {duration_seconds} --aspect {aspect_ratio} --style {style_preset} --out {output_path}' \
+WORKER_GENERATOR_COMMAND='bash scripts/generate_with_command.sh "{prompt_file}" "{output_path}"' \
 python3 -m uvicorn app.main:app --host 127.0.0.1 --port 8787
 ```
 
+`scripts/generate_with_command.sh` is an adapter. It expects `LOCAL_VIDEO_GENERATOR_COMMAND` to be set and passes the prompt file and output path as `$1` and `$2` to that external command:
+
+```bash
+LOCAL_VIDEO_GENERATOR_COMMAND='your-generator --prompt-file "$1" --duration 8 --aspect 9:16 --out "$2"'
+```
+
 If `auto_command` is selected without `WORKER_GENERATOR_COMMAND`, jobs return `generator_not_configured` immediately so the product UI can explain that automatic generation is not configured.
+
+## Pinokio/Wan2GP Later
+
+Pinokio/Wan2GP can be connected once you have a repeatable command-line or HTTP-triggered generation entry point. Wrap that command with `scripts/generate_with_command.sh`, make it read the prompt from `$1`, and make it write the final MP4 to `$2`.
+
+For example, the final worker environment should keep this shape:
+
+```bash
+WORKER_GENERATOR_MODE=auto_command
+WORKER_GENERATOR_COMMAND='bash scripts/generate_with_command.sh "{prompt_file}" "{output_path}"'
+LOCAL_VIDEO_GENERATOR_COMMAND='wan2gp-or-pinokio-command --prompt-file "$1" --output "$2"'
+```
 
 ## Connect TrendCortex
 
@@ -136,22 +167,16 @@ Expected response includes:
 
 Use `127.0.0.1` in local curl commands so you know the request is going to the IPv4 listener started by these examples.
 
-## Manual Pinokio/Wan2GP Flow
+## Manual Mode
 
-Manual mode is intended for developer validation only.
+Manual mode means automatic generation is not configured. It does not create a pending job for file copying and it does not wait 120 seconds. API calls return:
 
-1. Start this worker locally with `WORKER_GENERATOR_MODE=manual`.
-2. Generate AI scenes from TrendCortex.
-3. Open the worker dashboard and copy each job's `visual_prompt`.
-4. Paste the prompt into Pinokio/Wan2GP or another local video generator.
-5. Generate a clip with the requested duration and aspect ratio.
-6. Save or copy the MP4 to the dashboard's expected output path:
-
-```text
-local-ai-worker/outputs/<job-id>/output.mp4
+```json
+{
+  "status": "generator_not_configured",
+  "worker_message": "Automatic AI video generation is not configured yet."
+}
 ```
-
-The next `GET /jobs/<job-id>` call marks the job `completed`, and `GET /jobs/<job-id>/output` downloads the MP4.
 
 ## Expose Safely To Railway
 
@@ -204,7 +229,7 @@ Request:
 }
 ```
 
-Response:
+Response in runnable modes (`auto_command` with command configured, or `dev_stub`):
 
 ```json
 {
@@ -213,9 +238,19 @@ Response:
 }
 ```
 
+Response when generation is not configured:
+
+```json
+{
+  "id": "job_...",
+  "status": "generator_not_configured",
+  "worker_message": "Automatic AI video generation is not configured yet."
+}
+```
+
 `GET /jobs/{id}`
 
-Returns status, prompt, timestamps, and expected output path.
+Returns status, prompt, timestamps, expected output path, and command errors when generation fails.
 
 `GET /jobs/{id}/output`
 

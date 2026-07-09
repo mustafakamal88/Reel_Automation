@@ -3,6 +3,8 @@ import {
   aiSceneDownloadsReady,
   aiScenePrimaryButtonLabel,
   aiSceneProgressLabel,
+  aiSceneWorkerCanRun,
+  aiSceneWorkerConfigurationMessage,
   clipGenerateDisabledReason,
   clipPackageReady,
   getClipSourceStatus,
@@ -110,6 +112,36 @@ assert(
 
 assert(aiSceneProgressLabel(null, false) === 'Preparing scene plan', 'AI generator should start with friendly prep status');
 assert(aiScenePrimaryButtonLabel(null, false) === 'Generate Video', 'AI generator primary action should be Generate Video');
+assert(
+  !aiSceneWorkerCanRun({
+    configured: true,
+    status: 'ok',
+    message: 'worker connected',
+    generator_mode: 'manual',
+    auto_command_configured: false,
+  }),
+  'Manual worker mode should not be treated as runnable automatic generation',
+);
+assert(
+  aiSceneWorkerConfigurationMessage({
+    configured: true,
+    status: 'ok',
+    message: 'worker connected',
+    generator_mode: 'manual',
+    auto_command_configured: false,
+  }) === 'Worker connected, but automatic generator command is not configured.',
+  'Frontend should show not configured instead of waiting for timeout',
+);
+assert(
+  aiSceneWorkerCanRun({
+    configured: true,
+    status: 'ok',
+    message: 'worker connected',
+    generator_mode: 'dev_stub',
+    auto_command_configured: false,
+  }),
+  'Dev stub should be runnable only when explicitly reported by the worker',
+);
 assert(
   aiScenePrimaryButtonLabel({
     generation_id: 'gen-test',

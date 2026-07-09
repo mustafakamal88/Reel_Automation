@@ -762,6 +762,10 @@ export interface AISceneWorkerStatusResponse {
   status: string;
   message: string;
   dashboard_url?: string;
+  generator_mode?: 'manual' | 'auto_command' | 'dev_stub' | string;
+  auto_command_configured?: boolean;
+  model_hint?: string;
+  output_dir?: string;
   jobs?: AISceneWorkerJob[];
 }
 

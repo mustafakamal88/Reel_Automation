@@ -1,6 +1,7 @@
 import type { ClipStudioSourceResponse } from '../lib/api/client';
 import type { ClipStudioGenerateResponse } from '../lib/api/client';
 import type { AISceneGenerationStatusResponse } from '../lib/api/client';
+import type { AISceneWorkerStatusResponse } from '../lib/api/client';
 
 export type ClipSourceStatusState =
   | 'none'
@@ -150,6 +151,23 @@ export function aiSceneProgressLabel(status: AISceneGenerationStatusResponse | n
 export function aiScenePrimaryButtonLabel(status: AISceneGenerationStatusResponse | null, busy: boolean): string {
   if (status?.status === 'generator_not_configured') return 'Configure generator';
   return busy ? 'Generating video...' : 'Generate Video';
+}
+
+export function aiSceneWorkerCanRun(status: AISceneWorkerStatusResponse | null): boolean {
+  if (!status?.configured || status.status === 'error') return false;
+  if (status.generator_mode === 'dev_stub') return true;
+  return status.generator_mode === 'auto_command' && status.auto_command_configured === true;
+}
+
+export function aiSceneWorkerConfigurationMessage(status: AISceneWorkerStatusResponse | null): string {
+  if (!status) return '';
+  if (!status.configured) return 'Local AI worker not connected.';
+  if (status.status === 'error') return status.message || 'Local AI worker status unavailable.';
+  if (status.generator_mode === 'manual' || (status.generator_mode === 'auto_command' && !status.auto_command_configured)) {
+    return 'Worker connected, but automatic generator command is not configured.';
+  }
+  if (status.generator_mode === 'dev_stub') return 'Worker connected in dev stub mode.';
+  return '';
 }
 
 export function aiSceneDownloadsReady(status: AISceneGenerationStatusResponse | null): { video: boolean; zip: boolean } {

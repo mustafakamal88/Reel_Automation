@@ -21,6 +21,8 @@ import {
   type ClipStudioSourceResponse,
 } from '../lib/api/client';
 import {
+  aiSceneWorkerCanRun,
+  aiSceneWorkerConfigurationMessage,
   clipGenerateDisabledReason,
   clipPackageReady,
   getClipSourceStatus,
@@ -203,15 +205,18 @@ export function ClipStudioPage() {
       error: job.error,
     }));
   }, [aiResult?.scene_jobs, workerStatus?.jobs]);
+  const aiWorkerCanRun = aiSceneWorkerCanRun(workerStatus);
+  const aiWorkerConfigurationMessage = aiSceneWorkerConfigurationMessage(workerStatus);
   const aiProgressPercent = aiGeneration?.progress_percent ?? (aiBusy ? 15 : aiResult?.success ? 100 : 0);
   const aiStatusText = aiGeneration?.current_step
-    || (aiBusy ? 'Creating scenes' : aiResult?.success ? 'Video ready' : 'Preparing scene plan');
-  const aiStatusDetail = aiGeneration?.status === 'generator_not_configured'
-    ? 'AI video generator is connected but automatic model generation is not configured yet.'
-    : aiGeneration?.notes || aiGeneration?.estimated_next_action || aiResult?.notes || '';
-  const aiNeedsConfiguration = aiGeneration?.status === 'generator_not_configured';
+    || (aiWorkerConfigurationMessage || (aiBusy ? 'Creating scenes' : aiResult?.success ? 'Video ready' : 'Preparing scene plan'));
+  const aiStatusDetail = aiWorkerConfigurationMessage || (aiGeneration?.status === 'generator_not_configured'
+    ? 'Automatic AI video generation is not configured yet.'
+    : aiGeneration?.notes || aiGeneration?.estimated_next_action || aiResult?.notes || '');
+  const aiNeedsConfiguration = !aiWorkerCanRun || aiGeneration?.status === 'generator_not_configured';
   const aiButtonLabel = aiNeedsConfiguration ? 'Configure generator' : aiBusy ? 'Generating video...' : 'Generate Video';
-  const aiGenerateDisabled = aiBusy || !aiPrompt.trim();
+  const aiGenerateDisabled = aiBusy || !aiPrompt.trim() || !aiWorkerCanRun;
+  const aiShowProgress = aiWorkerCanRun || aiBusy || Boolean(aiGeneration && aiGeneration.status !== 'generator_not_configured');
 
   useEffect(() => {
     if (activeMode === 'ai') void refreshWorkerStatus();
@@ -272,6 +277,8 @@ export function ClipStudioPage() {
   async function handleGenerateAIScenes() {
     if (aiNeedsConfiguration) {
       setDeveloperDetailsOpen(true);
+      setErrorScope('ai');
+      setError('Automatic AI video generation is not configured yet.');
       return;
     }
     setAiBusy(true);
@@ -746,11 +753,15 @@ export function ClipStudioPage() {
           <div style={{ border: '1px solid var(--border)', borderRadius: 6, background: 'var(--bg-subtle)', padding: 12, display: 'grid', gap: 8 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'center' }}>
               <div style={{ fontSize: 13, fontWeight: 800, color: 'var(--text-primary)' }}>{aiStatusText}</div>
-              <div style={{ fontSize: 12, fontFamily: 'var(--font-mono)', color: 'var(--text-secondary)' }}>{Math.max(0, Math.min(100, aiProgressPercent))}%</div>
+              {aiShowProgress && (
+                <div style={{ fontSize: 12, fontFamily: 'var(--font-mono)', color: 'var(--text-secondary)' }}>{Math.max(0, Math.min(100, aiProgressPercent))}%</div>
+              )}
             </div>
-            <div aria-label="AI video generation progress" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.max(0, Math.min(100, aiProgressPercent))} style={{ height: 10, background: '#111827', borderRadius: 6, overflow: 'hidden', border: '1px solid var(--border-strong)' }}>
-              <div style={{ width: `${Math.max(0, Math.min(100, aiProgressPercent))}%`, height: '100%', background: aiNeedsConfiguration ? '#f8c471' : '#0f766e', transition: 'width 200ms ease' }} />
-            </div>
+            {aiShowProgress && (
+              <div aria-label="AI video generation progress" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.max(0, Math.min(100, aiProgressPercent))} style={{ height: 10, background: '#111827', borderRadius: 6, overflow: 'hidden', border: '1px solid var(--border-strong)' }}>
+                <div style={{ width: `${Math.max(0, Math.min(100, aiProgressPercent))}%`, height: '100%', background: aiNeedsConfiguration ? '#f8c471' : '#0f766e', transition: 'width 200ms ease' }} />
+              </div>
+            )}
             {aiStatusDetail && (
               <div style={{ fontSize: 12, color: aiNeedsConfiguration ? '#f8c471' : 'var(--text-muted)', lineHeight: 1.5 }}>
                 {aiStatusDetail}
@@ -785,7 +796,10 @@ export function ClipStudioPage() {
                   <StatusPill>{aiResult?.renderer_version || aiGeneration?.renderer_version}</StatusPill>
                   <StatusPill>worker: {String(aiResult?.worker_url_configured ?? aiGeneration?.worker_url_configured ?? workerStatus?.configured ?? false)}</StatusPill>
                   <StatusPill>status: {aiGeneration?.status || aiResult?.generation_status || workerStatus?.status || 'planned'}</StatusPill>
-                  <StatusPill>model: {aiResult?.model_hint || aiGeneration?.model_hint || 'auto'}</StatusPill>
+                  <StatusPill>mode: {workerStatus?.generator_mode || 'unknown'}</StatusPill>
+                  {workerStatus?.generator_mode === 'dev_stub' && <StatusPill>dev stub</StatusPill>}
+                  <StatusPill>model: {aiResult?.model_hint || aiGeneration?.model_hint || workerStatus?.model_hint || 'auto'}</StatusPill>
+                  {workerStatus?.output_dir && <StatusPill>output: {workerStatus.output_dir}</StatusPill>}
                   {aiGenerationID && <StatusPill>generation: {aiGenerationID}</StatusPill>}
                   {(aiGeneration?.zip_filename || aiResult?.zip_filename) && <StatusPill>{aiGeneration?.zip_filename || aiResult?.zip_filename}</StatusPill>}
                 </div>
