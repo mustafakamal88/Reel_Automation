@@ -6,9 +6,10 @@ import logging
 import os
 import time
 import uuid
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, AsyncIterator, Optional
 
 from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, Response
 from fastapi.responses import FileResponse, HTMLResponse
@@ -67,7 +68,27 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     cfg = settings or Settings()
     cfg.output_dir.mkdir(parents=True, exist_ok=True)
 
-    app = FastAPI(title="TrendCortex Local AI Video Worker", version="0.1.0")
+    def config_status() -> dict[str, Any]:
+        auth_required = bool(cfg.token)
+        return {
+            "auth_required": auth_required,
+            "token_configured": auth_required,
+        }
+
+    @asynccontextmanager
+    async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+        status = config_status()
+        logger.info(
+            "worker config auth_required=%s token_configured=%s host=%s port=%s output_dir=%s",
+            status["auth_required"],
+            status["token_configured"],
+            cfg.host,
+            cfg.port,
+            cfg.output_dir,
+        )
+        yield
+
+    app = FastAPI(title="TrendCortex Local AI Video Worker", version="0.1.0", lifespan=lifespan)
     app.state.settings = cfg
 
     def require_auth(authorization: Optional[str] = Header(default=None)) -> None:
@@ -193,11 +214,16 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     @app.post("/health", dependencies=[auth_dep])
     def health() -> dict[str, Any]:
         return {
+            "ok": True,
             "status": "ok",
             "message": "TrendCortex local AI worker ready",
             "output_dir": str(cfg.output_dir),
             "dev_stub": cfg.dev_stub,
         }
+
+    @app.get("/debug/config")
+    def debug_config() -> dict[str, Any]:
+        return config_status()
 
     @app.post("/generate-scene", dependencies=[auth_dep])
     def generate_scene(scene: SceneRequest, background_tasks: BackgroundTasks) -> dict[str, str]:

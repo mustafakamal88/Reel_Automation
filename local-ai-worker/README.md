@@ -11,7 +11,7 @@ cd local-ai-worker
 python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install -r requirements.txt
-WORKER_TOKEN=change-me python -m uvicorn app.main:app --host 127.0.0.1 --port 8787
+WORKER_TOKEN=trend-worker-123 python3 -m uvicorn app.main:app --host 127.0.0.1 --port 8787
 ```
 
 Configuration:
@@ -28,13 +28,21 @@ Alternative runner:
 
 ```bash
 cd local-ai-worker
-WORKER_HOST=127.0.0.1 WORKER_PORT=8787 WORKER_TOKEN=change-me python run_worker.py
+./run_worker.sh
 ```
+
+`run_worker.sh` defaults `WORKER_TOKEN` to `trend-worker-123` when it is not already set.
 
 Health check:
 
 ```bash
-curl -H "Authorization: Bearer change-me" http://127.0.0.1:8787/health
+curl -H "Authorization: Bearer trend-worker-123" http://127.0.0.1:8787/health
+```
+
+Safe config check. This never prints the token value:
+
+```bash
+curl http://127.0.0.1:8787/debug/config
 ```
 
 Dashboard:
@@ -51,6 +59,48 @@ LOCAL_AI_WORKER_TOKEN=change-me
 ```
 
 Use the same secret value for `WORKER_TOKEN` on the worker and `LOCAL_AI_WORKER_TOKEN` on TrendCortex.
+
+## Troubleshooting Local Runs
+
+If `/health` returns `401` after changing `WORKER_TOKEN`, check for a stale process. The worker reads `WORKER_TOKEN` when the uvicorn process starts.
+
+Find and stop anything already listening on port `8787`:
+
+```bash
+lsof -nP -iTCP:8787 -sTCP:LISTEN
+kill <PID>
+```
+
+Run with token auth:
+
+```bash
+cd local-ai-worker
+WORKER_TOKEN=trend-worker-123 python3 -m uvicorn app.main:app --host 127.0.0.1 --port 8787
+curl -H "Authorization: Bearer trend-worker-123" http://127.0.0.1:8787/health
+```
+
+Expected response includes:
+
+```json
+{"ok": true}
+```
+
+Run without token auth for local-only testing:
+
+```bash
+cd local-ai-worker
+unset WORKER_TOKEN
+python3 -m uvicorn app.main:app --host 127.0.0.1 --port 8787
+curl http://127.0.0.1:8787/health
+```
+
+Expected response includes:
+
+```json
+{"ok": true}
+```
+
+Use `127.0.0.1` in local curl commands so you know the request is going to the IPv4 listener started by these examples.
 
 ## Manual Pinokio/Wan2GP Flow
 
@@ -141,4 +191,3 @@ Downloads the completed MP4.
 cd local-ai-worker
 python -m pytest
 ```
-

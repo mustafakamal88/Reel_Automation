@@ -89,6 +89,7 @@ def test_health(tmp_path: Path) -> None:
     status, _, body = request_json(app, "GET", "/health")
 
     assert status == 200
+    assert body["ok"] is True
     assert body["status"] == "ok"
 
 
@@ -102,6 +103,16 @@ def test_auth_required_when_token_configured(tmp_path: Path) -> None:
     assert missing_status == 401
     assert wrong_status == 401
     assert ok_status == 200
+
+
+def test_debug_config_does_not_expose_token(tmp_path: Path) -> None:
+    app = make_app(tmp_path, token="secret")
+
+    status, _, body = request_json(app, "GET", "/debug/config")
+
+    assert status == 200
+    assert body == {"auth_required": True, "token_configured": True}
+    assert "secret" not in json.dumps(body)
 
 
 def test_generate_job(tmp_path: Path) -> None:
