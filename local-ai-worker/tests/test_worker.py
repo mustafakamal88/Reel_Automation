@@ -6,8 +6,22 @@ from typing import Any, Optional
 from app.main import Settings, create_app
 
 
-def make_app(tmp_path: Path, token: str = "", dev_stub: bool = False):
-    return create_app(Settings(output_dir=tmp_path, token=token, dev_stub=dev_stub))
+def make_app(
+    tmp_path: Path,
+    token: str = "",
+    dev_stub: bool = False,
+    generator_mode: str = "manual",
+    generator_command: str = "",
+):
+    return create_app(
+        Settings(
+            output_dir=tmp_path,
+            token=token,
+            dev_stub=dev_stub,
+            generator_mode=generator_mode,
+            generator_command=generator_command,
+        )
+    )
 
 
 def auth(token: str = "secret") -> dict[str, str]:
@@ -111,7 +125,12 @@ def test_debug_config_does_not_expose_token(tmp_path: Path) -> None:
     status, _, body = request_json(app, "GET", "/debug/config")
 
     assert status == 200
-    assert body == {"auth_required": True, "token_configured": True}
+    assert body == {
+        "auth_required": True,
+        "token_configured": True,
+        "generator_mode": "manual",
+        "auto_command_configured": False,
+    }
     assert "secret" not in json.dumps(body)
 
 
@@ -162,7 +181,7 @@ def test_completed_job_status_when_output_file_exists(tmp_path: Path) -> None:
     _, _, generated = request_json(app, "POST", "/generate-scene", body={"visual_prompt": "Prompt"})
     job_id = generated["id"]
     output_path = tmp_path / job_id / "output.mp4"
-    output_path.write_bytes(b"mp4 bytes")
+    output_path.write_bytes(b"\x00\x00\x00\x18ftypmp42mp4 bytes")
 
     status, _, body = request_json(app, "GET", f"/jobs/{job_id}")
 
@@ -186,10 +205,38 @@ def test_output_download(tmp_path: Path) -> None:
     _, _, generated = request_json(app, "POST", "/generate-scene", body={"visual_prompt": "Prompt"})
     job_id = generated["id"]
     output_path = tmp_path / job_id / "output.mp4"
-    output_path.write_bytes(b"mp4 bytes")
+    output_path.write_bytes(b"\x00\x00\x00\x18ftypmp42mp4 bytes")
 
     status, headers, body = request(app, "GET", f"/jobs/{job_id}/output")
 
     assert status == 200
     assert headers["content-type"].startswith("video/mp4")
-    assert body == b"mp4 bytes"
+    assert body == b"\x00\x00\x00\x18ftypmp42mp4 bytes"
+
+
+def test_auto_command_not_configured_returns_immediately(tmp_path: Path) -> None:
+    app = make_app(tmp_path, generator_mode="auto_command")
+
+    _, _, generated = request_json(app, "POST", "/generate-scene", body={"visual_prompt": "Prompt"})
+    job_id = generated["id"]
+    status, _, body = request_json(app, "GET", f"/jobs/{job_id}")
+
+    assert status == 200
+    assert body["status"] == "generator_not_configured"
+    assert body["progress_percent"] == 30
+    assert body["worker_message"] == "AI video generator is connected but automatic model generation is not configured yet."
+
+
+def test_auto_command_success_creates_downloadable_video(tmp_path: Path) -> None:
+    command = "python3 -c 'from pathlib import Path; Path(\"{output_path}\").write_bytes(b\"\\x00\\x00\\x00\\x18ftypmp42ok\")'"
+    app = make_app(tmp_path, generator_mode="auto_command", generator_command=command)
+
+    _, _, generated = request_json(app, "POST", "/generate-scene", body={"visual_prompt": "Prompt"})
+    job_id = generated["id"]
+    status, _, body = request_json(app, "GET", f"/jobs/{job_id}")
+
+    assert status == 200
+    assert body["status"] == "completed"
+    assert body["progress_percent"] == 100
+    assert body["downloadable"] is True
+    assert (tmp_path / job_id / "output.mp4").exists()

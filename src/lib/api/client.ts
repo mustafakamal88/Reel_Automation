@@ -743,7 +743,7 @@ export async function generateClipStudio(body: ClipStudioGenerateRequest): Promi
 }
 
 export async function downloadClipStudioZip(downloadURL: string, filename: string): Promise<void> {
-  return downloadZipPath(downloadURL, filename);
+  return downloadPath(downloadURL, filename);
 }
 
 export interface AIScenePlan {
@@ -772,6 +772,7 @@ export interface AIScenePlanResponse {
 }
 
 export interface AISceneGenerateResponse {
+  generation_id?: string;
   success: boolean;
   render_status: string;
   notes?: string;
@@ -792,6 +793,28 @@ export interface AISceneGenerateResponse {
   included_files: string[];
   video_path?: string;
   thumbnail_path?: string;
+}
+
+export interface AISceneGenerationStatusResponse {
+  generation_id: string;
+  progress_percent: number;
+  current_step: string;
+  status: string;
+  estimated_next_action: string;
+  downloadable: boolean;
+  video_url?: string;
+  video_filename?: string;
+  zip_url?: string;
+  zip_filename?: string;
+  notes?: string;
+  renderer_version: 'local_ai_scene_v1';
+  clip_id: string;
+  worker_url_configured: boolean;
+  model_hint: string;
+  scene_prompts?: AIScenePlan[];
+  scene_job_ids?: string[];
+  scene_jobs?: AISceneJob[];
+  included_files?: string[];
 }
 
 export interface AISceneJob {
@@ -842,6 +865,14 @@ export async function generateAIScenes(body: {
   return apiFetch('/api/clip-studio/ai-scenes/generate', { method: 'POST', body: JSON.stringify(body) });
 }
 
+export async function getAISceneGeneration(generationID: string): Promise<AISceneGenerationStatusResponse> {
+  return apiFetch(`/api/clip-studio/ai-scenes/generations/${encodeURIComponent(generationID)}`);
+}
+
+export async function downloadAISceneVideo(downloadURL: string, filename: string): Promise<void> {
+  return downloadPath(downloadURL, filename);
+}
+
 export interface CreateExportJobResponse {
   export_job: ExportJob;
   missing_video_reels: number[];
@@ -871,6 +902,10 @@ export async function downloadRenderExportTestZip(downloadURL: string, filename:
 }
 
 async function downloadZipPath(path: string, filename: string): Promise<void> {
+  return downloadPath(path, filename);
+}
+
+async function downloadPath(path: string, filename: string): Promise<void> {
   let res: Response;
   try {
     res = await fetch(apiUrl(path), { credentials: 'include' });

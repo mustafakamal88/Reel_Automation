@@ -1,15 +1,16 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
   ApiError,
+  downloadAISceneVideo,
   downloadClipStudioZip,
   generateAIScenes,
   generateClipStudio,
+  getAISceneGeneration,
   getAISceneWorkerStatus,
   importClipStudioURL,
-  planAIScenes,
   type AISceneJob,
   type AISceneGenerateResponse,
-  type AIScenePlanResponse,
+  type AISceneGenerationStatusResponse,
   type AISceneWorkerJob,
   type AISceneWorkerStatusResponse,
   uploadClipStudioSource,
@@ -163,19 +164,22 @@ export function ClipStudioPage() {
   const [result, setResult] = useState<ClipStudioGenerateResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [errorScope, setErrorScope] = useState<ErrorScope>('global');
-  const [aiTopic, setAiTopic] = useState('');
   const [aiPrompt, setAiPrompt] = useState('Realistic vertical scenes for a fast-paced trend explainer');
   const [aiStyle, setAiStyle] = useState('realistic_editorial');
   const [aiLength, setAiLength] = useState<30 | 60 | 180>(60);
   const [aiBranding, setAiBranding] = useState('TREND CORTEX');
   const [workerStatus, setWorkerStatus] = useState<AISceneWorkerStatusResponse | null>(null);
-  const [aiPlan, setAiPlan] = useState<AIScenePlanResponse | null>(null);
   const [aiResult, setAiResult] = useState<AISceneGenerateResponse | null>(null);
+  const [aiGeneration, setAiGeneration] = useState<AISceneGenerationStatusResponse | null>(null);
+  const [aiGenerationID, setAiGenerationID] = useState<string | null>(null);
   const [aiBusy, setAiBusy] = useState(false);
   const [aiDownloadBusy, setAiDownloadBusy] = useState(false);
+  const [aiVideoDownloadBusy, setAiVideoDownloadBusy] = useState(false);
+  const [developerDetailsOpen, setDeveloperDetailsOpen] = useState(false);
 
   const packageReady = clipPackageReady(result);
-  const aiPackageReady = Boolean(aiResult?.download_url && aiResult.zip_filename);
+  const aiPackageReady = Boolean((aiGeneration?.zip_url && aiGeneration.zip_filename) || (aiResult?.download_url && aiResult.zip_filename));
+  const aiVideoReady = Boolean(aiGeneration?.downloadable && aiGeneration.video_url && aiGeneration.video_filename);
   const sourceStatus = useMemo(() => getClipSourceStatus(source, sourceUrl), [source, sourceUrl]);
   const generateDisabledReason = clipGenerateDisabledReason({ source, rightsConfirmed, prompt, busy, uploadBusy, urlImportBusy });
   const canGenerate = generateDisabledReason === null;
@@ -199,30 +203,58 @@ export function ClipStudioPage() {
       error: job.error,
     }));
   }, [aiResult?.scene_jobs, workerStatus?.jobs]);
-  const aiProgressSteps = useMemo(() => {
-    const status = aiResult?.generation_status || workerStatus?.status || 'idle';
-    return [
-      { label: 'Worker connected', done: Boolean(workerStatus?.configured), active: workerStatus?.configured && !aiResult && !aiBusy },
-      { label: 'Creating scene plan', done: Boolean(aiPlan || aiResult), active: aiBusy && !aiResult },
-      { label: 'Submitting scene jobs', done: currentSceneJobs.length > 0, active: aiBusy && currentSceneJobs.length === 0 },
-      { label: 'Scene job created', done: currentSceneJobs.length > 0, active: false },
-      { label: 'Waiting for generated output', done: status === 'completed', active: currentSceneJobs.some(job => job.status === 'waiting_for_manual_output') },
-      { label: 'Manual output needed', done: false, active: currentSceneJobs.some(job => job.status === 'waiting_for_manual_output' || job.status === 'timed_out') },
-      { label: 'Downloading generated scene', done: status === 'completed', active: false },
-      { label: 'Stitching final video', done: status === 'completed', active: false },
-      { label: 'Complete', done: status === 'completed', active: false },
-      { label: 'Failed', done: false, active: status === 'failed' || status === 'timed_out' },
-    ];
-  }, [aiBusy, aiPlan, aiResult, currentSceneJobs, workerStatus]);
-  const activeGenerationJobs = aiResult?.scene_jobs || [];
-  const aiButtonLabel = activeGenerationJobs.some(job => job.status === 'waiting_for_manual_output' || job.status === 'timed_out')
-    ? 'Waiting for worker output...'
-    : aiBusy ? 'Generating scenes...' : 'Generate video using local worker';
-  const aiGenerateDisabled = aiBusy || !aiPrompt.trim() || activeGenerationJobs.some(job => job.status === 'waiting_for_manual_output');
+  const aiProgressPercent = aiGeneration?.progress_percent ?? (aiBusy ? 15 : aiResult?.success ? 100 : 0);
+  const aiStatusText = aiGeneration?.current_step
+    || (aiBusy ? 'Creating scenes' : aiResult?.success ? 'Video ready' : 'Preparing scene plan');
+  const aiStatusDetail = aiGeneration?.status === 'generator_not_configured'
+    ? 'AI video generator is connected but automatic model generation is not configured yet.'
+    : aiGeneration?.notes || aiGeneration?.estimated_next_action || aiResult?.notes || '';
+  const aiNeedsConfiguration = aiGeneration?.status === 'generator_not_configured';
+  const aiButtonLabel = aiNeedsConfiguration ? 'Configure generator' : aiBusy ? 'Generating video...' : 'Generate Video';
+  const aiGenerateDisabled = aiBusy || !aiPrompt.trim();
 
   useEffect(() => {
     if (activeMode === 'ai') void refreshWorkerStatus();
   }, [activeMode]);
+
+  useEffect(() => {
+    if (!aiGenerationID) return undefined;
+    let cancelled = false;
+    const poll = async () => {
+      try {
+        const next = await getAISceneGeneration(aiGenerationID);
+        if (cancelled) return;
+        setAiGeneration(next);
+        setAiResult(previous => previous ? {
+          ...previous,
+          scene_jobs: next.scene_jobs || previous.scene_jobs,
+          scene_prompts: next.scene_prompts || previous.scene_prompts,
+          scene_job_ids: next.scene_job_ids || previous.scene_job_ids,
+          generation_status: next.status,
+          notes: next.notes || previous.notes,
+          zip_filename: next.zip_filename || previous.zip_filename,
+          download_url: next.zip_url || previous.download_url,
+          included_files: next.included_files || previous.included_files,
+        } : previous);
+        if (next.status === 'completed' || next.status === 'failed' || next.status === 'timed_out' || next.status === 'generator_not_configured') {
+          setAiBusy(false);
+          return;
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setAiBusy(false);
+          setErrorScope('ai');
+          setError(errMsg(err, 'AI scene generation status unavailable'));
+        }
+      }
+    };
+    void poll();
+    const id = window.setInterval(() => void poll(), 1500);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, [aiGenerationID]);
 
   async function refreshWorkerStatus() {
     try {
@@ -237,34 +269,18 @@ export function ClipStudioPage() {
     await navigator.clipboard?.writeText(value);
   }
 
-  async function handlePlanAIScenes() {
-    setAiBusy(true);
-    setErrorScope('ai');
-    setError(null);
-    setAiResult(null);
-    try {
-      const planned = await planAIScenes({
-        topic: aiTopic,
-        prompt: aiPrompt,
-        style_preset: aiStyle,
-        target_length_seconds: aiLength,
-      });
-      setAiPlan(planned);
-      await refreshWorkerStatus();
-    } catch (err) {
-      setError(errMsg(err, 'Scene planning failed'));
-    } finally {
-      setAiBusy(false);
-    }
-  }
-
   async function handleGenerateAIScenes() {
+    if (aiNeedsConfiguration) {
+      setDeveloperDetailsOpen(true);
+      return;
+    }
     setAiBusy(true);
     setErrorScope('ai');
     setError(null);
+    setAiGeneration(null);
+    setAiGenerationID(null);
     try {
       const generated = await generateAIScenes({
-        topic: aiTopic,
         prompt: aiPrompt,
         style_preset: aiStyle,
         target_length_seconds: aiLength,
@@ -279,26 +295,46 @@ export function ClipStudioPage() {
         },
       });
       setAiResult(generated);
-      if (!generated.success) setError(generated.notes || 'Connect local AI worker to generate AI scenes.');
+      if (generated.generation_id) {
+        setAiGenerationID(generated.generation_id);
+      } else if (!generated.success) {
+        setAiBusy(false);
+        setError(generated.notes || 'Connect local AI worker to generate AI scenes.');
+      }
       await refreshWorkerStatus();
     } catch (err) {
       setError(errMsg(err, 'AI scene generation failed'));
-    } finally {
       setAiBusy(false);
     }
   }
 
   async function handleDownloadAIScenes() {
-    if (!aiResult?.download_url || !aiResult.zip_filename) return;
+    const url = aiGeneration?.zip_url || aiResult?.download_url;
+    const filename = aiGeneration?.zip_filename || aiResult?.zip_filename;
+    if (!url || !filename) return;
     setAiDownloadBusy(true);
     setErrorScope('ai');
     setError(null);
     try {
-      await downloadClipStudioZip(aiResult.download_url, aiResult.zip_filename);
+      await downloadClipStudioZip(url, filename);
     } catch (err) {
       setError(errMsg(err, 'AI scene ZIP download failed'));
     } finally {
       setAiDownloadBusy(false);
+    }
+  }
+
+  async function handleDownloadAIVideo() {
+    if (!aiGeneration?.video_url || !aiGeneration.video_filename) return;
+    setAiVideoDownloadBusy(true);
+    setErrorScope('ai');
+    setError(null);
+    try {
+      await downloadAISceneVideo(aiGeneration.video_url, aiGeneration.video_filename);
+    } catch (err) {
+      setError(errMsg(err, 'AI video download failed'));
+    } finally {
+      setAiVideoDownloadBusy(false);
     }
   }
 
@@ -656,29 +692,14 @@ export function ClipStudioPage() {
 
       {activeMode === 'ai' && (
         <div className="settings-card" style={{ display: 'flex', flexDirection: 'column', gap: 14, maxWidth: 920 }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
-            <div>
-              <div style={{ fontSize: 14, fontWeight: 800, color: 'var(--text-primary)' }}>AI Scene Generator</div>
-              <div style={{ fontSize: 12, color: workerStatus?.configured ? 'var(--text-muted)' : 'var(--red)', marginTop: 3 }}>
-                {workerStatus?.message || 'Connect local AI worker to generate AI scenes.'}
-              </div>
+          <div>
+            <div style={{ fontSize: 14, fontWeight: 800, color: 'var(--text-primary)' }}>AI Scene Generator</div>
+            <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 3 }}>
+              Prompt to video with progress and export-ready downloads.
             </div>
-            <button className="generate-btn idle" onClick={refreshWorkerStatus} type="button">
-              <span className="generate-btn-dot" style={{ background: workerStatus?.configured ? '#0f766e' : '#991b1b' }} />
-              Refresh worker jobs
-            </button>
-            {workerStatus?.dashboard_url && (
-              <a className="generate-btn idle" href={workerStatus.dashboard_url} target="_blank" rel="noreferrer" style={{ textDecoration: 'none' }}>
-                <span className="generate-btn-dot" style={{ background: '#0f766e' }} />
-                Open worker dashboard
-              </a>
-            )}
           </div>
 
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 10 }}>
-            <Field label="Topic">
-              <input value={aiTopic} onChange={event => setAiTopic(event.target.value)} placeholder="AI search trend, finance news, creator drama..." style={inputStyle()} />
-            </Field>
             <Field label="Style preset">
               <select value={aiStyle} onChange={event => setAiStyle(event.target.value)} style={inputStyle()}>
                 <option value="realistic_editorial">Realistic editorial</option>
@@ -708,76 +729,80 @@ export function ClipStudioPage() {
           </Field>
 
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-            <button className="generate-btn idle" onClick={handlePlanAIScenes} disabled={aiBusy || !aiPrompt.trim()} type="button">
-              <span className="generate-btn-dot" style={{ background: '#15121f' }} />
-              Generate scene plan
-            </button>
             <button className="generate-btn idle" onClick={handleGenerateAIScenes} disabled={aiGenerateDisabled} type="button">
-              <span className="generate-btn-dot" style={{ background: workerStatus?.configured ? '#0f766e' : '#991b1b' }} />
+              <span className="generate-btn-dot" style={{ background: aiNeedsConfiguration ? '#991b1b' : '#15121f' }} />
               {aiButtonLabel}
+            </button>
+            <button className="generate-btn idle" onClick={handleDownloadAIVideo} disabled={aiVideoDownloadBusy || !aiVideoReady} type="button">
+              <span className="generate-btn-dot" style={{ background: aiVideoReady ? '#15121f' : '#6b7280' }} />
+              {aiVideoDownloadBusy ? 'Downloading...' : 'Download Video'}
             </button>
             <button className="generate-btn idle" onClick={handleDownloadAIScenes} disabled={aiDownloadBusy || !aiPackageReady} type="button">
               <span className="generate-btn-dot" style={{ background: aiPackageReady ? '#15121f' : '#6b7280' }} />
-              {aiDownloadBusy ? 'Downloading...' : 'Download AI ZIP'}
+              {aiDownloadBusy ? 'Downloading...' : 'Download ZIP'}
             </button>
           </div>
 
-          <div style={{ border: '1px solid var(--border)', borderRadius: 6, background: '#0b0f14', padding: 12, display: 'flex', flexDirection: 'column', gap: 12 }}>
-            <div>
-              <div style={{ fontSize: 13, fontWeight: 800, color: 'var(--text-primary)' }}>Worker progress</div>
-              <div style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.5, marginTop: 4 }}>
-                Manual worker mode: generate this scene in Pinokio/Wan2GP, then save it as output.mp4 in the shown job folder.
-              </div>
+          <div style={{ border: '1px solid var(--border)', borderRadius: 6, background: 'var(--bg-subtle)', padding: 12, display: 'grid', gap: 8 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'center' }}>
+              <div style={{ fontSize: 13, fontWeight: 800, color: 'var(--text-primary)' }}>{aiStatusText}</div>
+              <div style={{ fontSize: 12, fontFamily: 'var(--font-mono)', color: 'var(--text-secondary)' }}>{Math.max(0, Math.min(100, aiProgressPercent))}%</div>
             </div>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-              {aiProgressSteps.map(step => {
-                const tone = step.done ? statusTone('completed') : step.active ? statusTone(step.label === 'Failed' ? 'failed' : 'waiting_for_manual_output') : statusTone('idle');
-                return (
-                  <span key={step.label} style={{ fontSize: 10, color: tone.color, background: tone.background, border: `1px solid ${tone.border}`, borderRadius: 4, padding: '4px 7px', fontWeight: step.active || step.done ? 800 : 600 }}>
-                    {step.label}
-                  </span>
-                );
-              })}
+            <div aria-label="AI video generation progress" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.max(0, Math.min(100, aiProgressPercent))} style={{ height: 10, background: '#111827', borderRadius: 6, overflow: 'hidden', border: '1px solid var(--border-strong)' }}>
+              <div style={{ width: `${Math.max(0, Math.min(100, aiProgressPercent))}%`, height: '100%', background: aiNeedsConfiguration ? '#f8c471' : '#0f766e', transition: 'width 200ms ease' }} />
             </div>
-            {aiResult?.generation_status === 'timed_out' && (
-              <div style={{ fontSize: 12, color: 'var(--red)', lineHeight: 1.5, background: 'rgba(232,115,107,0.08)', border: '1px solid rgba(232,115,107,0.25)', borderRadius: 6, padding: '8px 10px' }}>
-                Timed out waiting for output.mp4. The worker job may still be pending. Add the generated file and retry/refresh.
+            {aiStatusDetail && (
+              <div style={{ fontSize: 12, color: aiNeedsConfiguration ? '#f8c471' : 'var(--text-muted)', lineHeight: 1.5 }}>
+                {aiStatusDetail}
               </div>
             )}
-            {currentSceneJobs.length > 0 ? (
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 8 }}>
-                {currentSceneJobs.map(job => (
-                  <AISceneJobCard key={job.job_id || job.scene_id} job={job} onCopy={copyText} />
-                ))}
-              </div>
-            ) : (
-              <div style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.5 }}>
-                No worker scene jobs yet. Generate scene jobs or refresh after submitting work.
+            {aiGeneration?.status === 'completed' && (
+              <div style={{ fontSize: 12, color: 'var(--green)', fontWeight: 800 }}>
+                Video ready
               </div>
             )}
           </div>
 
-          {(aiPlan || aiResult) && (
-            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-              <StatusPill>{aiResult?.renderer_version || aiPlan?.renderer_version}</StatusPill>
-              <StatusPill>worker: {String(aiResult?.worker_url_configured ?? workerStatus?.configured ?? false)}</StatusPill>
-              <StatusPill>status: {aiResult?.generation_status || workerStatus?.status || 'planned'}</StatusPill>
-              <StatusPill>model: {aiResult?.model_hint || aiPlan?.model_hint || 'auto'}</StatusPill>
-              {aiResult?.zip_filename && <StatusPill>{aiResult.zip_filename}</StatusPill>}
-              {aiResult?.fallback_reason && <StatusPill>{aiResult.fallback_reason}</StatusPill>}
-            </div>
-          )}
-
-          {aiPlan?.scenes && (
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 8 }}>
-              {aiPlan.scenes.map(scene => (
-                <div key={scene.scene_id} style={{ border: '1px solid var(--border)', borderRadius: 6, padding: 10, background: 'var(--bg-subtle)' }}>
-                  <div style={{ fontSize: 11, fontFamily: 'var(--font-mono)', color: 'var(--text-dim)' }}>{scene.scene_id} · {scene.duration_seconds.toFixed(1)}s · {scene.model_hint}</div>
-                  <div style={{ fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.5, marginTop: 6 }}>{scene.visual_prompt}</div>
+          <details open={developerDetailsOpen} onToggle={event => setDeveloperDetailsOpen(event.currentTarget.open)} style={{ borderTop: '1px solid var(--border)', paddingTop: 12 }}>
+            <summary style={{ cursor: 'pointer', fontSize: 12, fontWeight: 700, color: 'var(--text-secondary)' }}>
+              Developer / Manual Worker Details
+            </summary>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginTop: 12 }}>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                <button className="generate-btn idle" onClick={refreshWorkerStatus} type="button">
+                  <span className="generate-btn-dot" style={{ background: workerStatus?.configured ? '#0f766e' : '#991b1b' }} />
+                  Refresh worker jobs
+                </button>
+                {workerStatus?.dashboard_url && (
+                  <a className="generate-btn idle" href={workerStatus.dashboard_url} target="_blank" rel="noreferrer" style={{ textDecoration: 'none' }}>
+                    <span className="generate-btn-dot" style={{ background: '#0f766e' }} />
+                    Open worker dashboard
+                  </a>
+                )}
+              </div>
+              {(aiResult || aiGeneration) && (
+                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                  <StatusPill>{aiResult?.renderer_version || aiGeneration?.renderer_version}</StatusPill>
+                  <StatusPill>worker: {String(aiResult?.worker_url_configured ?? aiGeneration?.worker_url_configured ?? workerStatus?.configured ?? false)}</StatusPill>
+                  <StatusPill>status: {aiGeneration?.status || aiResult?.generation_status || workerStatus?.status || 'planned'}</StatusPill>
+                  <StatusPill>model: {aiResult?.model_hint || aiGeneration?.model_hint || 'auto'}</StatusPill>
+                  {aiGenerationID && <StatusPill>generation: {aiGenerationID}</StatusPill>}
+                  {(aiGeneration?.zip_filename || aiResult?.zip_filename) && <StatusPill>{aiGeneration?.zip_filename || aiResult?.zip_filename}</StatusPill>}
                 </div>
-              ))}
+              )}
+              {currentSceneJobs.length > 0 ? (
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 8 }}>
+                  {currentSceneJobs.map(job => (
+                    <AISceneJobCard key={job.job_id || job.scene_id} job={job} onCopy={copyText} />
+                  ))}
+                </div>
+              ) : (
+                <div style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.5 }}>
+                  No worker scene jobs yet.
+                </div>
+              )}
             </div>
-          )}
+          </details>
         </div>
       )}
     </section>

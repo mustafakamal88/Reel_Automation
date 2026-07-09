@@ -2,7 +2,13 @@
 
 This is the local/GPU worker that TrendCortex can call for `local_ai_scene_v1` scene clips.
 
-The first implementation is intentionally manual. It does not fake production AI generation. TrendCortex submits scene prompts, the worker creates pending job folders, and you place the generated MP4 into the expected output path after using Pinokio/Wan2GP or another local video tool.
+The worker supports three generator modes:
+
+- `auto_command`: production/local automation mode. TrendCortex submits scene prompts and the worker runs your configured generator command to create `output.mp4`.
+- `manual`: developer-only fallback. TrendCortex creates pending job folders and you place an externally generated MP4 into the expected output path.
+- `dev_stub`: test-only mode. It writes a tiny stub output and must not be used for production videos.
+
+Production should use `auto_command`. The worker never fakes production AI generation; a job is completed only when `output.mp4` exists and passes the worker's MP4 validation.
 
 ## Run Locally
 
@@ -22,6 +28,9 @@ Configuration:
 | `WORKER_PORT` | `8787` | Port used by `run_worker.py`. |
 | `WORKER_TOKEN` | empty | If set, every endpoint requires `Authorization: Bearer <token>`. |
 | `WORKER_OUTPUT_DIR` | `local-ai-worker/outputs` | Job folders and generated MP4s. |
+| `WORKER_GENERATOR_MODE` | `manual` | `auto_command`, `manual`, or `dev_stub`. |
+| `WORKER_GENERATOR_COMMAND` | empty | Required for `auto_command`; command template that writes `{output_path}`. |
+| `WORKER_MODEL_HINT` | `auto` | Optional model hint returned in health/status metadata. |
 | `WORKER_DEV_STUB` | `false` | Dev/test only. When true, the worker writes a small stub output file. Disabled by default. |
 
 Alternative runner:
@@ -48,6 +57,31 @@ curl http://127.0.0.1:8787/debug/config
 Dashboard:
 
 Open `http://127.0.0.1:8787/` to see pending/completed jobs, prompts, and expected output paths.
+
+## Auto Command Mode
+
+Set `WORKER_GENERATOR_MODE=auto_command` and provide `WORKER_GENERATOR_COMMAND`. The command is run once per scene job and must create a valid MP4 at `{output_path}`.
+
+Supported placeholders:
+
+```text
+{job_id}
+{prompt_file}
+{output_path}
+{duration_seconds}
+{aspect_ratio}
+{style_preset}
+```
+
+Example shape:
+
+```bash
+WORKER_GENERATOR_MODE=auto_command \
+WORKER_GENERATOR_COMMAND='your-generator --prompt-file {prompt_file} --duration {duration_seconds} --aspect {aspect_ratio} --style {style_preset} --out {output_path}' \
+python3 -m uvicorn app.main:app --host 127.0.0.1 --port 8787
+```
+
+If `auto_command` is selected without `WORKER_GENERATOR_COMMAND`, jobs return `generator_not_configured` immediately so the product UI can explain that automatic generation is not configured.
 
 ## Connect TrendCortex
 
@@ -104,7 +138,9 @@ Use `127.0.0.1` in local curl commands so you know the request is going to the I
 
 ## Manual Pinokio/Wan2GP Flow
 
-1. Start this worker locally.
+Manual mode is intended for developer validation only.
+
+1. Start this worker locally with `WORKER_GENERATOR_MODE=manual`.
 2. Generate AI scenes from TrendCortex.
 3. Open the worker dashboard and copy each job's `visual_prompt`.
 4. Paste the prompt into Pinokio/Wan2GP or another local video generator.

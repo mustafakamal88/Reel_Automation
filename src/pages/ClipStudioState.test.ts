@@ -1,5 +1,12 @@
 import type { ClipStudioSourceMetadata, ClipStudioSourceResponse } from '../lib/api/client';
-import { clipGenerateDisabledReason, clipPackageReady, getClipSourceStatus } from './ClipStudioState';
+import {
+  aiSceneDownloadsReady,
+  aiScenePrimaryButtonLabel,
+  aiSceneProgressLabel,
+  clipGenerateDisabledReason,
+  clipPackageReady,
+  getClipSourceStatus,
+} from './ClipStudioState';
 
 function assert(condition: boolean, message: string) {
   if (!condition) throw new Error(message);
@@ -99,4 +106,41 @@ assert(
     download_url: '/api/clip-studio/download/clips.zip',
   }),
   'Download should enable when a ZIP package is ready',
+);
+
+assert(aiSceneProgressLabel(null, false) === 'Preparing scene plan', 'AI generator should start with friendly prep status');
+assert(aiScenePrimaryButtonLabel(null, false) === 'Generate Video', 'AI generator primary action should be Generate Video');
+assert(
+  aiScenePrimaryButtonLabel({
+    generation_id: 'gen-test',
+    progress_percent: 30,
+    current_step: 'Sending to local AI worker',
+    status: 'generator_not_configured',
+    estimated_next_action: 'Configure generator',
+    downloadable: false,
+    renderer_version: 'local_ai_scene_v1',
+    clip_id: 'clip-test',
+    worker_url_configured: true,
+    model_hint: 'auto',
+  }, false) === 'Configure generator',
+  'Generator not configured state should offer configuration instead of copy-path actions',
+);
+assert(
+  aiSceneDownloadsReady({
+    generation_id: 'gen-test',
+    progress_percent: 100,
+    current_step: 'Video ready',
+    status: 'completed',
+    estimated_next_action: 'Download the generated video or ZIP package.',
+    downloadable: true,
+    video_url: '/video',
+    video_filename: 'trendcortex-ai-video-20260709-1200.mp4',
+    zip_url: '/zip',
+    zip_filename: 'trendcortex-ai-scenes.zip',
+    renderer_version: 'local_ai_scene_v1',
+    clip_id: 'clip-test',
+    worker_url_configured: true,
+    model_hint: 'auto',
+  }).video,
+  'Video download should enable only after completed downloadable status',
 );

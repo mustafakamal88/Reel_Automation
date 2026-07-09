@@ -202,6 +202,9 @@ func RenderLocalAISceneReel(ctx context.Context, cfg Config, input LocalAISceneI
 			if finalJob.Status == "timed_out" {
 				meta.Notes = "Timed out waiting for output.mp4. The worker job may still be pending. Add the generated file and retry/refresh."
 				meta.GenerationStatus = "timed_out"
+			} else if finalJob.Status == "generator_not_configured" {
+				meta.Notes = firstNonEmpty(finalJob.WorkerMessage, "AI video generator is connected but automatic model generation is not configured yet.")
+				meta.GenerationStatus = "generator_not_configured"
 			} else {
 				meta.Notes = "Local AI worker scene generation failed: " + err.Error()
 				meta.GenerationStatus = "failed"
@@ -404,8 +407,8 @@ func (c WorkerClient) WaitForJob(ctx context.Context, id string, timeout time.Du
 			return job, err
 		}
 		switch job.Status {
-		case "completed", "failed", "error", "cancelled":
-			if job.Status == "failed" || job.Status == "error" || job.Status == "cancelled" {
+		case "completed", "failed", "error", "cancelled", "generator_not_configured":
+			if job.Status == "failed" || job.Status == "error" || job.Status == "cancelled" || job.Status == "generator_not_configured" {
 				return job, errors.New(firstNonEmpty(job.Error, "worker job "+job.Status))
 			}
 			return job, nil
@@ -479,7 +482,7 @@ func workerSceneJobFromWorker(sceneNumber int, scene ScenePlan, job WorkerJob, f
 
 func normalizeWorkerStatus(status string) string {
 	switch strings.TrimSpace(status) {
-	case "", "pending", "queued", "running":
+	case "", "pending", "queued":
 		return "waiting_for_manual_output"
 	default:
 		return status

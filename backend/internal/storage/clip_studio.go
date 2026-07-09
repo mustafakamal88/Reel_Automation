@@ -237,7 +237,12 @@ func BuildLocalAISceneExportZip(exportDir, zipID, videoSrcPath, thumbnailSrcPath
 			return
 		}
 		includedFiles = append(includedFiles, "scene-metadata.json")
-		manifest.SceneMetadataFile = "scene-metadata.json"
+		if err = addFileToZip(zw, sceneMetadataPath, "scene_metadata.json"); err != nil {
+			err = fmt.Errorf("add local ai scene metadata alias: %w", err)
+			return
+		}
+		includedFiles = append(includedFiles, "scene_metadata.json")
+		manifest.SceneMetadataFile = "scene_metadata.json"
 	}
 	if err = writeExportJSONToZip(zw, "manifest.json", manifest); err != nil {
 		return

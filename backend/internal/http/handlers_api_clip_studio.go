@@ -155,6 +155,7 @@ type aiSceneGenerateRequest struct {
 }
 
 type aiSceneGenerateResponse struct {
+	GenerationID     string                    `json:"generation_id,omitempty"`
 	Success          bool                      `json:"success"`
 	RenderStatus     string                    `json:"render_status"`
 	Notes            string                    `json:"notes,omitempty"`
@@ -175,6 +176,46 @@ type aiSceneGenerateResponse struct {
 	IncludedFiles    []string                  `json:"included_files"`
 	VideoPath        string                    `json:"video_path,omitempty"`
 	ThumbnailPath    string                    `json:"thumbnail_path,omitempty"`
+}
+
+type aiSceneGenerationJob struct {
+	GenerationID        string
+	WorkspaceID         string
+	ClipID              string
+	Request             aiSceneGenerateRequest
+	StartedAt           time.Time
+	UpdatedAt           time.Time
+	Status              string
+	ProgressPercent     int
+	CurrentStep         string
+	EstimatedNextAction string
+	Downloadable        bool
+	Response            aiSceneGenerateResponse
+	VideoDownloadURL    string
+	VideoDownloadName   string
+	Err                 string
+}
+
+type aiSceneGenerationStatusResponse struct {
+	GenerationID        string                    `json:"generation_id"`
+	ProgressPercent     int                       `json:"progress_percent"`
+	CurrentStep         string                    `json:"current_step"`
+	Status              string                    `json:"status"`
+	EstimatedNextAction string                    `json:"estimated_next_action"`
+	Downloadable        bool                      `json:"downloadable"`
+	VideoURL            string                    `json:"video_url,omitempty"`
+	VideoFilename       string                    `json:"video_filename,omitempty"`
+	ZipURL              string                    `json:"zip_url,omitempty"`
+	ZipFilename         string                    `json:"zip_filename,omitempty"`
+	Notes               string                    `json:"notes,omitempty"`
+	RendererVersion     string                    `json:"renderer_version"`
+	ClipID              string                    `json:"clip_id"`
+	WorkerConfigured    bool                      `json:"worker_url_configured"`
+	ModelHint           string                    `json:"model_hint"`
+	ScenePrompts        []renderer.ScenePlan      `json:"scene_prompts,omitempty"`
+	SceneJobIDs         []string                  `json:"scene_job_ids,omitempty"`
+	SceneJobs           []renderer.WorkerSceneJob `json:"scene_jobs,omitempty"`
+	IncludedFiles       []string                  `json:"included_files,omitempty"`
 }
 
 var clipStudioHTTPClient = http.DefaultClient
@@ -674,28 +715,83 @@ func (s *Server) handleGenerateAIScenes(w http.ResponseWriter, r *http.Request) 
 		jsonError(w, "workspace lookup failed: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
+	generationID := newAISceneGenerationID()
 	clipID := "ai-scenes-" + time.Now().UTC().Format("20060102-150405")
-	result := renderer.RenderLocalAISceneReel(r.Context(), renderer.Config{
+	scenes := renderer.PlanLocalAIScenes(req.Topic, "", req.Prompt, req.StylePreset, req.TargetLengthSeconds)
+	now := time.Now().UTC()
+	job := &aiSceneGenerationJob{
+		GenerationID:        generationID,
+		WorkspaceID:         workspaceID,
+		ClipID:              clipID,
+		Request:             req,
+		StartedAt:           now,
+		UpdatedAt:           now,
+		Status:              "creating_scenes",
+		ProgressPercent:     15,
+		CurrentStep:         "Creating scenes",
+		EstimatedNextAction: "Sending scene prompts to local AI worker.",
+		Response: aiSceneGenerateResponse{
+			GenerationID:     generationID,
+			Success:          false,
+			RenderStatus:     "queued",
+			RendererVersion:  renderer.LocalAISceneRendererVersion,
+			ClipID:           clipID,
+			WorkerConfigured: renderer.WorkerConfigured(s.cfg.LocalAIWorkerURL),
+			ModelHint:        "auto",
+			ScenePrompts:     scenes,
+			GenerationStatus: "creating_scenes",
+			IncludedFiles:    []string{},
+		},
+	}
+	s.storeAISceneGeneration(job)
+	go s.runAISceneGeneration(generationID)
+	jsonOK(w, job.Response)
+}
+
+func (s *Server) runAISceneGeneration(generationID string) {
+	job := s.getAISceneGeneration(generationID)
+	if job == nil {
+		return
+	}
+	s.updateAISceneGeneration(generationID, func(job *aiSceneGenerationJob) {
+		job.Status = "sending_to_worker"
+		job.ProgressPercent = 30
+		job.CurrentStep = "Sending to local AI worker"
+		job.EstimatedNextAction = "Waiting for the local AI generator."
+		job.Response.GenerationStatus = job.Status
+		job.UpdatedAt = time.Now().UTC()
+	})
+	time.Sleep(200 * time.Millisecond)
+	s.updateAISceneGeneration(generationID, func(job *aiSceneGenerationJob) {
+		job.Status = "running"
+		job.ProgressPercent = 50
+		job.CurrentStep = "Generating video scenes"
+		job.EstimatedNextAction = "The local AI worker is rendering scenes."
+		job.Response.GenerationStatus = job.Status
+		job.UpdatedAt = time.Now().UTC()
+	})
+	result := renderer.RenderLocalAISceneReel(context.Background(), renderer.Config{
 		OutputDir:          s.cfg.MediaOutputDir,
 		FFmpegPath:         s.cfg.FFmpegPath,
 		FFprobePath:        s.cfg.FFprobePath,
 		LocalAIWorkerURL:   s.cfg.LocalAIWorkerURL,
 		LocalAIWorkerToken: s.cfg.LocalAIWorkerToken,
 	}, renderer.LocalAISceneInput{
-		WorkspaceID:         workspaceID,
-		ClipID:              clipID,
-		Topic:               req.Topic,
-		Prompt:              req.Prompt,
-		StylePreset:         req.StylePreset,
-		TargetLengthSeconds: req.TargetLengthSeconds,
-		Branding:            req.Branding,
+		WorkspaceID:         job.WorkspaceID,
+		ClipID:              job.ClipID,
+		Topic:               job.Request.Topic,
+		Prompt:              job.Request.Prompt,
+		StylePreset:         job.Request.StylePreset,
+		TargetLengthSeconds: job.Request.TargetLengthSeconds,
+		Branding:            job.Request.Branding,
 	})
 	response := aiSceneGenerateResponse{
+		GenerationID:     generationID,
 		Success:          result.Status == renderer.StatusCompleted,
 		RenderStatus:     result.Status,
 		Notes:            result.Notes,
 		RendererVersion:  renderer.LocalAISceneRendererVersion,
-		ClipID:           clipID,
+		ClipID:           job.ClipID,
 		WorkerConfigured: result.WorkerURLConfigured,
 		ModelHint:        result.ModelHint,
 		ScenePrompts:     result.ScenePrompts,
@@ -714,17 +810,42 @@ func (s *Server) handleGenerateAIScenes(w http.ResponseWriter, r *http.Request) 
 		response.NextAction = result.SceneJobs[0].NextAction
 	}
 	if result.Status != renderer.StatusCompleted {
-		jsonOK(w, response)
+		progress, step, nextAction := aiSceneProgressForStatus(response.GenerationStatus, false)
+		s.updateAISceneGeneration(generationID, func(job *aiSceneGenerationJob) {
+			job.Status = response.GenerationStatus
+			job.ProgressPercent = progress
+			job.CurrentStep = step
+			job.EstimatedNextAction = nextAction
+			job.Response = response
+			job.Err = response.Notes
+			job.UpdatedAt = time.Now().UTC()
+		})
 		return
 	}
+	s.updateAISceneGeneration(generationID, func(job *aiSceneGenerationJob) {
+		job.Status = "stitching"
+		job.ProgressPercent = 75
+		job.CurrentStep = "Stitching final video"
+		job.EstimatedNextAction = "Packaging the final video."
+		job.Response = response
+		job.UpdatedAt = time.Now().UTC()
+	})
 	sceneMetadataPath := filepath.Join(filepath.Dir(result.VideoPath), "scene-metadata.json")
-	exportDir := filepath.Join(s.cfg.ExportDir, workspaceID, "clip-studio")
-	zipPath, included, err := storage.BuildLocalAISceneExportZip(exportDir, clipID, result.VideoPath, result.ThumbnailPath, sceneMetadataPath, storage.LocalAISceneExportManifest{
-		ClipID:              clipID,
-		Prompt:              req.Prompt,
-		StylePreset:         req.StylePreset,
-		TargetLengthSeconds: req.TargetLengthSeconds,
-		Branding:            req.Branding,
+	exportDir := filepath.Join(s.cfg.ExportDir, job.WorkspaceID, "clip-studio")
+	s.updateAISceneGeneration(generationID, func(job *aiSceneGenerationJob) {
+		job.Status = "packaging"
+		job.ProgressPercent = 90
+		job.CurrentStep = "Packaging download"
+		job.EstimatedNextAction = "Preparing download files."
+		job.Response = response
+		job.UpdatedAt = time.Now().UTC()
+	})
+	zipPath, included, err := storage.BuildLocalAISceneExportZip(exportDir, job.ClipID, result.VideoPath, result.ThumbnailPath, sceneMetadataPath, storage.LocalAISceneExportManifest{
+		ClipID:              job.ClipID,
+		Prompt:              job.Request.Prompt,
+		StylePreset:         job.Request.StylePreset,
+		TargetLengthSeconds: job.Request.TargetLengthSeconds,
+		Branding:            job.Request.Branding,
 		Metadata: renderer.LocalAISceneMetadata{
 			RendererVersion:     renderer.LocalAISceneRendererVersion,
 			WorkerURLConfigured: result.WorkerURLConfigured,
@@ -737,13 +858,67 @@ func (s *Server) handleGenerateAIScenes(w http.ResponseWriter, r *http.Request) 
 		},
 	})
 	if err != nil {
-		jsonError(w, "local AI scene export failed: "+err.Error(), http.StatusInternalServerError)
+		response.Success = false
+		response.RenderStatus = renderer.StatusFailed
+		response.GenerationStatus = "failed"
+		response.Notes = "local AI scene export failed: " + err.Error()
+		s.updateAISceneGeneration(generationID, func(job *aiSceneGenerationJob) {
+			job.Status = "failed"
+			job.ProgressPercent = 90
+			job.CurrentStep = "Packaging failed"
+			job.EstimatedNextAction = "Retry generation."
+			job.Response = response
+			job.Err = response.Notes
+			job.UpdatedAt = time.Now().UTC()
+		})
 		return
 	}
 	response.ZipFilename = filepath.Base(zipPath)
 	response.DownloadURL = "/api/clip-studio/download/" + filepath.Base(zipPath)
 	response.IncludedFiles = included
-	jsonOK(w, response)
+	videoFilename := aiSceneVideoFilename(time.Now().UTC())
+	s.updateAISceneGeneration(generationID, func(job *aiSceneGenerationJob) {
+		job.Status = "completed"
+		job.ProgressPercent = 100
+		job.CurrentStep = "Video ready"
+		job.EstimatedNextAction = "Download the generated video or ZIP package."
+		job.Downloadable = true
+		job.Response = response
+		job.VideoDownloadURL = "/api/clip-studio/ai-scenes/generations/" + generationID + "/video"
+		job.VideoDownloadName = videoFilename
+		job.UpdatedAt = time.Now().UTC()
+	})
+}
+
+func (s *Server) handleGetAISceneGeneration(w http.ResponseWriter, r *http.Request) {
+	id := strings.TrimSpace(r.PathValue("id"))
+	job := s.getAISceneGeneration(id)
+	if job == nil {
+		jsonError(w, "AI scene generation not found", http.StatusNotFound)
+		return
+	}
+	jsonOK(w, aiSceneGenerationStatus(job))
+}
+
+func (s *Server) handleDownloadAISceneVideo(w http.ResponseWriter, r *http.Request) {
+	id := strings.TrimSpace(r.PathValue("id"))
+	job := s.getAISceneGeneration(id)
+	if job == nil {
+		jsonError(w, "AI scene generation not found", http.StatusNotFound)
+		return
+	}
+	if !job.Downloadable || strings.TrimSpace(job.Response.VideoPath) == "" {
+		jsonError(w, "AI scene video is not ready", http.StatusConflict)
+		return
+	}
+	if _, err := os.Stat(job.Response.VideoPath); err != nil {
+		jsonError(w, "AI scene video not found", http.StatusNotFound)
+		return
+	}
+	filename := firstNonEmpty(job.VideoDownloadName, aiSceneVideoFilename(job.StartedAt))
+	w.Header().Set("Content-Type", "video/mp4")
+	w.Header().Set("Content-Disposition", `attachment; filename="`+filename+`"`)
+	http.ServeFile(w, r, job.Response.VideoPath)
 }
 
 func (s *Server) handleDownloadClipStudio(w http.ResponseWriter, r *http.Request) {
@@ -887,6 +1062,110 @@ func newClipStudioSourceID() string {
 		return "src-" + time.Now().UTC().Format("20060102150405")
 	}
 	return fmt.Sprintf("src-%s-%x", time.Now().UTC().Format("20060102150405"), b)
+}
+
+func newAISceneGenerationID() string {
+	var b [4]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "gen-" + time.Now().UTC().Format("20060102150405")
+	}
+	return fmt.Sprintf("gen-%s-%x", time.Now().UTC().Format("20060102150405"), b)
+}
+
+func (s *Server) ensureAISceneJobs() {
+	if s.aiSceneJobs == nil {
+		s.aiSceneJobs = map[string]*aiSceneGenerationJob{}
+	}
+}
+
+func (s *Server) storeAISceneGeneration(job *aiSceneGenerationJob) {
+	s.aiSceneMu.Lock()
+	defer s.aiSceneMu.Unlock()
+	s.ensureAISceneJobs()
+	s.aiSceneJobs[job.GenerationID] = job
+}
+
+func (s *Server) getAISceneGeneration(id string) *aiSceneGenerationJob {
+	s.aiSceneMu.Lock()
+	defer s.aiSceneMu.Unlock()
+	s.ensureAISceneJobs()
+	job := s.aiSceneJobs[id]
+	if job == nil {
+		return nil
+	}
+	copy := *job
+	return &copy
+}
+
+func (s *Server) updateAISceneGeneration(id string, fn func(*aiSceneGenerationJob)) {
+	s.aiSceneMu.Lock()
+	defer s.aiSceneMu.Unlock()
+	s.ensureAISceneJobs()
+	if job := s.aiSceneJobs[id]; job != nil {
+		fn(job)
+	}
+}
+
+func aiSceneGenerationStatus(job *aiSceneGenerationJob) aiSceneGenerationStatusResponse {
+	resp := job.Response
+	progress := job.ProgressPercent
+	step := job.CurrentStep
+	nextAction := job.EstimatedNextAction
+	if progress == 0 || step == "" || nextAction == "" {
+		progress, step, nextAction = aiSceneProgressForStatus(job.Status, job.Downloadable)
+	}
+	return aiSceneGenerationStatusResponse{
+		GenerationID:        job.GenerationID,
+		ProgressPercent:     progress,
+		CurrentStep:         step,
+		Status:              firstNonEmpty(job.Status, resp.GenerationStatus, resp.RenderStatus),
+		EstimatedNextAction: nextAction,
+		Downloadable:        job.Downloadable,
+		VideoURL:            job.VideoDownloadURL,
+		VideoFilename:       job.VideoDownloadName,
+		ZipURL:              resp.DownloadURL,
+		ZipFilename:         resp.ZipFilename,
+		Notes:               firstNonEmpty(resp.Notes, job.Err),
+		RendererVersion:     firstNonEmpty(resp.RendererVersion, renderer.LocalAISceneRendererVersion),
+		ClipID:              resp.ClipID,
+		WorkerConfigured:    resp.WorkerConfigured,
+		ModelHint:           resp.ModelHint,
+		ScenePrompts:        resp.ScenePrompts,
+		SceneJobIDs:         resp.SceneJobIDs,
+		SceneJobs:           resp.SceneJobs,
+		IncludedFiles:       resp.IncludedFiles,
+	}
+}
+
+func aiSceneProgressForStatus(status string, downloadable bool) (int, string, string) {
+	if downloadable || status == "completed" {
+		return 100, "Video ready", "Download the generated video or ZIP package."
+	}
+	switch status {
+	case "creating_scenes", "planned":
+		return 15, "Creating scenes", "Sending scene prompts to local AI worker."
+	case "sending_to_worker", "waiting_for_manual_output", "pending", "queued":
+		return 30, "Sending to local AI worker", "Waiting for local generation."
+	case "running":
+		return 50, "Generating video scenes", "The local AI worker is rendering scenes."
+	case "stitching":
+		return 75, "Stitching final video", "Packaging the final video."
+	case "packaging":
+		return 90, "Packaging download", "Preparing download files."
+	case "generator_not_configured":
+		return 30, "Sending to local AI worker", "Configure generator"
+	case "failed", "timed_out":
+		return 30, "Generation failed", "Retry after fixing the generator."
+	default:
+		return 0, "Preparing scene plan", "Preparing scene plan."
+	}
+}
+
+func aiSceneVideoFilename(t time.Time) string {
+	if t.IsZero() {
+		t = time.Now().UTC()
+	}
+	return "trendcortex-ai-video-" + t.UTC().Format("20060102-1504") + ".mp4"
 }
 
 func isSupportedClipVideoExt(ext string) bool {

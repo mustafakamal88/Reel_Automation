@@ -27,11 +27,13 @@ type Server struct {
 
 	dailyRenderMu   sync.Mutex
 	dailyRenderJobs map[string]dailyPackageRenderJob
+	aiSceneMu       sync.Mutex
+	aiSceneJobs     map[string]*aiSceneGenerationJob
 }
 
 // NewServer constructs the Server with all dependencies.
 func NewServer(cfg *config.Config, db *database.DB, reg oauth.Registry, al *audit.Logger) *Server {
-	return &Server{cfg: cfg, db: db, registry: reg, audit: al, dailyRenderJobs: map[string]dailyPackageRenderJob{}}
+	return &Server{cfg: cfg, db: db, registry: reg, audit: al, dailyRenderJobs: map[string]dailyPackageRenderJob{}, aiSceneJobs: map[string]*aiSceneGenerationJob{}}
 }
 
 // Routes returns the root http.Handler with all routes registered.
@@ -109,6 +111,8 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /api/clip-studio/ai-scenes/worker-status", s.handleAISceneWorkerStatus)
 	mux.HandleFunc("POST /api/clip-studio/ai-scenes/plan", s.handlePlanAIScenes)
 	mux.HandleFunc("POST /api/clip-studio/ai-scenes/generate", s.handleGenerateAIScenes)
+	mux.HandleFunc("GET /api/clip-studio/ai-scenes/generations/{id}", s.handleGetAISceneGeneration)
+	mux.HandleFunc("GET /api/clip-studio/ai-scenes/generations/{id}/video", s.handleDownloadAISceneVideo)
 	mux.HandleFunc("GET /api/clip-studio/download/{filename}", s.handleDownloadClipStudio)
 
 	mux.HandleFunc("GET /api/video-jobs", s.handleListVideoJobs)

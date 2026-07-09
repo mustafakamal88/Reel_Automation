@@ -1,5 +1,6 @@
 import type { ClipStudioSourceResponse } from '../lib/api/client';
 import type { ClipStudioGenerateResponse } from '../lib/api/client';
+import type { AISceneGenerationStatusResponse } from '../lib/api/client';
 
 export type ClipSourceStatusState =
   | 'none'
@@ -134,5 +135,26 @@ export function getClipSourceStatus(source: ClipStudioSourceResponse | null, sou
     label: 'Unsupported URL',
     message: source?.message || referenceOnlyMessage,
     tone: 'danger',
+  };
+}
+
+export function aiSceneProgressLabel(status: AISceneGenerationStatusResponse | null, busy: boolean): string {
+  if (status?.status === 'completed') return 'Video ready';
+  if (status?.status === 'generator_not_configured') {
+    return 'AI video generator is connected but automatic model generation is not configured yet.';
+  }
+  if (status?.current_step) return status.current_step;
+  return busy ? 'Creating scenes' : 'Preparing scene plan';
+}
+
+export function aiScenePrimaryButtonLabel(status: AISceneGenerationStatusResponse | null, busy: boolean): string {
+  if (status?.status === 'generator_not_configured') return 'Configure generator';
+  return busy ? 'Generating video...' : 'Generate Video';
+}
+
+export function aiSceneDownloadsReady(status: AISceneGenerationStatusResponse | null): { video: boolean; zip: boolean } {
+  return {
+    video: Boolean(status?.downloadable && status.video_url && status.video_filename),
+    zip: Boolean(status?.downloadable && status.zip_url && status.zip_filename),
   };
 }

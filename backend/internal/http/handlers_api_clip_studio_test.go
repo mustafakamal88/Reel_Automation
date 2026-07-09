@@ -443,7 +443,7 @@ func TestClipStudioGenerateZipContainsClipsAndAttributionMetadata(t *testing.T) 
 	}
 }
 
-func TestAISceneMissingWorkerReturnsNotConnected(t *testing.T) {
+func TestAISceneMissingWorkerPollReturnsNotConnected(t *testing.T) {
 	s := testClipStudioServer(t)
 	body := strings.NewReader(`{"prompt":"realistic scenes","style_preset":"realistic_editorial","target_length_seconds":30}`)
 	req := httptest.NewRequest(stdhttp.MethodPost, "/api/clip-studio/ai-scenes/generate", body)
@@ -457,11 +457,47 @@ func TestAISceneMissingWorkerReturnsNotConnected(t *testing.T) {
 	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if got.Success || got.RenderStatus != renderer.StatusLocalAIWorkerNotConnected || got.WorkerConfigured {
-		t.Fatalf("unexpected not-connected response: %+v", got)
+	if got.GenerationID == "" {
+		t.Fatalf("generation_id missing: %+v", got)
 	}
-	if !strings.Contains(got.Notes, "Connect local AI worker") {
-		t.Fatalf("notes = %q", got.Notes)
+	status := waitForAISceneStatus(t, s, got.GenerationID, "not_connected")
+	if status.Downloadable || status.ProgressPercent != 0 || status.WorkerConfigured {
+		t.Fatalf("unexpected not-connected status: %+v", status)
+	}
+	if !strings.Contains(status.Notes, "Connect local AI worker") {
+		t.Fatalf("notes = %q", status.Notes)
+	}
+}
+
+func TestAISceneGeneratorNotConfiguredReturnsImmediatePollStatus(t *testing.T) {
+	s := testClipStudioServer(t)
+	worker := httptest.NewServer(stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+		switch {
+		case r.URL.Path == "/health":
+			_, _ = w.Write([]byte(`{"status":"ok","message":"worker connected","auto_command_configured":false}`))
+		case r.URL.Path == "/generate-scene":
+			_, _ = w.Write([]byte(`{"id":"job-1","status":"generator_not_configured","worker_message":"AI video generator is connected but automatic model generation is not configured yet."}`))
+		case r.URL.Path == "/jobs/job-1":
+			_, _ = w.Write([]byte(`{"id":"job-1","status":"generator_not_configured","worker_message":"AI video generator is connected but automatic model generation is not configured yet."}`))
+		default:
+			stdhttp.NotFound(w, r)
+		}
+	}))
+	defer worker.Close()
+	s.cfg.LocalAIWorkerURL = worker.URL
+
+	body := strings.NewReader(`{"prompt":"realistic scenes","style_preset":"realistic_editorial","target_length_seconds":30}`)
+	req := httptest.NewRequest(stdhttp.MethodPost, "/api/clip-studio/ai-scenes/generate", body)
+	rec := httptest.NewRecorder()
+	s.Routes().ServeHTTP(rec, req)
+
+	var got aiSceneGenerateResponse
+	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	status := waitForAISceneStatus(t, s, got.GenerationID, "generator_not_configured")
+	if status.ProgressPercent != 30 || status.EstimatedNextAction != "Configure generator" {
+		t.Fatalf("unexpected generator_not_configured status: %+v", status)
 	}
 }
 
@@ -546,10 +582,14 @@ func TestAISceneGenerateZipIncludesFinalVideoThumbnailManifestAndSceneMetadata(t
 	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if !got.Success || got.ZipFilename == "" {
-		t.Fatalf("generate did not succeed: %+v", got)
+	if got.GenerationID == "" {
+		t.Fatalf("generation_id missing: %+v", got)
 	}
-	zipPath := filepath.Join(s.cfg.ExportDir, "default-workspace", "clip-studio", got.ZipFilename)
+	status := waitForAISceneStatus(t, s, got.GenerationID, "completed")
+	if !status.Downloadable || status.ZipFilename == "" || status.VideoURL == "" {
+		t.Fatalf("generate did not complete: %+v", status)
+	}
+	zipPath := filepath.Join(s.cfg.ExportDir, "default-workspace", "clip-studio", status.ZipFilename)
 	zr, err := zip.OpenReader(zipPath)
 	if err != nil {
 		t.Fatalf("open ai scene zip: %v", err)
@@ -559,11 +599,34 @@ func TestAISceneGenerateZipIncludesFinalVideoThumbnailManifestAndSceneMetadata(t
 	for _, f := range zr.File {
 		names[f.Name] = true
 	}
-	for _, name := range []string{"video.mp4", "thumbnail.png", "manifest.json", "scene-metadata.json"} {
+	for _, name := range []string{"video.mp4", "thumbnail.png", "manifest.json", "scene-metadata.json", "scene_metadata.json"} {
 		if !names[name] {
 			t.Fatalf("expected zip entry %q; entries=%v", name, names)
 		}
 	}
+}
+
+func waitForAISceneStatus(t *testing.T, s *Server, generationID, want string) aiSceneGenerationStatusResponse {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	var got aiSceneGenerationStatusResponse
+	for time.Now().Before(deadline) {
+		req := httptest.NewRequest(stdhttp.MethodGet, "/api/clip-studio/ai-scenes/generations/"+generationID, nil)
+		rec := httptest.NewRecorder()
+		s.Routes().ServeHTTP(rec, req)
+		if rec.Code != stdhttp.StatusOK {
+			t.Fatalf("poll status = %d, body = %s", rec.Code, rec.Body.String())
+		}
+		if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
+			t.Fatalf("decode poll response: %v", err)
+		}
+		if got.Status == want {
+			return got
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for %s, last status: %+v", want, got)
+	return got
 }
 
 func testClipStudioServer(t *testing.T) *Server {
@@ -574,7 +637,7 @@ func testClipStudioServer(t *testing.T) *Server {
 		ExportDir:      filepath.Join(tmp, "exports"),
 		FFmpegPath:     "ffmpeg",
 		FFprobePath:    "ffprobe",
-	}}
+	}, aiSceneJobs: map[string]*aiSceneGenerationJob{}}
 }
 
 func writeClipStudioSourceFixture(t *testing.T, s *Server) string {
