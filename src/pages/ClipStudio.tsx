@@ -11,6 +11,8 @@ import {
   type AIScenePlanResponse,
   type AISceneWorkerStatusResponse,
   uploadClipStudioSource,
+  type ClipCTASize,
+  type ClipLayoutMode,
   type ClipSourceModel,
   type ClipStudioGenerateResponse,
   type ClipStudioSourceResponse,
@@ -92,6 +94,9 @@ export function ClipStudioPage() {
   const [topText, setTopText] = useState('TREND CLIP');
   const [bottomText, setBottomText] = useState('FOLLOW FOR THE FULL STORY');
   const [watermark, setWatermark] = useState('@trendcortex');
+  const [layoutMode, setLayoutMode] = useState<ClipLayoutMode>('blurred_background');
+  const [captionText, setCaptionText] = useState('');
+  const [ctaSize, setCtaSize] = useState<ClipCTASize>('small');
   const [rightsConfirmed, setRightsConfirmed] = useState(false);
 
   const [sourceModel, setSourceModel] = useState<ClipSourceModel>('user_upload');
@@ -282,7 +287,10 @@ export function ClipStudioPage() {
           font_style_preset: 'bold_editorial',
           top_banner_color: '#111827',
           bottom_banner_color: '#0f766e',
+          cta_size: ctaSize,
         },
+        caption_text: captionText,
+        layout_mode: layoutMode,
         rights: {
           source_url: sourceUrl.trim() || activeSource.metadata.url,
           source_title: sourceTitle,
@@ -473,6 +481,20 @@ export function ClipStudioPage() {
                 <option value={6}>6</option>
               </select>
             </Field>
+            <Field label="Layout mode">
+              <select value={layoutMode} onChange={event => setLayoutMode(event.target.value as ClipLayoutMode)} style={inputStyle()}>
+                <option value="blurred_background">Blurred background</option>
+                <option value="fill_crop">Fill crop</option>
+                <option value="fit_with_bars">Fit with bars</option>
+              </select>
+            </Field>
+            <Field label="CTA size">
+              <select value={ctaSize} onChange={event => setCtaSize(event.target.value as ClipCTASize)} style={inputStyle()}>
+                <option value="small">Small</option>
+                <option value="medium">Medium</option>
+                <option value="large">Large</option>
+              </select>
+            </Field>
           </div>
 
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 10 }}>
@@ -486,6 +508,16 @@ export function ClipStudioPage() {
               <input value={watermark} onChange={event => setWatermark(event.target.value)} style={inputStyle()} />
             </Field>
           </div>
+
+          <Field label="Caption text optional">
+            <textarea
+              value={captionText}
+              onChange={event => setCaptionText(event.target.value)}
+              rows={2}
+              placeholder="Only this text appears on the video. Leave blank to hide captions."
+              style={{ ...inputStyle(), resize: 'vertical', minHeight: 70, fontSize: 13 }}
+            />
+          </Field>
 
           <label style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 12, color: 'var(--text-secondary)' }}>
             <input type="checkbox" checked={rightsConfirmed} onChange={event => setRightsConfirmed(event.target.checked)} />

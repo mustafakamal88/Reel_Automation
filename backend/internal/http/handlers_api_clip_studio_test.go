@@ -185,12 +185,14 @@ func TestClipStudioGenerateZipContainsClipsAndAttributionMetadata(t *testing.T) 
 	body := strings.NewReader(`{
 		"source_id":"` + sourceID + `",
 		"prompt":"make funny clips",
+		"caption_text":"Watch this turn",
+		"layout_mode":"fill_crop",
 		"clip_length":"15s",
 		"clip_count":1,
 		"rights_confirmed":true,
 		"rights":{"user_confirmed_rights":true},
 		"advanced":{"source_model":"user_upload","attribution_text":"Generated attribution"},
-		"branding":{"top_banner_text":"TOP","bottom_banner_text":"BOTTOM","watermark_text":"@test"}
+		"branding":{"top_banner_text":"TOP","bottom_banner_text":"BOTTOM","watermark_text":"@test","cta_size":"large"}
 	}`)
 	req := httptest.NewRequest(stdhttp.MethodPost, "/api/clip-studio/generate", body)
 	rec := httptest.NewRecorder()
@@ -221,6 +223,20 @@ func TestClipStudioGenerateZipContainsClipsAndAttributionMetadata(t *testing.T) 
 		if !names[name] {
 			t.Fatalf("expected zip entry %q; entries=%v", name, names)
 		}
+	}
+	meta := readZipJSON[struct {
+		CaptionText string                        `json:"caption_text"`
+		LayoutMode  string                        `json:"layout_mode"`
+		Branding    renderer.ClipBrandingSettings `json:"branding"`
+	}](t, &zr.Reader, "clip-01/attribution.json")
+	if meta.LayoutMode != "fill_crop" || meta.Branding.CTASize != "large" {
+		t.Fatalf("layout metadata mismatch: %+v", meta)
+	}
+	if meta.CaptionText != "Watch this turn" {
+		t.Fatalf("caption_text = %q, want explicit caption", meta.CaptionText)
+	}
+	if meta.CaptionText == "make funny clips" {
+		t.Fatal("prompt leaked into caption_text metadata")
 	}
 }
 
@@ -370,6 +386,28 @@ func requireFFmpeg(t *testing.T) {
 	if _, err := exec.LookPath("ffprobe"); err != nil {
 		t.Skip("ffprobe not available")
 	}
+}
+
+func readZipJSON[T any](t *testing.T, zr *zip.Reader, name string) T {
+	t.Helper()
+	for _, f := range zr.File {
+		if f.Name != name {
+			continue
+		}
+		rc, err := f.Open()
+		if err != nil {
+			t.Fatalf("open %s: %v", name, err)
+		}
+		defer rc.Close()
+		var out T
+		if err := json.NewDecoder(rc).Decode(&out); err != nil {
+			t.Fatalf("decode %s: %v", name, err)
+		}
+		return out
+	}
+	t.Fatalf("zip entry %q missing", name)
+	var zero T
+	return zero
 }
 
 type roundTripFunc func(*stdhttp.Request) (*stdhttp.Response, error)

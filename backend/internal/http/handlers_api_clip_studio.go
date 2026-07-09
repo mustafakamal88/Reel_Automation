@@ -25,7 +25,9 @@ type clipStudioRenderRequest struct {
 	Branding        renderer.ClipBrandingSettings    `json:"branding"`
 	ManualRange     renderer.ClipManualRange         `json:"manual_range"`
 	Captions        string                           `json:"captions"`
+	CaptionText     string                           `json:"caption_text"`
 	IncludeCaptions bool                             `json:"include_captions"`
+	LayoutMode      string                           `json:"layout_mode"`
 	AIHighlights    renderer.ClipAIHighlightMetadata `json:"ai_highlights"`
 }
 
@@ -85,6 +87,8 @@ type clipStudioGenerateRequest struct {
 	ClipLength      string                        `json:"clip_length"`
 	ClipCount       int                           `json:"clip_count"`
 	Branding        renderer.ClipBrandingSettings `json:"branding"`
+	CaptionText     string                        `json:"caption_text,omitempty"`
+	LayoutMode      string                        `json:"layout_mode,omitempty"`
 	Rights          renderer.ClipRightsMetadata   `json:"rights"`
 	RightsConfirmed bool                          `json:"rights_confirmed"`
 	Advanced        clipStudioGenerateAdvanced    `json:"advanced"`
@@ -205,7 +209,9 @@ func (s *Server) handleRenderClipStudio(w http.ResponseWriter, r *http.Request) 
 		Branding:        req.Branding,
 		ManualRange:     req.ManualRange,
 		Captions:        req.Captions,
+		CaptionText:     req.CaptionText,
 		IncludeCaptions: req.IncludeCaptions,
+		LayoutMode:      req.LayoutMode,
 		AIHighlights:    req.AIHighlights,
 	}
 	if input.AIHighlights.TranscriptionStatus == "" {
@@ -234,6 +240,8 @@ func (s *Server) handleRenderClipStudio(w http.ResponseWriter, r *http.Request) 
 		Rights:          input.Rights,
 		Branding:        input.Branding,
 		ManualRange:     input.ManualRange,
+		CaptionText:     input.CaptionText,
+		LayoutMode:      input.LayoutMode,
 		AIHighlights:    input.AIHighlights,
 		RendererVersion: result.RendererVersion,
 	}
@@ -488,8 +496,9 @@ func (s *Server) handleGenerateClipStudio(w http.ResponseWriter, r *http.Request
 			Rights:          rights,
 			Branding:        req.Branding,
 			ManualRange:     manualRange,
-			Captions:        req.Prompt,
-			IncludeCaptions: strings.TrimSpace(req.Prompt) != "",
+			CaptionText:     req.CaptionText,
+			IncludeCaptions: strings.TrimSpace(req.CaptionText) != "",
+			LayoutMode:      req.LayoutMode,
 			AIHighlights:    renderer.DefaultClipAIHighlightMetadata(),
 		}
 		result := renderer.RenderManualClip(r.Context(), renderer.Config{
@@ -520,6 +529,8 @@ func (s *Server) handleGenerateClipStudio(w http.ResponseWriter, r *http.Request
 				Rights:          input.Rights,
 				Branding:        input.Branding,
 				ManualRange:     input.ManualRange,
+				CaptionText:     input.CaptionText,
+				LayoutMode:      input.LayoutMode,
 				AIHighlights:    input.AIHighlights,
 				RendererVersion: result.RendererVersion,
 			},

@@ -14,6 +14,8 @@ type ClipStudioExportMetadata struct {
 	Rights          renderer.ClipRightsMetadata      `json:"rights"`
 	Branding        renderer.ClipBrandingSettings    `json:"branding"`
 	ManualRange     renderer.ClipManualRange         `json:"manual_range"`
+	CaptionText     string                           `json:"caption_text,omitempty"`
+	LayoutMode      string                           `json:"layout_mode,omitempty"`
 	AIHighlights    renderer.ClipAIHighlightMetadata `json:"ai_highlights"`
 	RendererVersion string                           `json:"renderer_version"`
 	VideoFile       string                           `json:"video_file,omitempty"`

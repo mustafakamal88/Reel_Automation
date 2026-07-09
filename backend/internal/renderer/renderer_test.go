@@ -78,6 +78,15 @@ func TestRenderManualClipStoresRightsMetadata(t *testing.T) {
 	if got.Rights.SourceURL != input.Rights.SourceURL || got.Rights.AttributionText != input.Rights.AttributionText {
 		t.Fatalf("rights metadata not stored: %+v", got.Rights)
 	}
+	if got.LayoutMode != ClipLayoutBlurredBackground {
+		t.Fatalf("layout mode = %q, want %q", got.LayoutMode, ClipLayoutBlurredBackground)
+	}
+	if got.CaptionText != input.CaptionText {
+		t.Fatalf("caption text = %q, want %q", got.CaptionText, input.CaptionText)
+	}
+	if got.Branding.CTASize != ClipCTASizeSmall {
+		t.Fatalf("cta size = %q, want %q", got.Branding.CTASize, ClipCTASizeSmall)
+	}
 	if !got.Rights.UserConfirmedRights {
 		t.Fatal("user_confirmed_rights was not stored")
 	}
@@ -154,8 +163,9 @@ func testClipInput(source string) ClipInput {
 			BottomBannerColor: "#0f766e",
 		},
 		ManualRange:     ClipManualRange{StartSeconds: 0, EndSeconds: 1.5},
-		Captions:        "A short licensed clip.",
+		CaptionText:     "A short licensed clip.",
 		IncludeCaptions: true,
+		LayoutMode:      ClipLayoutBlurredBackground,
 		AIHighlights:    DefaultClipAIHighlightMetadata(),
 	}
 }

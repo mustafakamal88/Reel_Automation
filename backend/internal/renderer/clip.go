@@ -23,6 +23,14 @@ const (
 	ClipSourceExternalURLPendingRightsConfirmation = "external_url_pending_rights_confirmation"
 
 	ClipRendererVersion = "clip-studio-v1"
+
+	ClipLayoutFitWithBars       = "fit_with_bars"
+	ClipLayoutFillCrop          = "fill_crop"
+	ClipLayoutBlurredBackground = "blurred_background"
+
+	ClipCTASizeSmall  = "small"
+	ClipCTASizeMedium = "medium"
+	ClipCTASizeLarge  = "large"
 )
 
 type ClipRightsMetadata struct {
@@ -45,6 +53,7 @@ type ClipBrandingSettings struct {
 	FontStylePreset   string `json:"font_style_preset,omitempty"`
 	TopBannerColor    string `json:"top_banner_color,omitempty"`
 	BottomBannerColor string `json:"bottom_banner_color,omitempty"`
+	CTASize           string `json:"cta_size,omitempty"`
 }
 
 type ClipManualRange struct {
@@ -67,7 +76,9 @@ type ClipInput struct {
 	Branding        ClipBrandingSettings    `json:"branding"`
 	ManualRange     ClipManualRange         `json:"manual_range"`
 	Captions        string                  `json:"captions,omitempty"`
+	CaptionText     string                  `json:"caption_text,omitempty"`
 	IncludeCaptions bool                    `json:"include_captions"`
+	LayoutMode      string                  `json:"layout_mode,omitempty"`
 	AIHighlights    ClipAIHighlightMetadata `json:"ai_highlights"`
 }
 
@@ -177,6 +188,8 @@ func writeClipMetadata(dir string, input ClipInput) error {
 	if input.AIHighlights.TranscriptionStatus == "" {
 		input.AIHighlights = DefaultClipAIHighlightMetadata()
 	}
+	input.LayoutMode = normalizeClipLayoutMode(input.LayoutMode)
+	input.Branding.CTASize = normalizeClipCTASize(input.Branding.CTASize)
 	payload, err := json.MarshalIndent(input, "", "  ")
 	if err != nil {
 		return err
@@ -185,9 +198,8 @@ func writeClipMetadata(dir string, input ClipInput) error {
 }
 
 func renderManualClipVideo(ctx context.Context, ffmpegPath string, input ClipInput, duration float64, overlayPath, videoPath string) error {
-	filter := "[0:v]scale=1080:1080:force_original_aspect_ratio=decrease,pad=1080:1080:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1[clip];" +
-		fmt.Sprintf("color=c=0x05070b:s=1080x1920:d=%s[base];", formatSeconds(duration)) +
-		"[base][clip]overlay=x=0:y=390[tmp];[tmp][1:v]overlay=x=0:y=0,format=yuv420p[vout]"
+	_, contentY, contentH := clipVideoContentRect(input)
+	filter := renderClipLayoutFilter(input.LayoutMode, duration, contentY, contentH)
 	args := []string{
 		"-y",
 		"-ss", formatSeconds(input.ManualRange.StartSeconds),
@@ -210,36 +222,66 @@ func renderManualClipVideo(ctx context.Context, ffmpegPath string, input ClipInp
 	return runCommand(ctx, ffmpegPath, args...)
 }
 
+func renderClipLayoutFilter(layoutMode string, duration float64, contentY, contentH int) string {
+	layoutMode = normalizeClipLayoutMode(layoutMode)
+	switch layoutMode {
+	case ClipLayoutFitWithBars:
+		return fmt.Sprintf("[0:v]scale=1080:%d:force_original_aspect_ratio=decrease,pad=1080:%d:(ow-iw)/2:(oh-ih)/2:color=0x05070b,setsar=1[clip];", contentH, contentH) +
+			fmt.Sprintf("color=c=0x05070b:s=1080x1920:d=%s[base];", formatSeconds(duration)) +
+			fmt.Sprintf("[base][clip]overlay=x=0:y=%d[tmp];[tmp][1:v]overlay=x=0:y=0,format=yuv420p[vout]", contentY)
+	case ClipLayoutFillCrop:
+		return fmt.Sprintf("[0:v]scale=1080:%d:force_original_aspect_ratio=increase,crop=1080:%d,setsar=1[clip];", contentH, contentH) +
+			fmt.Sprintf("color=c=0x05070b:s=1080x1920:d=%s[base];", formatSeconds(duration)) +
+			fmt.Sprintf("[base][clip]overlay=x=0:y=%d[tmp];[tmp][1:v]overlay=x=0:y=0,format=yuv420p[vout]", contentY)
+	default:
+		return "[0:v]split=2[srcbg][srcfg];[srcbg]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,boxblur=32:10,eq=brightness=-0.10:saturation=0.86,setsar=1[bg];" +
+			fmt.Sprintf("[srcfg]scale=1016:%d:force_original_aspect_ratio=decrease,setsar=1[fg];", contentH) +
+			fmt.Sprintf("[bg][fg]overlay=x=(W-w)/2:y=%d[tmp];[tmp][1:v]overlay=x=0:y=0,format=yuv420p[vout]", contentY)
+	}
+}
+
 func renderClipThumbnail(ctx context.Context, ffmpegPath, videoPath, thumbnailPath string) error {
 	return runCommand(ctx, ffmpegPath, "-y", "-i", videoPath, "-frames:v", "1", thumbnailPath)
 }
 
 func renderClipOverlayPNG(path string, input ClipInput) error {
 	img := image.NewRGBA(image.Rect(0, 0, VideoWidth, VideoHeight))
+	input.Branding.CTASize = normalizeClipCTASize(input.Branding.CTASize)
 	topColor := parseHexColor(firstNonEmpty(input.Branding.TopBannerColor, "#111827"), color.RGBA{17, 24, 39, 255})
 	bottomColor := parseHexColor(firstNonEmpty(input.Branding.BottomBannerColor, "#0f766e"), color.RGBA{15, 118, 110, 255})
-	fillRect(img, image.Rect(0, 0, VideoWidth, 300), topColor)
-	fillRect(img, image.Rect(0, 1500, VideoWidth, VideoHeight), bottomColor)
-	fillRect(img, image.Rect(0, 300, VideoWidth, 390), color.RGBA{5, 7, 11, 255})
-	fillRect(img, image.Rect(0, 1470, VideoWidth, 1500), color.RGBA{5, 7, 11, 255})
+	topY, topH, bottomY, bottomH := clipBannerRects(input.Branding.CTASize)
+	fillRect(img, image.Rect(0, topY, VideoWidth, topY+topH), topColor)
+	fillRect(img, image.Rect(0, bottomY, VideoWidth, bottomY+bottomH), bottomColor)
+	fillRect(img, image.Rect(0, topY+topH, VideoWidth, topY+topH+10), color.RGBA{248, 250, 252, 24})
+	fillRect(img, image.Rect(0, bottomY-10, VideoWidth, bottomY), color.RGBA{248, 250, 252, 24})
 
 	topText := firstNonEmpty(input.Branding.TopBannerText, input.Rights.SourceTitle, "Clip Studio")
 	bottomText := firstNonEmpty(input.Branding.BottomBannerText, input.Branding.CTAText, "Follow for more")
-	drawMultilineBitmapText(img, 72, 84, wrapOverlayText(topText, 18, 2), 10, 18, color.RGBA{248, 250, 252, 255})
-	drawMultilineBitmapText(img, 72, 1542, wrapOverlayText(bottomText, 20, 2), 9, 16, color.RGBA{248, 250, 252, 255})
-	if input.Branding.CTAText != "" && input.Branding.CTAText != bottomText {
-		drawMultilineBitmapText(img, 72, 1658, wrapOverlayText(input.Branding.CTAText, 30, 1), 5, 10, color.RGBA{204, 251, 241, 255})
+	drawMultilineBitmapText(img, 68, topY+34, wrapOverlayText(topText, 26, 1), 7, 12, color.RGBA{248, 250, 252, 255})
+	bottomScale := 6
+	bottomLines := 1
+	if input.Branding.CTASize == ClipCTASizeLarge {
+		bottomScale = 9
+		bottomLines = 2
+	} else if input.Branding.CTASize == ClipCTASizeMedium {
+		bottomScale = 7
+		bottomLines = 2
 	}
-	if input.IncludeCaptions && strings.TrimSpace(input.Captions) != "" {
-		fillRect(img, image.Rect(70, 1292, 1010, 1436), color.RGBA{0, 0, 0, 185})
-		drawMultilineBitmapText(img, 96, 1322, wrapOverlayText(input.Captions, 34, 2), 5, 12, color.RGBA{248, 250, 252, 255})
+	drawMultilineBitmapText(img, 68, bottomY+36, wrapOverlayText(bottomText, 30, bottomLines), bottomScale, 14, color.RGBA{248, 250, 252, 255})
+	if input.Branding.CTASize == ClipCTASizeLarge && input.Branding.CTAText != "" && input.Branding.CTAText != bottomText {
+		drawMultilineBitmapText(img, 72, bottomY+188, wrapOverlayText(input.Branding.CTAText, 36, 1), 5, 10, color.RGBA{204, 251, 241, 255})
+	}
+	captionText := firstNonEmpty(input.CaptionText)
+	if input.IncludeCaptions && captionText != "" {
+		fillRect(img, image.Rect(76, bottomY-178, 1004, bottomY-44), color.RGBA{0, 0, 0, 165})
+		drawMultilineBitmapText(img, 104, bottomY-146, wrapOverlayText(captionText, 38, 2), 5, 12, color.RGBA{248, 250, 252, 255})
 	}
 	if input.Branding.WatermarkText != "" {
-		drawMultilineBitmapText(img, 760, 1424, wrapOverlayText(input.Branding.WatermarkText, 18, 1), 4, 8, color.RGBA{226, 232, 240, 210})
+		drawMultilineBitmapText(img, 744, bottomY-76, wrapOverlayText(input.Branding.WatermarkText, 20, 1), 4, 8, color.RGBA{248, 250, 252, 185})
 	}
 	copyright := firstNonEmpty(input.Rights.CopyrightOverlayText, input.Rights.AttributionText)
 	if copyright != "" {
-		drawMultilineBitmapText(img, 72, 1450, wrapOverlayText(copyright, 42, 1), 3, 6, color.RGBA{226, 232, 240, 205})
+		drawMultilineBitmapText(img, 68, bottomY-34, wrapOverlayText(copyright, 46, 1), 3, 6, color.RGBA{226, 232, 240, 175})
 	}
 
 	f, err := os.Create(path)
@@ -248,6 +290,56 @@ func renderClipOverlayPNG(path string, input ClipInput) error {
 	}
 	defer f.Close()
 	return png.Encode(f, img)
+}
+
+func normalizeClipLayoutMode(mode string) string {
+	switch strings.TrimSpace(mode) {
+	case ClipLayoutFitWithBars:
+		return ClipLayoutFitWithBars
+	case ClipLayoutFillCrop:
+		return ClipLayoutFillCrop
+	default:
+		return ClipLayoutBlurredBackground
+	}
+}
+
+func normalizeClipCTASize(size string) string {
+	switch strings.TrimSpace(size) {
+	case ClipCTASizeMedium:
+		return ClipCTASizeMedium
+	case ClipCTASizeLarge:
+		return ClipCTASizeLarge
+	default:
+		return ClipCTASizeSmall
+	}
+}
+
+func clipBannerRects(ctaSize string) (topY, topH, bottomY, bottomH int) {
+	topY = 78
+	topH = 132
+	switch normalizeClipCTASize(ctaSize) {
+	case ClipCTASizeLarge:
+		bottomH = 310
+	case ClipCTASizeMedium:
+		bottomH = 228
+	default:
+		bottomH = 172
+	}
+	bottomY = 1780 - bottomH
+	return topY, topH, bottomY, bottomH
+}
+
+func clipVideoContentRect(input ClipInput) (topY, contentY, contentH int) {
+	_, topH, bottomY, _ := clipBannerRects(input.Branding.CTASize)
+	contentY = topH + 98
+	if contentY < 230 {
+		contentY = 230
+	}
+	contentH = bottomY - contentY - 28
+	if contentH < 1000 {
+		contentH = 1000
+	}
+	return 78, contentY, contentH
 }
 
 func parseHexColor(s string, fallback color.RGBA) color.RGBA {

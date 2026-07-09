@@ -562,6 +562,9 @@ export type ClipSourceModel =
   | 'licensed_source'
   | 'external_url_pending_rights_confirmation';
 
+export type ClipLayoutMode = 'fit_with_bars' | 'fill_crop' | 'blurred_background';
+export type ClipCTASize = 'small' | 'medium' | 'large';
+
 export interface ClipRightsMetadata {
   source_url?: string;
   source_title?: string;
@@ -582,6 +585,7 @@ export interface ClipBrandingSettings {
   font_style_preset?: string;
   top_banner_color?: string;
   bottom_banner_color?: string;
+  cta_size?: ClipCTASize;
 }
 
 export interface ClipStudioRenderRequest {
@@ -595,7 +599,9 @@ export interface ClipStudioRenderRequest {
     end_seconds: number;
   };
   captions?: string;
+  caption_text?: string;
   include_captions: boolean;
+  layout_mode?: ClipLayoutMode;
   ai_highlights: {
     transcription_status: 'not_run';
     suggested_clips_status: 'not_run';
@@ -653,6 +659,8 @@ export interface ClipStudioGenerateRequest {
   clip_length: 'auto' | '15s' | '30s' | '60s' | '3min';
   clip_count: 1 | 3 | 6;
   branding: ClipBrandingSettings;
+  caption_text?: string;
+  layout_mode?: ClipLayoutMode;
   rights: ClipRightsMetadata;
   rights_confirmed: boolean;
   advanced: {
