@@ -538,6 +538,7 @@ var stopWords = map[string]bool{
 	"are": true, "was": true, "were": true, "how": true, "why": true, "what": true, "when": true, "where": true, "will": true,
 	"can": true, "into": true, "about": true, "video": true, "videos": true, "shorts": true, "youtube": true, "official": true,
 	"http": true, "https": true, "www": true, "com": true, "watch": true, "subscribe": true, "channel": true, "new": true, "full": true,
+	"lnk":     true,
 	"episode": true, "part": true, "best": true, "scenes": true, "2026": true, "2025": true, "2024": true, "like": true, "comment": true,
 	"share": true, "follow": true, "instagram": true, "tiktok": true, "facebook": true, "twitter": true, "xcom": true,
 }
