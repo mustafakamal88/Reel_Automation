@@ -548,7 +548,7 @@ function NicheFinderTab({ providers, candidates, region, language, audience, onG
   generatingID: string | null;
 }) {
   const activeProviders = providers.filter(p => p.status === 'active').map(p => p.id);
-  const hasEnough = candidates.length >= 3;
+  const hasEnough = activeProviders.length >= 2 && candidates.length >= 3;
   const ideas = candidates.slice(0, 5).map((candidate, idx) => ({
     candidate,
     score: Math.max(1, Math.round(candidate.score * (idx === 0 ? 1 : 0.92))),
@@ -563,7 +563,7 @@ function NicheFinderTab({ providers, candidates, region, language, audience, onG
         <div className="empty-state">
           <div className="empty-icon">ND</div>
           <div className="empty-title">Need more connected sources.</div>
-          <div className="empty-desc">Niche ideas require enough real provider data. Connect YouTube/TikTok/Instagram/X/Facebook or load Google Trends results for the selected region.</div>
+          <div className="empty-desc">Niche ideas require enough real cross-source provider data. Google Trends can seed research, but connect YouTube/TikTok/Instagram/X/Facebook before TrendCortex calls this a niche opportunity.</div>
         </div>
       )}
       {hasEnough && (
