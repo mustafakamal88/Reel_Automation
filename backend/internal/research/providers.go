@@ -1,6 +1,7 @@
 package research
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -8,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"regexp"
 	"sort"
 	"strconv"
@@ -97,37 +99,50 @@ type VideoAnalysisResult struct {
 	TitleStructureAnalysis     string                 `json:"title_structure_analysis,omitempty"`
 	DescriptionHashtagAnalysis string                 `json:"description_hashtag_analysis,omitempty"`
 	PerformanceSignals         map[string]any         `json:"performance_signals,omitempty"`
+	VideoSnapshot              map[string]any         `json:"video_snapshot,omitempty"`
+	KeywordIntelligence        KeywordIntelligence    `json:"keyword_intelligence,omitempty"`
+	HookIntelligence           HookIntelligence       `json:"hook_intelligence,omitempty"`
+	NicheAnalysis              NicheAnalysis          `json:"niche_analysis,omitempty"`
+	CreatorOpportunities       CreatorOpportunities   `json:"creator_opportunities,omitempty"`
 	SuggestedRemakeAngles      []string               `json:"suggested_remake_angles,omitempty"`
 	Limitations                []string               `json:"limitations"`
 	Metadata                   ProviderResultMetadata `json:"metadata"`
 }
 
 type ChannelAnalysisResult struct {
-	Status                string                 `json:"status"`
-	Message               string                 `json:"message"`
-	ChannelURL            string                 `json:"channel_url"`
-	ChannelID             string                 `json:"channel_id,omitempty"`
-	ChannelTitle          string                 `json:"channel_title,omitempty"`
-	Description           string                 `json:"description,omitempty"`
-	Subscribers           *uint64                `json:"subscribers,omitempty"`
-	Views                 *uint64                `json:"views,omitempty"`
-	VideoCount            *uint64                `json:"video_count,omitempty"`
-	Country               string                 `json:"country,omitempty"`
-	PublicTopicDetails    []string               `json:"public_topic_details,omitempty"`
-	RecentVideos          []ChannelVideoSummary  `json:"recent_videos,omitempty"`
-	ChannelNiche          string                 `json:"channel_niche,omitempty"`
-	ContentPillars        []string               `json:"content_pillars,omitempty"`
-	TitlePatterns         []string               `json:"title_patterns,omitempty"`
-	UploadFrequency       string                 `json:"upload_frequency,omitempty"`
-	TopVideoTopics        []string               `json:"top_video_topics,omitempty"`
-	RepeatedKeywords      []string               `json:"repeated_keywords,omitempty"`
-	ViewDistribution      map[string]any         `json:"view_distribution,omitempty"`
-	SubscriberViewRatio   *float64               `json:"subscriber_view_ratio,omitempty"`
-	LikelyStrategy        string                 `json:"likely_strategy,omitempty"`
-	Opportunities         []string               `json:"opportunities,omitempty"`
-	SuggestedContentIdeas []string               `json:"suggested_content_ideas,omitempty"`
-	Limitations           []string               `json:"limitations"`
-	Metadata              ProviderResultMetadata `json:"metadata"`
+	Status                  string                 `json:"status"`
+	Message                 string                 `json:"message"`
+	ChannelURL              string                 `json:"channel_url"`
+	ChannelID               string                 `json:"channel_id,omitempty"`
+	ChannelTitle            string                 `json:"channel_title,omitempty"`
+	Description             string                 `json:"description,omitempty"`
+	Subscribers             *uint64                `json:"subscribers,omitempty"`
+	Views                   *uint64                `json:"views,omitempty"`
+	VideoCount              *uint64                `json:"video_count,omitempty"`
+	Country                 string                 `json:"country,omitempty"`
+	PublicTopicDetails      []string               `json:"public_topic_details,omitempty"`
+	RecentVideos            []ChannelVideoSummary  `json:"recent_videos,omitempty"`
+	TopVideosSummary        []ChannelVideoSummary  `json:"top_videos_summary,omitempty"`
+	ChannelSnapshot         map[string]any         `json:"channel_snapshot,omitempty"`
+	ChannelNiche            string                 `json:"channel_niche,omitempty"`
+	NicheAnalysis           NicheAnalysis          `json:"niche_analysis,omitempty"`
+	ContentPillars          []string               `json:"content_pillars,omitempty"`
+	KeywordIntelligence     KeywordIntelligence    `json:"keyword_intelligence,omitempty"`
+	KeywordClusters         []KeywordCluster       `json:"keyword_clusters,omitempty"`
+	FormatPatterns          []string               `json:"format_patterns,omitempty"`
+	TitlePatterns           []string               `json:"title_patterns,omitempty"`
+	PerformanceDistribution map[string]any         `json:"performance_distribution,omitempty"`
+	UploadFrequency         string                 `json:"upload_frequency,omitempty"`
+	TopVideoTopics          []string               `json:"top_video_topics,omitempty"`
+	RepeatedKeywords        []string               `json:"repeated_keywords,omitempty"`
+	ViewDistribution        map[string]any         `json:"view_distribution,omitempty"`
+	SubscriberViewRatio     *float64               `json:"subscriber_view_ratio,omitempty"`
+	LikelyStrategy          string                 `json:"likely_strategy,omitempty"`
+	Opportunities           []string               `json:"opportunities,omitempty"`
+	SuggestedContentIdeas   []string               `json:"suggested_content_ideas,omitempty"`
+	SuggestedShortClipIdeas []string               `json:"suggested_short_clip_ideas,omitempty"`
+	Limitations             []string               `json:"limitations"`
+	Metadata                ProviderResultMetadata `json:"metadata"`
 }
 
 type ChannelVideoSummary struct {
@@ -137,6 +152,53 @@ type ChannelVideoSummary struct {
 	Views       *uint64 `json:"views,omitempty"`
 	Likes       *uint64 `json:"likes,omitempty"`
 	Comments    *uint64 `json:"comments,omitempty"`
+}
+
+type KeywordIntelligence struct {
+	PrimaryKeywords       []string `json:"primary_keywords,omitempty"`
+	SecondaryKeywords     []string `json:"secondary_keywords,omitempty"`
+	LongTailPhrases       []string `json:"long_tail_phrases,omitempty"`
+	Hashtags              []string `json:"hashtags,omitempty"`
+	RejectedNoiseTerms    []string `json:"rejected_noise_terms,omitempty"`
+	InferredSearchIntent  string   `json:"inferred_search_intent,omitempty"`
+	MetadataStrengthScore int      `json:"metadata_strength_score,omitempty"`
+}
+
+type NicheAnalysis struct {
+	PrimaryNiche         string   `json:"primary_niche,omitempty"`
+	SubNiche             string   `json:"sub_niche,omitempty"`
+	AudienceType         string   `json:"audience_type,omitempty"`
+	ContentFormat        string   `json:"content_format,omitempty"`
+	Confidence           float64  `json:"confidence,omitempty"`
+	EvidenceTerms        []string `json:"evidence_terms,omitempty"`
+	TargetAudience       string   `json:"target_audience,omitempty"`
+	InferredContentAngle string   `json:"inferred_content_angle,omitempty"`
+}
+
+type HookIntelligence struct {
+	HookType             string   `json:"hook_type,omitempty"`
+	TitleLength          int      `json:"title_length,omitempty"`
+	TitlePattern         string   `json:"title_pattern,omitempty"`
+	EmotionalTriggers    []string `json:"emotional_triggers,omitempty"`
+	ClarityScore         int      `json:"clarity_score,omitempty"`
+	CuriosityScore       int      `json:"curiosity_score,omitempty"`
+	RemakePotentialScore int      `json:"remake_potential_score,omitempty"`
+}
+
+type CreatorOpportunities struct {
+	SuggestedRemakeAngles []string `json:"suggested_remake_angles,omitempty"`
+	TitleIdeas            []string `json:"title_ideas,omitempty"`
+	ShortFormClipIdeas    []string `json:"short_form_clip_ideas,omitempty"`
+	ScriptPrompts         []string `json:"script_prompts,omitempty"`
+	ContentGaps           []string `json:"content_gaps,omitempty"`
+	UnderusedTopics       []string `json:"underused_topics,omitempty"`
+	LocalizationOptions   []string `json:"localization_options,omitempty"`
+}
+
+type KeywordCluster struct {
+	Name     string   `json:"name"`
+	Terms    []string `json:"terms"`
+	Evidence []string `json:"evidence,omitempty"`
 }
 
 type YouTubeProvider struct {
@@ -228,9 +290,28 @@ func (p *YouTubeProvider) AnalyzeVideo(ctx context.Context, videoURL string) (Vi
 	views := parseUintPtr(item.Statistics.ViewCount)
 	likes := parseUintPtr(item.Statistics.LikeCount)
 	comments := parseUintPtr(item.Statistics.CommentCount)
-	keywords := ExtractKeywords(strings.Join(append([]string{item.Snippet.Title, item.Snippet.Description}, item.Snippet.Tags...), " "), 18)
-	niche := inferNiche(keywords, item.Snippet.CategoryID)
-	angle := inferAngle(item.Snippet.Title, keywords)
+	keywordIntel := ExtractKeywordIntelligence(KeywordExtractionInput{
+		Title:        item.Snippet.Title,
+		Description:  item.Snippet.Description,
+		Tags:         item.Snippet.Tags,
+		ChannelTitle: item.Snippet.ChannelTitle,
+		Category:     item.Snippet.CategoryID,
+		TopicDetails: item.TopicDetails.TopicCategories,
+	})
+	keywordIntel = p.enhanceVideoKeywords(ctx, keywordIntel, item.Snippet.Title, item.Snippet.ChannelTitle)
+	keywords := append(append([]string{}, keywordIntel.PrimaryKeywords...), keywordIntel.SecondaryKeywords...)
+	nicheAnalysis := ClassifyNiche(KeywordExtractionInput{
+		Title:        item.Snippet.Title,
+		Description:  item.Snippet.Description,
+		Tags:         item.Snippet.Tags,
+		ChannelTitle: item.Snippet.ChannelTitle,
+		Category:     item.Snippet.CategoryID,
+		TopicDetails: item.TopicDetails.TopicCategories,
+	}, keywordIntel)
+	hookIntel := AnalyzeHookIntelligence(item.Snippet.Title)
+	opps := BuildCreatorOpportunities(nicheAnalysis, keywordIntel, hookIntel, item.Snippet.Title)
+	niche := nicheAnalysis.PrimaryNiche
+	angle := nicheAnalysis.InferredContentAngle
 	signals := performanceSignals(item.Snippet.PublishedAt, views, likes, comments, p.now)
 	score, reason := ScoreEvidence(ScoringInput{
 		SourceConfidence: 0.92,
@@ -265,11 +346,24 @@ func (p *YouTubeProvider) AnalyzeVideo(ctx context.Context, videoURL string) (Vi
 		TitleStructureAnalysis:     analyzeTitleStructure(item.Snippet.Title),
 		DescriptionHashtagAnalysis: analyzeDescriptionHashtags(item.Snippet.Description),
 		PerformanceSignals:         signals,
-		SuggestedRemakeAngles:      suggestedAngles(keywords, item.Snippet.Title),
+		VideoSnapshot: map[string]any{
+			"title":        item.Snippet.Title,
+			"channel":      item.Snippet.ChannelTitle,
+			"published_at": item.Snippet.PublishedAt,
+			"duration":     item.ContentDetails.Duration,
+			"views":        views,
+			"likes":        likes,
+			"comments":     comments,
+		},
+		KeywordIntelligence:   keywordIntel,
+		HookIntelligence:      hookIntel,
+		NicheAnalysis:         nicheAnalysis,
+		CreatorOpportunities:  opps,
+		SuggestedRemakeAngles: opps.SuggestedRemakeAngles,
 		Limitations: []string{
-			"Ranking keywords are inferred from public metadata. Exact search ranking terms require authorized analytics or platform data.",
+			"Public metadata only: official YouTube Data API fields are used; no scraping, downloads, private analytics, retention, revenue, or traffic sources.",
+			"Keyword ranking is inferred from public metadata only; this is not an exact YouTube search ranking report.",
 			"Like/comment counts can be unavailable when hidden or restricted by YouTube.",
-			"TrendCortex does not download or scrape YouTube videos.",
 		},
 		Metadata: ProviderResultMetadata{
 			SourceProvider: "youtube_data_api",
@@ -333,10 +427,36 @@ func (p *YouTubeProvider) AnalyzeChannel(ctx context.Context, channelURL string)
 		return result, nil
 	}
 	channel := channelRes.Items[0]
-	videos, _ := p.fetchRecentVideos(ctx, channelID, 12)
-	keywords := ExtractKeywords(channel.Snippet.Title+" "+channel.Snippet.Description+" "+titlesText(videos), 24)
-	pillars := topN(keywords, 6)
+	recentVideos, _ := p.fetchChannelVideos(ctx, channelID, "date", 25)
+	topVideos, _ := p.fetchChannelVideos(ctx, channelID, "viewCount", 25)
+	videos := mergeChannelVideos(recentVideos, topVideos)
+	keywordIntel := ExtractKeywordIntelligence(KeywordExtractionInput{
+		Title:             channel.Snippet.Title,
+		Description:       channel.Snippet.Description,
+		ChannelTitle:      channel.Snippet.Title,
+		TopicDetails:      channel.TopicDetails.TopicCategories,
+		RecentVideoTitles: videoTitles(videos),
+	})
+	keywordIntel = p.enhanceChannelKeywords(ctx, keywordIntel, channel.Snippet.Title)
+	keywords := append(append([]string{}, keywordIntel.PrimaryKeywords...), keywordIntel.SecondaryKeywords...)
+	nicheAnalysis := ClassifyNiche(KeywordExtractionInput{
+		Title:             channel.Snippet.Title,
+		Description:       channel.Snippet.Description,
+		ChannelTitle:      channel.Snippet.Title,
+		TopicDetails:      channel.TopicDetails.TopicCategories,
+		RecentVideoTitles: videoTitles(videos),
+	}, keywordIntel)
+	pillars := topN(keywordIntel.PrimaryKeywords, 6)
+	if len(pillars) == 0 {
+		pillars = topN(keywords, 6)
+	}
 	viewDistribution, ratio := channelSignals(channel.Statistics.SubscriberCount, videos)
+	performanceDistribution := PerformanceDistribution(videos)
+	patterns := titlePatterns(videos)
+	formats := formatPatternsFromVideos(videos)
+	channelOpps := ChannelOpportunities(nicheAnalysis, pillars, keywordIntel)
+	ideas := SuggestedChannelIdeas(nicheAnalysis, keywordIntel, pillars)
+	shortIdeas := SuggestedShortClipIdeas(nicheAnalysis, keywordIntel, pillars)
 	score, reason := ScoreEvidence(ScoringInput{
 		SourceConfidence: 0.9,
 		Views:            parseUintPtr(channel.Statistics.ViewCount),
@@ -346,33 +466,47 @@ func (p *YouTubeProvider) AnalyzeChannel(ctx context.Context, channelURL string)
 		NicheMatch:       0.6,
 	})
 	result = ChannelAnalysisResult{
-		Status:                StatusOK,
-		Message:               "Analyzed public YouTube Data API channel metadata. Strategy notes are inferred from public channel and recent video metadata.",
-		ChannelURL:            channelURL,
-		ChannelID:             channelID,
-		ChannelTitle:          channel.Snippet.Title,
-		Description:           channel.Snippet.Description,
-		Subscribers:           parseUintPtr(channel.Statistics.SubscriberCount),
-		Views:                 parseUintPtr(channel.Statistics.ViewCount),
-		VideoCount:            parseUintPtr(channel.Statistics.VideoCount),
-		Country:               channel.Snippet.Country,
-		PublicTopicDetails:    channel.TopicDetails.TopicCategories,
-		RecentVideos:          videos,
-		ChannelNiche:          inferNiche(keywords, ""),
-		ContentPillars:        pillars,
-		TitlePatterns:         titlePatterns(videos),
-		UploadFrequency:       uploadFrequency(videos, p.now),
-		TopVideoTopics:        topN(keywords, 8),
-		RepeatedKeywords:      keywords,
-		ViewDistribution:      viewDistribution,
-		SubscriberViewRatio:   ratio,
-		LikelyStrategy:        likelyStrategy(pillars, videos),
-		Opportunities:         opportunities(pillars),
-		SuggestedContentIdeas: contentIdeas(pillars),
+		Status:             StatusOK,
+		Message:            "Analyzed public YouTube Data API channel metadata. Strategy notes are inferred from public channel and recent video metadata.",
+		ChannelURL:         channelURL,
+		ChannelID:          channelID,
+		ChannelTitle:       channel.Snippet.Title,
+		Description:        channel.Snippet.Description,
+		Subscribers:        parseUintPtr(channel.Statistics.SubscriberCount),
+		Views:              parseUintPtr(channel.Statistics.ViewCount),
+		VideoCount:         parseUintPtr(channel.Statistics.VideoCount),
+		Country:            channel.Snippet.Country,
+		PublicTopicDetails: channel.TopicDetails.TopicCategories,
+		RecentVideos:       recentVideos,
+		TopVideosSummary:   topNChannelVideos(topVideos, 10),
+		ChannelSnapshot: map[string]any{
+			"subscribers": parseUintPtr(channel.Statistics.SubscriberCount),
+			"total_views": parseUintPtr(channel.Statistics.ViewCount),
+			"video_count": parseUintPtr(channel.Statistics.VideoCount),
+			"country":     channel.Snippet.Country,
+			"channel_age": channelAge(channel.Snippet.PublishedAt, p.now),
+		},
+		ChannelNiche:            nicheAnalysis.PrimaryNiche,
+		NicheAnalysis:           nicheAnalysis,
+		ContentPillars:          pillars,
+		KeywordIntelligence:     keywordIntel,
+		KeywordClusters:         ChannelKeywordClusters(keywordIntel, videos),
+		FormatPatterns:          formats,
+		TitlePatterns:           patterns,
+		PerformanceDistribution: performanceDistribution,
+		UploadFrequency:         uploadFrequency(videos, p.now),
+		TopVideoTopics:          topN(keywords, 8),
+		RepeatedKeywords:        keywords,
+		ViewDistribution:        viewDistribution,
+		SubscriberViewRatio:     ratio,
+		LikelyStrategy:          ChannelStrategy(nicheAnalysis, pillars, patterns, performanceDistribution),
+		Opportunities:           append(append(channelOpps.ContentGaps, channelOpps.UnderusedTopics...), channelOpps.LocalizationOptions...),
+		SuggestedContentIdeas:   ideas,
+		SuggestedShortClipIdeas: shortIdeas,
 		Limitations: []string{
-			"Public metadata only; no private retention, revenue, traffic source, or exact search ranking data.",
+			"Public metadata only: official YouTube Data API fields are used; no scraping, downloads, private analytics, retention, revenue, or traffic sources.",
+			"Keyword clusters and strategy are inferred from public titles, descriptions, topics, tags where available, and visible counts; no exact search ranking keywords are claimed.",
 			"Recent/top video selection is based on official API responses and available public counts.",
-			"TrendCortex does not download or scrape YouTube videos.",
 		},
 		Metadata: ProviderResultMetadata{
 			SourceProvider: "youtube_data_api",
@@ -380,7 +514,7 @@ func (p *YouTubeProvider) AnalyzeChannel(ctx context.Context, channelURL string)
 			EvidenceURL:    apiURLWithoutKey(channelAPIURL),
 			Country:        channel.Snippet.Country,
 			Platform:       "youtube",
-			Topic:          inferNiche(keywords, ""),
+			Topic:          nicheAnalysis.PrimaryNiche,
 			Keyword:        firstKeyword(keywords),
 			Score:          score,
 			Views:          parseUintPtr(channel.Statistics.ViewCount),
@@ -507,6 +641,7 @@ type youtubeChannelItem struct {
 		Title       string `json:"title"`
 		Description string `json:"description"`
 		Country     string `json:"country"`
+		PublishedAt string `json:"publishedAt"`
 	} `json:"snippet"`
 	Statistics struct {
 		ViewCount       string `json:"viewCount"`
@@ -615,7 +750,17 @@ func (p *YouTubeProvider) resolveChannelByQuery(ctx context.Context, query strin
 }
 
 func (p *YouTubeProvider) fetchRecentVideos(ctx context.Context, channelID string, limit int) ([]ChannelVideoSummary, error) {
-	searchURL := youtubeAPIURL("search", map[string]string{"part": "snippet", "channelId": channelID, "type": "video", "order": "date", "maxResults": strconv.Itoa(limit), "key": p.apiKey})
+	return p.fetchChannelVideos(ctx, channelID, "date", limit)
+}
+
+func (p *YouTubeProvider) fetchChannelVideos(ctx context.Context, channelID, order string, limit int) ([]ChannelVideoSummary, error) {
+	if limit <= 0 || limit > 50 {
+		limit = 25
+	}
+	if order == "" {
+		order = "date"
+	}
+	searchURL := youtubeAPIURL("search", map[string]string{"part": "snippet", "channelId": channelID, "type": "video", "order": order, "maxResults": strconv.Itoa(limit), "key": p.apiKey})
 	var search youtubeSearchResponse
 	if err := p.getJSON(ctx, searchURL, &search); err != nil {
 		return nil, err
@@ -658,6 +803,147 @@ func (p *YouTubeProvider) fetchRecentVideos(ctx context.Context, channelID strin
 		})
 	}
 	return out, nil
+}
+
+func mergeChannelVideos(groups ...[]ChannelVideoSummary) []ChannelVideoSummary {
+	seen := map[string]bool{}
+	out := []ChannelVideoSummary{}
+	for _, group := range groups {
+		for _, video := range group {
+			if video.VideoID != "" && seen[video.VideoID] {
+				continue
+			}
+			if video.VideoID != "" {
+				seen[video.VideoID] = true
+			}
+			out = append(out, video)
+		}
+	}
+	return out
+}
+
+func topNChannelVideos(videos []ChannelVideoSummary, n int) []ChannelVideoSummary {
+	if n > len(videos) {
+		n = len(videos)
+	}
+	if n < 0 {
+		n = 0
+	}
+	out := make([]ChannelVideoSummary, n)
+	copy(out, videos[:n])
+	return out
+}
+
+func videoTitles(videos []ChannelVideoSummary) []string {
+	out := make([]string, 0, len(videos))
+	for _, video := range videos {
+		if strings.TrimSpace(video.Title) != "" {
+			out = append(out, video.Title)
+		}
+	}
+	return out
+}
+
+func (p *YouTubeProvider) enhanceVideoKeywords(ctx context.Context, kw KeywordIntelligence, title, channel string) KeywordIntelligence {
+	return p.enhanceKeywordsWithOpenAI(ctx, kw, map[string]any{
+		"analysis_type": "youtube_video",
+		"title":         title,
+		"channel":       channel,
+	})
+}
+
+func (p *YouTubeProvider) enhanceChannelKeywords(ctx context.Context, kw KeywordIntelligence, channel string) KeywordIntelligence {
+	return p.enhanceKeywordsWithOpenAI(ctx, kw, map[string]any{
+		"analysis_type": "youtube_channel",
+		"channel":       channel,
+	})
+}
+
+func (p *YouTubeProvider) enhanceKeywordsWithOpenAI(ctx context.Context, kw KeywordIntelligence, contextPayload map[string]any) KeywordIntelligence {
+	apiKey := strings.TrimSpace(os.Getenv("OPENAI_API_KEY"))
+	if apiKey == "" {
+		return kw
+	}
+	payload := map[string]any{
+		"model": strings.TrimSpace(os.Getenv("OPENAI_TEXT_MODEL")),
+		"messages": []map[string]string{
+			{"role": "system", "content": "Improve YouTube creator intelligence using only the provided public metadata summary. Do not invent non-public analytics, exact search ranking terms, retention, revenue, demographics, or traffic sources. Return compact JSON only."},
+			{"role": "user", "content": mustJSON(map[string]any{"context": contextPayload, "keyword_intelligence": kw})},
+		},
+		"response_format": map[string]string{"type": "json_object"},
+	}
+	if payload["model"] == "" {
+		payload["model"] = "gpt-4o-mini"
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return kw
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://api.openai.com/v1/chat/completions", bytes.NewReader(body))
+	if err != nil {
+		return kw
+	}
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+	req.Header.Set("Content-Type", "application/json")
+	res, err := p.client.Do(req)
+	if err != nil {
+		return kw
+	}
+	defer res.Body.Close()
+	if res.StatusCode < 200 || res.StatusCode >= 300 {
+		return kw
+	}
+	var decoded struct {
+		Choices []struct {
+			Message struct {
+				Content string `json:"content"`
+			} `json:"message"`
+		} `json:"choices"`
+	}
+	if err := json.NewDecoder(io.LimitReader(res.Body, 1<<20)).Decode(&decoded); err != nil || len(decoded.Choices) == 0 {
+		return kw
+	}
+	var enhanced struct {
+		PrimaryKeywords      []string `json:"primary_keywords"`
+		SecondaryKeywords    []string `json:"secondary_keywords"`
+		LongTailPhrases      []string `json:"long_tail_phrases"`
+		InferredSearchIntent string   `json:"inferred_search_intent"`
+	}
+	if err := json.Unmarshal([]byte(decoded.Choices[0].Message.Content), &enhanced); err != nil {
+		return kw
+	}
+	if len(enhanced.PrimaryKeywords) > 0 {
+		kw.PrimaryKeywords = cleanStringList(enhanced.PrimaryKeywords)
+	}
+	if len(enhanced.SecondaryKeywords) > 0 {
+		kw.SecondaryKeywords = cleanStringList(enhanced.SecondaryKeywords)
+	}
+	if len(enhanced.LongTailPhrases) > 0 {
+		kw.LongTailPhrases = cleanStringList(enhanced.LongTailPhrases)
+	}
+	if strings.TrimSpace(enhanced.InferredSearchIntent) != "" {
+		kw.InferredSearchIntent = strings.TrimSpace(enhanced.InferredSearchIntent)
+	}
+	return kw
+}
+
+func cleanStringList(values []string) []string {
+	out := []string{}
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			out = append(out, value)
+		}
+	}
+	return unique(out)
+}
+
+func mustJSON(value any) string {
+	b, err := json.Marshal(value)
+	if err != nil {
+		return "{}"
+	}
+	return string(b)
 }
 
 func ExtractYouTubeVideoID(raw string) (string, error) {
@@ -832,6 +1118,7 @@ func analyzeDescriptionHashtags(description string) string {
 
 func performanceSignals(publishedAt string, views, likes, comments *uint64, now func() time.Time) map[string]any {
 	signals := map[string]any{}
+	var viewsPerDay float64
 	if t, err := time.Parse(time.RFC3339, publishedAt); err == nil {
 		ageDays := now().Sub(t).Hours() / 24
 		if ageDays < 1 {
@@ -839,20 +1126,37 @@ func performanceSignals(publishedAt string, views, likes, comments *uint64, now 
 		}
 		signals["age_days"] = ageDays
 		if views != nil {
-			signals["views_per_day"] = float64(*views) / ageDays
+			viewsPerDay = float64(*views) / ageDays
+			signals["views_per_day"] = viewsPerDay
 		}
 	}
 	if views != nil && *views > 0 {
 		var interactions uint64
 		if likes != nil {
 			interactions += *likes
+			signals["likes_per_1000_views"] = float64(*likes) / float64(*views) * 1000
 		}
 		if comments != nil {
 			interactions += *comments
+			signals["comments_per_1000_views"] = float64(*comments) / float64(*views) * 1000
 		}
 		signals["engagement_rate"] = float64(interactions) / float64(*views)
 	}
+	signals["velocity_label"] = velocityLabel(viewsPerDay)
 	return signals
+}
+
+func velocityLabel(viewsPerDay float64) string {
+	switch {
+	case viewsPerDay >= 1000000:
+		return "very_high"
+	case viewsPerDay >= 100000:
+		return "high"
+	case viewsPerDay >= 10000:
+		return "medium"
+	default:
+		return "low"
+	}
 }
 
 func suggestedAngles(keywords []string, title string) []string {

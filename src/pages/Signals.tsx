@@ -517,32 +517,49 @@ function YouTubeVideoTab({ value, onChange, onAnalyze, loading, result, onGenera
       {result && result.status !== 'ok' && <HonestResultState result={result} />}
       {result?.status === 'ok' && (
         <div style={{ display: 'grid', gap: 10 }}>
-          <ResultCard title="Summary">
+          <ResultCard title="Video snapshot">
             <TextBlock label="Title" value={result.title} />
-            <TextBlock label="Channel" value={[result.channel_title, result.channel_id].filter(Boolean).join(' · ')} />
-            <TextBlock label="Published" value={result.published_at} />
-            <TextBlock label="Category" value={result.category} />
-            <TextBlock label="Duration" value={result.duration} />
+            <MetricGrid values={{ Channel: result.channel_title, Published: result.published_at, Duration: result.duration, Views: result.views, Likes: result.likes, Comments: result.comments }} />
             <TextBlock label="Evidence" value={result.metadata?.score_reason} />
           </ResultCard>
-          <ResultCard title="Keywords">
-            <ChipList items={result.extracted_keywords ?? []} />
-            <TextBlock label="Tags" value={(result.tags ?? []).join(', ')} />
-          </ResultCard>
-          <ResultCard title="Niche">
-            <TextBlock label="Inferred niche" value={result.inferred_niche} />
-            <TextBlock label="Inferred content angle" value={result.inferred_content_angle} />
-          </ResultCard>
-          <ResultCard title="Hook / title breakdown">
-            <TextBlock label="Hook" value={result.hook_analysis} />
-            <TextBlock label="Title structure" value={result.title_structure_analysis} />
-            <TextBlock label="Description / hashtags" value={result.description_hashtag_analysis} />
-          </ResultCard>
           <ResultCard title="Performance signals">
-            <MetricGrid values={{ Views: result.views, Likes: result.likes, Comments: result.comments, ...(result.performance_signals ?? {}) }} />
+            <MetricGrid values={result.performance_signals ?? {}} />
           </ResultCard>
-          <ResultCard title="Suggested remake angles">
-            <List items={result.suggested_remake_angles ?? []} />
+          <ResultCard title="Keyword intelligence">
+            <TextBlock label="Inferred search intent" value={result.keyword_intelligence?.inferred_search_intent} />
+            <MetricGrid values={{ 'Metadata strength': result.keyword_intelligence?.metadata_strength_score }} />
+            <LabelledChips label="Primary keywords" items={result.keyword_intelligence?.primary_keywords ?? result.extracted_keywords ?? []} />
+            <LabelledChips label="Secondary keywords" items={result.keyword_intelligence?.secondary_keywords ?? []} />
+            <LabelledChips label="Long-tail phrases" items={result.keyword_intelligence?.long_tail_phrases ?? []} />
+            <LabelledChips label="Public hashtags" items={result.keyword_intelligence?.hashtags ?? []} />
+          </ResultCard>
+          <ResultCard title="Hook analysis">
+            <MetricGrid values={{
+              'Hook type': result.hook_intelligence?.hook_type,
+              'Title length': result.hook_intelligence?.title_length,
+              'Clarity score': result.hook_intelligence?.clarity_score,
+              'Curiosity score': result.hook_intelligence?.curiosity_score,
+              'Remake potential': result.hook_intelligence?.remake_potential_score,
+            }} />
+            <TextBlock label="Title pattern" value={result.hook_intelligence?.title_pattern || result.title_structure_analysis} />
+            <LabelledChips label="Emotional triggers" items={result.hook_intelligence?.emotional_triggers ?? []} />
+          </ResultCard>
+          <ResultCard title="Niche analysis">
+            <MetricGrid values={{
+              'Primary niche': result.niche_analysis?.primary_niche || result.inferred_niche,
+              'Sub-niche': result.niche_analysis?.sub_niche,
+              'Audience': result.niche_analysis?.target_audience || result.niche_analysis?.audience_type,
+              'Content format': result.niche_analysis?.content_format,
+              Confidence: result.niche_analysis?.confidence,
+            }} />
+            <TextBlock label="Inferred content angle" value={result.niche_analysis?.inferred_content_angle || result.inferred_content_angle} />
+            <LabelledChips label="Evidence terms" items={result.niche_analysis?.evidence_terms ?? []} />
+          </ResultCard>
+          <ResultCard title="Creator opportunities">
+            <SectionList label="Suggested remake angles" items={result.creator_opportunities?.suggested_remake_angles ?? result.suggested_remake_angles ?? []} />
+            <SectionList label="Title ideas" items={result.creator_opportunities?.title_ideas ?? []} />
+            <SectionList label="Short-form clip ideas" items={result.creator_opportunities?.short_form_clip_ideas ?? []} />
+            <SectionList label="Script prompts" items={result.creator_opportunities?.script_prompts ?? []} />
             <ScriptAction
               label="Generate Script from this analysis"
               generating={generating}
@@ -590,17 +607,27 @@ function YouTubeChannelTab({ value, onChange, onAnalyze, loading, result, onGene
         <div style={{ display: 'grid', gap: 10 }}>
           <ResultCard title="Channel snapshot">
             <TextBlock label="Channel" value={[result.channel_title, result.channel_id].filter(Boolean).join(' · ')} />
-            <MetricGrid values={{ Subscribers: result.subscribers, Views: result.views, Videos: result.video_count, Country: result.country }} />
+            <MetricGrid values={{ Subscribers: result.subscribers, 'Total views': result.views, Videos: result.video_count, Country: result.country, 'Channel age': result.channel_snapshot?.channel_age }} />
           </ResultCard>
           <ResultCard title="Niche diagnosis">
-            <TextBlock label="Inferred niche" value={result.channel_niche} />
+            <MetricGrid values={{
+              'Primary niche': result.niche_analysis?.primary_niche || result.channel_niche,
+              'Sub-niche': result.niche_analysis?.sub_niche,
+              Audience: result.niche_analysis?.audience_type,
+              Format: result.niche_analysis?.content_format,
+              Confidence: result.niche_analysis?.confidence,
+            }} />
             <TextBlock label="Likely strategy" value={result.likely_strategy} />
+            <LabelledChips label="Evidence terms" items={result.niche_analysis?.evidence_terms ?? []} />
           </ResultCard>
           <ResultCard title="Top content pillars"><ChipList items={result.content_pillars ?? []} /></ResultCard>
-          <ResultCard title="Best-performing topic patterns"><List items={result.title_patterns ?? []} /></ResultCard>
-          <ResultCard title="Keyword clusters"><ChipList items={result.repeated_keywords ?? []} /></ResultCard>
-          <ResultCard title="View distribution"><MetricGrid values={result.view_distribution ?? {}} /></ResultCard>
+          <ResultCard title="Top videos summary"><VideoSummaryList videos={result.top_videos_summary ?? []} /></ResultCard>
+          <ResultCard title="Format patterns"><ChipList items={result.format_patterns ?? []} /></ResultCard>
+          <ResultCard title="Title patterns"><List items={result.title_patterns ?? []} /></ResultCard>
+          <ResultCard title="Keyword clusters"><KeywordClusterList clusters={result.keyword_clusters ?? []} fallback={result.repeated_keywords ?? []} /></ResultCard>
+          <ResultCard title="Performance distribution"><MetricGrid values={result.performance_distribution ?? result.view_distribution ?? {}} /></ResultCard>
           <ResultCard title="Content opportunities"><List items={result.opportunities ?? []} /></ResultCard>
+          <ResultCard title="Suggested short clip ideas"><List items={result.suggested_short_clip_ideas ?? []} /></ResultCard>
           <ResultCard title="Suggested next 10 video ideas">
             <List items={result.suggested_content_ideas ?? []} />
             {(result.suggested_content_ideas ?? []).map(idea => {
@@ -849,14 +876,36 @@ function TextInput({ label, value, onChange, placeholder }: { label: string; val
 }
 
 function MetricGrid({ values }: { values: Record<string, unknown> }) {
+  const entries = Object.entries(values).filter(([, value]) => value != null && value !== '');
+  if (!entries.length) return <div className="muted-note">No public metadata returned for this field.</div>;
   return (
     <div className="status-list">
-      {Object.entries(values).map(([label, value]) => (
+      {entries.map(([label, value]) => (
         <div className="status-row" key={label}>
-          <span>{label}</span>
-          <strong>{formatValue(value)}</strong>
+          <span>{formatLabel(label)}</span>
+          <strong>{formatMetric(label, value)}</strong>
         </div>
       ))}
+    </div>
+  );
+}
+
+function LabelledChips({ label, items }: { label: string; items: string[] }) {
+  if (!items.length) return null;
+  return (
+    <div style={{ display: 'grid', gap: 6, marginTop: 8 }}>
+      <div style={{ fontSize: 11, fontWeight: 800, color: 'var(--text-dim)', textTransform: 'uppercase' }}>{label}</div>
+      <ChipList items={items} />
+    </div>
+  );
+}
+
+function SectionList({ label, items }: { label: string; items: string[] }) {
+  if (!items.length) return null;
+  return (
+    <div style={{ display: 'grid', gap: 6, marginTop: 8 }}>
+      <div style={{ fontSize: 11, fontWeight: 800, color: 'var(--text-dim)', textTransform: 'uppercase' }}>{label}</div>
+      <List items={items} />
     </div>
   );
 }
@@ -869,6 +918,35 @@ function ChipList({ items }: { items: string[] }) {
 function List({ items }: { items: string[] }) {
   if (!items.length) return <div className="muted-note">No public metadata returned for this field.</div>;
   return <div style={{ display: 'grid', gap: 8 }}>{items.map(item => <div key={item} className="small-capability">{item}</div>)}</div>;
+}
+
+function VideoSummaryList({ videos }: { videos: NonNullable<YouTubeChannelAnalysisResponse['top_videos_summary']> }) {
+  if (!videos.length) return <div className="muted-note">No public top video metadata returned for this field.</div>;
+  return (
+    <div style={{ display: 'grid', gap: 8 }}>
+      {videos.slice(0, 10).map(video => (
+        <div key={video.video_id || video.title} className="small-capability">
+          <strong>{video.title}</strong>
+          <div style={{ marginTop: 4, color: 'var(--text-dim)' }}>{formatMetric('views', video.views)} views · {video.published_at || 'date unavailable'}</div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function KeywordClusterList({ clusters, fallback }: { clusters: NonNullable<YouTubeChannelAnalysisResponse['keyword_clusters']>; fallback: string[] }) {
+  if (!clusters.length) return <ChipList items={fallback} />;
+  return (
+    <div style={{ display: 'grid', gap: 8 }}>
+      {clusters.map(cluster => (
+        <div key={cluster.name} className="small-capability">
+          <strong>{cluster.name}</strong>
+          {cluster.terms?.length ? <div style={{ marginTop: 4, color: 'var(--text-muted)' }}>{cluster.terms.join(', ')}</div> : null}
+          {cluster.evidence?.length ? <div style={{ marginTop: 4, color: 'var(--text-dim)' }}>Evidence: {cluster.evidence.slice(0, 2).join(' · ')}</div> : null}
+        </div>
+      ))}
+    </div>
+  );
 }
 
 function Limitations({ items }: { items: string[] }) {
@@ -905,7 +983,7 @@ function statusLabel(status: string): string {
 }
 
 function candidateFromVideo(result: YouTubeVideoAnalysisResponse, region: string, language: string): TrendCandidate {
-  const keyword = result.extracted_keywords?.[0] || result.title || 'YouTube video analysis';
+  const keyword = result.keyword_intelligence?.primary_keywords?.[0] || result.extracted_keywords?.[0] || result.title || 'YouTube video analysis';
   return {
     id: `youtube-video-${result.video_id || Date.now()}`,
     source: 'youtube_video_analysis',
@@ -939,28 +1017,36 @@ function candidateFromChannel(result: YouTubeChannelAnalysisResponse, idea: stri
 
 function researchScriptFromVideo(result: YouTubeVideoAnalysisResponse, region: string, language: string): ResearchScriptGenerationRequest {
   const title = result.title || 'YouTube video analysis';
+  const suggestedAngle = result.creator_opportunities?.suggested_remake_angles?.[0] || result.suggested_remake_angles?.[0];
   return {
     source_type: 'youtube_video_analysis',
     source_id: result.video_id,
     source_url: result.metadata?.source_url || result.video_url,
-    topic: result.extracted_keywords?.[0] || title,
+    topic: result.keyword_intelligence?.primary_keywords?.[0] || result.extracted_keywords?.[0] || title,
     title,
     summary: [
       result.message,
-      result.hook_analysis,
-      result.title_structure_analysis,
-      result.description_hashtag_analysis,
+      `Hook type: ${result.hook_intelligence?.hook_type || result.hook_analysis || 'inferred from public title'}.`,
+      `Target audience: ${result.niche_analysis?.target_audience || result.niche_analysis?.audience_type || 'general viewers'}.`,
+      `Performance context: ${formatEvidenceSummary(result.performance_signals ?? {})}.`,
+      `Suggested angle: ${suggestedAngle || result.niche_analysis?.inferred_content_angle || result.inferred_content_angle || ''}.`,
+      result.keyword_intelligence?.inferred_search_intent,
     ].filter(Boolean).join(' '),
-    keywords: [...(result.extracted_keywords ?? []), ...(result.tags ?? [])],
-    inferred_niche: result.inferred_niche,
-    inferred_angle: result.inferred_content_angle,
+    keywords: [
+      ...(result.keyword_intelligence?.primary_keywords ?? []),
+      ...(result.keyword_intelligence?.secondary_keywords ?? []),
+      ...(result.keyword_intelligence?.long_tail_phrases ?? []),
+      ...(result.tags ?? []),
+    ],
+    inferred_niche: result.niche_analysis?.primary_niche || result.inferred_niche,
+    inferred_angle: result.niche_analysis?.inferred_content_angle || result.inferred_content_angle,
     performance_signals: {
       views: result.views,
       likes: result.likes,
       comments: result.comments,
       ...(result.performance_signals ?? {}),
     },
-    suggested_angle: result.suggested_remake_angles?.[0],
+    suggested_angle: suggestedAngle,
     target_platforms: ['instagram', 'tiktok', 'youtube', 'facebook', 'x'],
     content_style: 'Short-form remake script from public YouTube metadata',
     duration_seconds: 30,
@@ -971,6 +1057,11 @@ function researchScriptFromVideo(result: YouTubeVideoAnalysisResponse, region: s
       category: result.category,
       duration: result.duration,
       public_topic_details: result.public_topic_details,
+      primary_niche: result.niche_analysis?.primary_niche,
+      target_audience: result.niche_analysis?.target_audience || result.niche_analysis?.audience_type,
+      hook_type: result.hook_intelligence?.hook_type,
+      primary_keywords: result.keyword_intelligence?.primary_keywords,
+      script_prompts: result.creator_opportunities?.script_prompts,
       score_reason: result.metadata?.score_reason,
     },
     metadata: result.metadata ? { ...result.metadata } : undefined,
@@ -991,9 +1082,18 @@ function researchScriptFromChannelIdea(result: YouTubeChannelAnalysisResponse, i
       result.message,
       result.likely_strategy,
       result.opportunities?.join(' '),
+      `Niche: ${result.niche_analysis?.primary_niche || result.channel_niche || 'inferred from public metadata'}.`,
+      `Audience: ${result.niche_analysis?.audience_type || 'general viewers'}.`,
+      `Performance distribution: ${formatEvidenceSummary(result.performance_distribution ?? result.view_distribution ?? {})}.`,
     ].filter(Boolean).join(' '),
-    keywords: [...(result.repeated_keywords ?? []), ...(result.content_pillars ?? []), ...(result.top_video_topics ?? [])],
-    inferred_niche: result.channel_niche,
+    keywords: [
+      ...(result.keyword_intelligence?.primary_keywords ?? []),
+      ...(result.keyword_intelligence?.secondary_keywords ?? []),
+      ...(result.keyword_intelligence?.long_tail_phrases ?? []),
+      ...(result.content_pillars ?? []),
+      ...(result.top_video_topics ?? []),
+    ],
+    inferred_niche: result.niche_analysis?.primary_niche || result.channel_niche,
     inferred_angle: result.likely_strategy,
     performance_signals: {
       subscribers: result.subscribers,
@@ -1011,8 +1111,10 @@ function researchScriptFromChannelIdea(result: YouTubeChannelAnalysisResponse, i
       channel_id: result.channel_id,
       country: result.country,
       content_pillars: result.content_pillars,
+      keyword_clusters: result.keyword_clusters,
+      format_patterns: result.format_patterns,
       title_patterns: result.title_patterns,
-      recent_videos: result.recent_videos,
+      top_videos_summary: result.top_videos_summary,
       score_reason: result.metadata?.score_reason,
     },
     metadata: result.metadata ? { ...result.metadata } : undefined,
@@ -1031,6 +1133,53 @@ function formatValue(value: unknown): string {
   if (typeof value === 'number') return Number.isInteger(value) ? value.toLocaleString() : value.toFixed(3);
   if (typeof value === 'string') return value;
   return JSON.stringify(value);
+}
+
+function formatMetric(label: string, value: unknown): string {
+  if (value == null || value === '') return 'Unavailable';
+  const normalized = label.toLowerCase();
+  if (typeof value === 'number') {
+    if (normalized.includes('rate') || normalized.includes('concentration') || normalized.includes('confidence')) {
+      return `${(value * 100).toFixed(1)}%`;
+    }
+    if (normalized.includes('per_1000') || normalized.includes('per 1000')) {
+      return value.toFixed(1);
+    }
+    if (!Number.isInteger(value) && normalized.includes('day')) {
+      return value.toLocaleString(undefined, { maximumFractionDigits: 1 });
+    }
+    return Number.isInteger(value) ? value.toLocaleString() : value.toFixed(2);
+  }
+  if (Array.isArray(value)) return value.join(' · ');
+  return formatValue(value);
+}
+
+function formatLabel(label: string): string {
+  const preferred: Record<string, string> = {
+    views_per_day: 'Views/day',
+    likes_per_1000_views: 'Likes per 1,000 views',
+    comments_per_1000_views: 'Comments per 1,000 views',
+    engagement_rate: 'Engagement rate',
+    velocity_label: 'Velocity',
+    age_days: 'Age in days',
+    average_views: 'Average views',
+    median_views: 'Median views',
+    max_views: 'Max views',
+    min_views: 'Min views',
+    sample_size: 'Sample size',
+    view_concentration: 'View concentration',
+    outlier_videos: 'Outlier videos',
+  };
+  if (preferred[label]) return preferred[label];
+  return label.replaceAll('_', ' ').replace(/\b\w/g, char => char.toUpperCase());
+}
+
+function formatEvidenceSummary(values: Record<string, unknown>): string {
+  const parts = Object.entries(values)
+    .filter(([, value]) => value != null && value !== '')
+    .slice(0, 6)
+    .map(([label, value]) => `${formatLabel(label)} ${formatMetric(label, value)}`);
+  return parts.length ? parts.join(', ') : 'public performance signals unavailable or hidden';
 }
 
 function GeneratedPackageView({ pkg }: { pkg: ReelContentPackage }) {

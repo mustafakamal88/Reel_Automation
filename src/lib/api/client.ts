@@ -483,9 +483,61 @@ export interface YouTubeVideoAnalysisResponse {
   title_structure_analysis?: string;
   description_hashtag_analysis?: string;
   performance_signals?: Record<string, unknown>;
+  video_snapshot?: Record<string, unknown>;
+  keyword_intelligence?: KeywordIntelligence;
+  hook_intelligence?: HookIntelligence;
+  niche_analysis?: NicheAnalysis;
+  creator_opportunities?: CreatorOpportunities;
   suggested_remake_angles?: string[];
   limitations?: string[];
   metadata?: ResearchResultMetadata;
+}
+
+export interface KeywordIntelligence {
+  primary_keywords?: string[];
+  secondary_keywords?: string[];
+  long_tail_phrases?: string[];
+  hashtags?: string[];
+  rejected_noise_terms?: string[];
+  inferred_search_intent?: string;
+  metadata_strength_score?: number;
+}
+
+export interface HookIntelligence {
+  hook_type?: string;
+  title_length?: number;
+  title_pattern?: string;
+  emotional_triggers?: string[];
+  clarity_score?: number;
+  curiosity_score?: number;
+  remake_potential_score?: number;
+}
+
+export interface NicheAnalysis {
+  primary_niche?: string;
+  sub_niche?: string;
+  audience_type?: string;
+  content_format?: string;
+  confidence?: number;
+  evidence_terms?: string[];
+  target_audience?: string;
+  inferred_content_angle?: string;
+}
+
+export interface CreatorOpportunities {
+  suggested_remake_angles?: string[];
+  title_ideas?: string[];
+  short_form_clip_ideas?: string[];
+  script_prompts?: string[];
+  content_gaps?: string[];
+  underused_topics?: string[];
+  localization_options?: string[];
+}
+
+export interface KeywordCluster {
+  name: string;
+  terms?: string[];
+  evidence?: string[];
 }
 
 export interface YouTubeChannelAnalysisResponse {
@@ -508,9 +560,23 @@ export interface YouTubeChannelAnalysisResponse {
     likes?: number;
     comments?: number;
   }[];
+  top_videos_summary?: {
+    video_id: string;
+    title: string;
+    published_at: string;
+    views?: number;
+    likes?: number;
+    comments?: number;
+  }[];
+  channel_snapshot?: Record<string, unknown>;
   channel_niche?: string;
+  niche_analysis?: NicheAnalysis;
   content_pillars?: string[];
+  keyword_intelligence?: KeywordIntelligence;
+  keyword_clusters?: KeywordCluster[];
+  format_patterns?: string[];
   title_patterns?: string[];
+  performance_distribution?: Record<string, unknown>;
   upload_frequency?: string;
   top_video_topics?: string[];
   repeated_keywords?: string[];
@@ -519,6 +585,7 @@ export interface YouTubeChannelAnalysisResponse {
   likely_strategy?: string;
   opportunities?: string[];
   suggested_content_ideas?: string[];
+  suggested_short_clip_ideas?: string[];
   limitations?: string[];
   metadata?: ResearchResultMetadata;
 }
