@@ -39,11 +39,11 @@ function ConnectionCard({ conn }: { conn: PlatformStatus }) {
     } catch (err) {
       if (err instanceof ApiError) {
         if (err.isCredentialsMissing) {
-          setError('OAuth app credentials are not configured yet.');
+          setError('Connection setup is not ready yet.');
         } else if (err.isBackendOffline) {
-          setError('Backend offline. Start the Go backend to connect accounts.');
+          setError('Connections are temporarily unavailable.');
         } else if (err.isNotImplemented) {
-          setError('OAuth is not fully wired on the backend yet.');
+          setError('Direct account connection is not available yet.');
         } else {
           setError(err.message);
         }
@@ -74,13 +74,6 @@ function ConnectionCard({ conn }: { conn: PlatformStatus }) {
       </button>
 
       {error && <div className="neutral-callout">{error}</div>}
-
-      <details className="advanced-details">
-        <summary>Advanced details</summary>
-        <div>Status: {conn.status}</div>
-        <div>Publishing permission: {conn.can_publish ? 'Available after account connection' : 'Not available'}</div>
-        {conn.scopes.length > 0 && <div>Requested scopes: {conn.scopes.join(', ')}</div>}
-      </details>
     </div>
   );
 }
@@ -90,7 +83,6 @@ type FetchState = 'loading' | 'ok' | 'error';
 export function SocialConnectionsPage() {
   const [fetchState, setFetchState] = useState<FetchState>('loading');
   const [platforms, setPlatforms] = useState<PlatformStatus[]>([]);
-  const [fetchError, setFetchError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -101,9 +93,8 @@ export function SocialConnectionsPage() {
           setFetchState('ok');
         }
       })
-      .catch(err => {
+      .catch(() => {
         if (!cancelled) {
-          setFetchError(err instanceof Error ? err.message : 'Failed to load connection status');
           setFetchState('error');
         }
       });
@@ -122,12 +113,12 @@ export function SocialConnectionsPage() {
         </div>
       </div>
 
-      {fetchState === 'loading' && <div className="muted-note">Loading connection status from backend...</div>}
+      {fetchState === 'loading' && <div className="muted-note">Loading connection status...</div>}
 
       {fetchState === 'error' && (
         <>
           <div className="neutral-callout">
-            Cannot reach the Go backend. Showing neutral setup cards only. {fetchError}
+            Connections are temporarily unavailable. Showing setup cards only.
           </div>
           <div className="connection-grid" style={{ marginTop: 14 }}>
             {FALLBACK_CONNECTIONS.map(conn => <ConnectionCard key={conn.platform} conn={conn} />)}

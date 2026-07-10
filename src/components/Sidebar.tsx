@@ -1,6 +1,4 @@
-import { useEffect, useState } from 'react';
 import type { View } from '../types';
-import { getHealth } from '../lib/api/client';
 
 interface NavItem {
   id: View;
@@ -24,20 +22,6 @@ export const NAV_ITEMS: NavItem[] = [
 ];
 
 function SidebarChrome({ currentView, onNavigate, onAfterNavigate }: Props & { onAfterNavigate?: () => void }) {
-  const [backendConnected, setBackendConnected] = useState(false);
-
-  useEffect(() => {
-    let cancelled = false;
-    getHealth()
-      .then(res => {
-        if (!cancelled) setBackendConnected(Boolean(res.ok));
-      })
-      .catch(() => {
-        if (!cancelled) setBackendConnected(false);
-      });
-    return () => { cancelled = true; };
-  }, []);
-
   return (
     <aside className="sidebar" role="navigation" aria-label="Main navigation">
       <div className="sidebar-logo">
@@ -87,12 +71,8 @@ function SidebarChrome({ currentView, onNavigate, onAfterNavigate }: Props & { o
 
       <div className="sidebar-footer">
         <div className="collector-status">
-          <span
-            className="collector-dot"
-            aria-hidden="true"
-            style={{ background: backendConnected ? 'var(--green)' : 'var(--red)' }}
-          />
-          <span className="collector-label">{backendConnected ? 'Backend connected' : 'Backend offline'}</span>
+          <span className="collector-dot" aria-hidden="true" />
+          <span className="collector-label">Creator workspace</span>
         </div>
         <div className="user-card">
           <div className="user-avatar" aria-hidden="true">TC</div>

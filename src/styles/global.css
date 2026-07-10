@@ -264,7 +264,7 @@ body {
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  background: var(--green);
+  background: var(--accent);
   flex-shrink: 0;
 }
 
@@ -329,7 +329,7 @@ body {
   padding: 16px 28px;
   display: flex;
   align-items: center;
-  gap: 20px;
+  gap: 14px;
   background: var(--bg-base);
   height: var(--header-h);
 }
@@ -345,7 +345,7 @@ body {
   font-family: var(--font-mono);
   font-size: 11px;
   color: var(--text-muted);
-  background: var(--bg-raised);
+  background: rgba(255, 255, 255, 0.025);
   border: 1px solid var(--border-strong);
   padding: 7px 12px;
   border-radius: var(--radius-md);
@@ -368,6 +368,8 @@ body {
   transition: all 0.15s;
   user-select: none;
   white-space: nowrap;
+  min-height: 36px;
+  justify-content: center;
 }
 
 .generate-btn.idle {
@@ -378,10 +380,22 @@ body {
 
 .generate-btn.idle:hover { filter: brightness(1.08); }
 
-.generate-btn.secondary {
+.generate-btn.idle:disabled {
   background: var(--bg-subtle);
+  color: var(--text-muted);
+  border-color: var(--border-card);
+}
+
+.generate-btn.secondary {
+  background: transparent;
   color: var(--text-secondary);
   border-color: var(--border-card);
+}
+
+.generate-btn:disabled {
+  cursor: not-allowed;
+  filter: none;
+  opacity: 0.48;
 }
 
 .generate-btn.done {
@@ -1285,7 +1299,7 @@ body {
 .settings-card {
   background: var(--bg-card);
   border: 1px solid var(--border-card);
-  border-radius: var(--radius-xl);
+  border-radius: 8px;
   padding: 20px 22px;
 }
 
@@ -1325,6 +1339,18 @@ body {
 .form-input:focus,
 .form-select:focus,
 .form-textarea:focus { border-color: var(--accent); }
+
+input[type="file"]::file-selector-button {
+  border: 1px solid var(--border-strong);
+  background: var(--bg-card);
+  color: var(--text-secondary);
+  border-radius: 6px;
+  padding: 5px 9px;
+  margin-right: 10px;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
 
 .form-textarea { resize: vertical; min-height: 72px; }
 
@@ -2497,7 +2523,7 @@ body {
 
 /* ─── Creator workflow polish ───────────────────────────────── */
 .page-hero {
-  margin-bottom: 18px;
+  margin-bottom: 20px;
   max-width: 980px;
 }
 
@@ -2509,13 +2535,13 @@ body {
   font-family: var(--font-mono);
   font-size: 10.5px;
   text-transform: uppercase;
-  color: var(--accent);
+  color: var(--text-dim);
   margin-bottom: 6px;
 }
 
 .page-hero h1 {
   margin: 0;
-  font-size: 25px;
+  font-size: 26px;
   line-height: 1.15;
   letter-spacing: 0;
 }
@@ -2602,12 +2628,18 @@ body {
   display: flex;
   gap: 7px;
   flex-wrap: wrap;
-  margin-bottom: 16px;
+  margin-bottom: 18px;
+  padding: 5px;
+  background: rgba(255, 255, 255, 0.018);
+  border: 1px solid var(--border-card);
+  border-radius: 10px;
+  width: fit-content;
+  max-width: 100%;
 }
 
 .research-tabs button {
-  border: 1px solid var(--border-card);
-  background: var(--bg-card);
+  border: 1px solid transparent;
+  background: transparent;
   color: var(--text-muted);
   border-radius: 8px;
   padding: 8px 12px;
@@ -2619,7 +2651,7 @@ body {
 
 .research-tabs button.active {
   color: var(--text-primary);
-  background: var(--accent-dim);
+  background: var(--bg-raised);
   border-color: var(--accent-border);
 }
 
@@ -2646,7 +2678,7 @@ body {
 
 .neutral-callout {
   border: 1px solid var(--border-card);
-  background: var(--bg-subtle);
+  background: rgba(255, 255, 255, 0.026);
   color: var(--text-muted);
   border-radius: 8px;
   padding: 10px 12px;
@@ -2695,7 +2727,7 @@ body {
 }
 
 .clip-status-pill.neutral.active span {
-  background: var(--yellow);
+  background: var(--text-dimmer);
 }
 
 .modal-layer {
@@ -2845,6 +2877,7 @@ body {
 .connection-card {
   display: grid;
   gap: 14px;
+  align-content: space-between;
 }
 
 .connection-card-top {
@@ -2915,6 +2948,16 @@ body {
   .generate-btn {
     width: 100%;
     justify-content: center;
+  }
+
+  .research-tabs {
+    width: 100%;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+  }
+
+  .research-tabs button {
+    white-space: nowrap;
   }
 
   .status-row {

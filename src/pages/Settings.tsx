@@ -45,7 +45,7 @@ export function SettingsPage({ settings: initial, onSave }: Props) {
         <div>
           <div className="page-eyebrow">Settings</div>
           <h1>Configure the creator workspace.</h1>
-          <p>Manage workspace preferences, provider readiness, publishing setup, and default branding without exposing secrets.</p>
+          <p>Manage workspace preferences, source readiness, publishing setup, and default branding without exposing secrets.</p>
         </div>
       </div>
 
@@ -85,7 +85,7 @@ export function SettingsPage({ settings: initial, onSave }: Props) {
         <div className="settings-card">
           <div className="settings-card-title">YouTube Analyzer</div>
           <div className="status-list">
-            <ProviderStatusRow providers={providers} id="youtube_data_api" fallbackLabel="YOUTUBE_API_KEY" />
+            <ProviderStatusRow providers={providers} id="youtube_data_api" fallbackLabel="YouTube analyzer" />
           </div>
           <div className="muted-note">Only configuration status is displayed. API keys are never shown in the browser.</div>
         </div>
@@ -93,15 +93,15 @@ export function SettingsPage({ settings: initial, onSave }: Props) {
         <div className="settings-card">
           <div className="settings-card-title">AI / Script Provider</div>
           <div className="status-list">
-            <StatusRow label="OpenAI" value="Configured when backend OPENAI_API_KEY is present" />
+            <StatusRow label="OpenAI" value="Ready when the server-side key is configured" />
           </div>
-          <div className="muted-note">API keys stay on the backend and are never displayed here.</div>
+          <div className="muted-note">API keys stay server-side and are never displayed here.</div>
         </div>
 
         <div className="settings-card">
           <div className="settings-card-title">Social Publishing Providers</div>
           <div className="status-list">
-            <StatusRow label="OAuth credentials" value="Missing or configured on backend environment" />
+            <StatusRow label="Account connection setup" value="Ready when platform apps are configured" />
             <StatusRow label="Direct publishing" value="Disabled until real platform APIs are wired" />
           </div>
           <div className="muted-note">Publishing starts from Clip Generator after accounts are connected.</div>
@@ -176,8 +176,15 @@ function ProviderStatusRow({ providers, id, fallbackLabel }: { providers: Resear
   return (
     <StatusRow
       label={provider?.name ?? fallbackLabel}
-      value={provider ? `${provider.status.replaceAll('_', ' ')} · ${provider.message}` : 'Status unavailable from backend'}
+      value={provider ? readinessLabel(provider) : 'Status unavailable'}
       tone={active ? 'good' : undefined}
     />
   );
+}
+
+function readinessLabel(provider: ResearchProviderStatus): string {
+  if (provider.status === 'active') return 'Ready';
+  if (provider.status === 'not_configured') return 'Setup needed';
+  if (provider.status === 'unavailable') return 'Temporarily unavailable';
+  return 'Status unavailable';
 }

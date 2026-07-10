@@ -127,7 +127,7 @@ export function TrendFinderPage({ initialFilter = 'all', onFilterChange, onStatu
       })
       .catch(err => {
         if (cancelled) return;
-        setError(err instanceof ApiError ? err.message : 'Trend discovery request failed.');
+        setError(err instanceof ApiError ? 'Trend discovery is temporarily unavailable.' : 'Trend discovery request failed.');
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -508,7 +508,7 @@ function YouTubeVideoTab({ value, onChange, onAnalyze, loading, result, onGenera
       loading={loading}
       buttonLabel="Analyze Video"
     >
-      {!result && <div className="neutral-callout">Add YOUTUBE_API_KEY in Settings/Railway variables to analyze YouTube videos.</div>}
+      {!result && <div className="neutral-callout">YouTube analysis needs the YouTube analyzer to be configured in Settings.</div>}
       {result && result.status !== 'ok' && <HonestResultState result={result} />}
       {result?.status === 'ok' && (
         <div style={{ display: 'grid', gap: 10 }}>
@@ -596,7 +596,7 @@ function YouTubeChannelTab({ value, onChange, onAnalyze, loading, result, onGene
       loading={loading}
       buttonLabel="Analyze Channel"
     >
-      {!result && <div className="neutral-callout">Add YOUTUBE_API_KEY in Settings/Railway variables to analyze YouTube channels.</div>}
+      {!result && <div className="neutral-callout">Channel analysis needs the YouTube analyzer to be configured in Settings.</div>}
       {result && result.status !== 'ok' && <HonestResultState result={result} />}
       {result?.status === 'ok' && (
         <div style={{ display: 'grid', gap: 10 }}>
@@ -770,11 +770,11 @@ function AnalyzerShell({ title, description, inputLabel, value, onChange, onAnal
 }
 
 function DiscoveryState({ loading, error, response, filteredCount }: { loading: boolean; error: string | null; response: TrendDiscoveryResponse | null; filteredCount: number }) {
-  if (loading) return <EmptyState icon="ST" title="Loading real trend candidates." desc="Checking Google Trends RSS through the backend." />;
+  if (loading) return <EmptyState icon="ST" title="Loading trend candidates." desc="Checking available trend sources." />;
   if (error) return <EmptyState icon="ER" title="Trend discovery is unavailable." desc={error} />;
-  if (response?.provider_status === 'provider_not_configured') return <EmptyState icon="NC" title="No trend provider configured." desc={response.message || 'Configure a real backend trend provider to collect trends.'} />;
-  if (response?.provider_status === 'no_data') return <EmptyState icon="ND" title="No real trend data found." desc={response.message || 'The configured provider returned no candidates for this request.'} />;
-  if (response?.provider_status === 'provider_error') return <EmptyState icon="PE" title="Trend provider error." desc={response.message || 'The backend provider request failed.'} />;
+  if (response?.provider_status === 'provider_not_configured') return <EmptyState icon="NC" title="No trend source configured." desc={response.message || 'Configure a trend source in Settings to collect trends.'} />;
+  if (response?.provider_status === 'no_data') return <EmptyState icon="ND" title="No real trend data found." desc={response.message || 'The selected trend source returned no candidates for this request.'} />;
+  if (response?.provider_status === 'provider_error') return <EmptyState icon="PE" title="Trend source unavailable." desc={response.message || 'The selected trend source could not return results.'} />;
   if (response?.provider_status === 'ok' && filteredCount === 0) return <EmptyState icon="ST" title="No candidates for this source." desc="The selected source has no real provider data connected or returned for this request." />;
   return null;
 }
@@ -945,8 +945,8 @@ function sourceFilterOptions(providers: ResearchProviderStatus[]): { label: stri
 
 function statusSubtitle(response: TrendDiscoveryResponse | null): string {
   if (!response) return 'No real trend data found';
-  if (response.provider_status === 'provider_not_configured') return 'No trend provider configured';
-  if (response.provider_status === 'provider_error') return 'Trend provider error';
+  if (response.provider_status === 'provider_not_configured') return 'No trend source configured';
+  if (response.provider_status === 'provider_error') return 'Trend source unavailable';
   if (response.provider_status === 'no_data') return 'No real trend data found';
   if ((response.candidates?.length ?? 0) > 0) return 'Live Google Trends RSS data';
   return 'No real trend data found';
@@ -1166,7 +1166,7 @@ function GeneratedPackageView({ pkg }: { pkg: ReelContentPackage }) {
       {pkg.hashtags?.length > 0 && <TextBlock label="Hashtags" value={pkg.hashtags.join(' ')} />}
       <TextBlock label="Thumbnail brief" value={pkg.thumbnail_brief} />
       <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text-dim)', textTransform: 'uppercase' }}>
-        {pkg.provider_metadata.provider} · {pkg.provider_metadata.model} · {pkg.provider_metadata.source}
+        Generated from real research
       </div>
     </div>
   );

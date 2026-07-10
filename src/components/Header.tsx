@@ -1,6 +1,4 @@
-import { useEffect, useState } from 'react';
 import type { View } from '../types';
-import { getHealth } from '../lib/api/client';
 
 const VIEW_META: Record<View, { title: string; sub: string }> = {
   dashboard:    { title: 'Dashboard',      sub: 'Trend discovery, scripts, clips, and publishing readiness' },
@@ -20,19 +18,6 @@ interface Props {
 
 export function Header({ view, region = 'US · Global', subtitleOverride, onMenuClick }: Props) {
   const { title, sub } = VIEW_META[view];
-  const [backendConnected, setBackendConnected] = useState(false);
-
-  useEffect(() => {
-    let cancelled = false;
-    getHealth()
-      .then(res => {
-        if (!cancelled) setBackendConnected(Boolean(res.ok));
-      })
-      .catch(() => {
-        if (!cancelled) setBackendConnected(false);
-      });
-    return () => { cancelled = true; };
-  }, []);
 
   return (
     <header className="header">
@@ -51,14 +36,6 @@ export function Header({ view, region = 'US · Global', subtitleOverride, onMenu
         <span className="label">REGION</span>
         <span className="value">{region}</span>
         <span style={{ color: 'var(--text-dim)' }}>▾</span>
-      </div>
-
-      <div className="header-chip" aria-label="Automation status">
-        <span
-          className="generate-btn-dot"
-          style={{ background: backendConnected ? 'var(--green)' : '#15121f' }}
-        />
-        {backendConnected ? 'Backend connected' : 'Backend offline'}
       </div>
     </header>
   );

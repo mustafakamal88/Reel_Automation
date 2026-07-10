@@ -40,7 +40,7 @@ export function DashboardPage({ latestScript, onNavigate }: Props) {
     { label: 'Clip packages generated', value: activity.clipsGenerated > 0 ? String(activity.clipsGenerated) : 'No activity yet' },
     { label: 'YouTube analyses run', value: activity.youtubeAnalysesRun > 0 ? String(activity.youtubeAnalysesRun) : 'No activity yet' },
     { label: 'Channel analyses run', value: activity.channelAnalysesRun > 0 ? String(activity.channelAnalysesRun) : 'No activity yet' },
-    { label: 'Connected platforms', value: connectionStatus === 'offline' ? 'Backend offline' : String(connectedPlatforms) },
+    { label: 'Connected platforms', value: connectionStatus === 'offline' ? 'Unavailable' : String(connectedPlatforms) },
   ];
 
   return (
@@ -83,7 +83,7 @@ export function DashboardPage({ latestScript, onNavigate }: Props) {
             <button className="generate-btn idle" type="button" onClick={() => onNavigate('connections')}>Open Connections</button>
           </div>
           <div className="muted-note">
-            No fake publishing or connected-account data is shown. Download ZIPs manually until OAuth and upload APIs are configured.
+            No fake publishing or connected-account data is shown. Download ZIPs manually until account publishing is ready.
           </div>
         </div>
       </div>

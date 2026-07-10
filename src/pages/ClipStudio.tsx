@@ -48,7 +48,7 @@ const SOURCE_MODELS: { value: ClipSourceModel; label: string }[] = [
 
 function errMsg(err: unknown, fallback: string): string {
   if (err instanceof ApiError) {
-    if (err.isBackendOffline) return 'Backend offline. Start the Go backend or check VITE_API_BASE_URL.';
+    if (err.isBackendOffline) return 'Clip generation is temporarily unavailable.';
     return err.message;
   }
   if (err instanceof Error) return err.message;
@@ -269,7 +269,7 @@ export function ClipStudioPage({ onNavigate }: Props) {
         <div>
           <div style={{ fontSize: 18, fontWeight: 800, color: 'var(--text-primary)' }}>Clip from Video</div>
           <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>
-            Upload a source video or provide a direct downloadable video URL, then export a branded ZIP package.
+            Upload a source video or provide a direct downloadable video URL. Then generate clips, download the ZIP, or open publishing.
           </div>
         </div>
 
@@ -318,10 +318,6 @@ export function ClipStudioPage({ onNavigate }: Props) {
         <div style={{ fontSize: 12, color: sourceStatus.tone === 'danger' ? 'var(--red)' : sourceStatus.tone === 'ready' ? 'var(--green)' : 'var(--text-muted)', background: sourceStatus.tone === 'danger' ? 'rgba(232,115,107,0.08)' : sourceStatus.tone === 'ready' ? 'rgba(95,211,154,0.08)' : 'var(--bg-subtle)', border: sourceStatus.tone === 'danger' ? '1px solid rgba(232,115,107,0.25)' : sourceStatus.tone === 'ready' ? '1px solid rgba(95,211,154,0.25)' : '1px solid var(--border)', borderRadius: 6, padding: '8px 10px' }}>
           <div style={{ fontWeight: 800, color: 'inherit', marginBottom: 3 }}>{sourceStatus.label}</div>
           <div>{clipStatusMessage}</div>
-        </div>
-
-        <div style={{ fontSize: 12, color: 'var(--text-muted)', background: 'var(--bg-subtle)', border: '1px solid var(--border)', borderRadius: 6, padding: '8px 10px', lineHeight: 1.5 }}>
-          Platform watch URLs are saved as reference only. Upload the source file or provide a direct downloadable video URL to generate clips.
         </div>
 
         <Field label="Prompt / instruction">
@@ -376,7 +372,7 @@ export function ClipStudioPage({ onNavigate }: Props) {
           I confirm I have rights or permission to use this source.
         </label>
 
-        <details style={{ borderTop: '1px solid var(--border)', paddingTop: 12 }}>
+        <details className="advanced-details">
           <summary style={{ cursor: 'pointer', fontSize: 12, fontWeight: 700, color: 'var(--text-secondary)' }}>
             Rights & attribution
           </summary>
