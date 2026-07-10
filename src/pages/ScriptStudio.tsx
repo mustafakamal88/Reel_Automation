@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useRef } from 'react';
 import type { StoredScriptPackage } from '../lib/storage';
 
 interface Props {
@@ -361,7 +361,6 @@ function EvidenceSection({ title, items, chips, linkItems, soft }: {
 }
 
 export function ScriptStudioPage({ latestScript, onUseInClipGenerator, onGoToTrendFinder }: Props) {
-  const [highlightedSection, setHighlightedSection] = useState<string | null>(null);
   const highlightTimer = useRef<number | null>(null);
 
   if (!latestScript) {
@@ -404,9 +403,11 @@ export function ScriptStudioPage({ latestScript, onUseInClipGenerator, onGoToTre
   function scrollToSection(section: ScriptSectionID) {
     const element = document.getElementById(`script-section-${section}`);
     element?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    setHighlightedSection(section);
     if (highlightTimer.current) window.clearTimeout(highlightTimer.current);
-    highlightTimer.current = window.setTimeout(() => setHighlightedSection(null), 1300);
+    element?.classList.add('script-card-highlight');
+    highlightTimer.current = window.setTimeout(() => {
+      element?.classList.remove('script-card-highlight');
+    }, 1300);
   }
 
   return (
@@ -440,11 +441,11 @@ export function ScriptStudioPage({ latestScript, onUseInClipGenerator, onGoToTre
         </nav>
 
         <main className="script-content">
-          <ScriptCard id="script-section-hook" title="Hook" value={pkg.hook} onCopy={() => void copyText(pkg.hook)} highlighted={highlightedSection === 'hook'} />
-          <ScriptCard id="script-section-script" title="Script" value={pkg.script} onCopy={() => void copyText(pkg.script)} highlighted={highlightedSection === 'script'} />
-          <ScriptCard id="script-section-caption" title="Caption" value={pkg.caption} onCopy={() => void copyText(pkg.caption)} highlighted={highlightedSection === 'caption'} />
+          <ScriptCard id="script-section-hook" title="Hook" value={pkg.hook} onCopy={() => void copyText(pkg.hook)} />
+          <ScriptCard id="script-section-script" title="Script" value={pkg.script} onCopy={() => void copyText(pkg.script)} />
+          <ScriptCard id="script-section-caption" title="Caption" value={pkg.caption} onCopy={() => void copyText(pkg.caption)} />
           <ScriptCard id="script-section-description" title="Description" value={pkg.description || pkg.youtube_description} onCopy={() => void copyText(pkg.description || pkg.youtube_description)} />
-          <ScriptCard id="script-section-hashtags" title="Hashtags" value={hashtagText} onCopy={() => void copyText(hashtagText)} highlighted={highlightedSection === 'hashtags'} />
+          <ScriptCard id="script-section-hashtags" title="Hashtags" value={hashtagText} onCopy={() => void copyText(hashtagText)} />
           <ScriptCard id="script-section-thumbnail" title="Thumbnail brief" value={pkg.thumbnail_brief} onCopy={() => void copyText(pkg.thumbnail_brief)} />
 
           <section id="script-section-platform-text" className="platform-text-section">
