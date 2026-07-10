@@ -436,11 +436,11 @@ export function ScriptStudioPage({ latestScript, onUseInClipGenerator, onGoToTre
         <nav className="script-action-bar" aria-label="Script actions">
           <button className="generate-btn secondary" type="button" onClick={() => void copyText(exportText)}>Copy all</button>
           {(Object.keys(sectionLabels) as ScriptSectionID[]).map(section => (
-            <button className="generate-btn secondary" type="button" onClick={() => scrollToSection(section)} key={section}>
+            <a className="generate-btn secondary" href={`#script-section-${section}`} role="button" onClick={() => scrollToSection(section)} key={section}>
               {sectionLabels[section]}
-            </button>
+            </a>
           ))}
-          <button className="generate-btn secondary" type="button" onClick={() => document.getElementById('script-section-platform-text')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}>Platform text</button>
+          <a className="generate-btn secondary" href="#script-section-platform-text" role="button" onClick={() => document.getElementById('script-section-platform-text')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}>Platform text</a>
           {onUseInClipGenerator && (
             <button className="generate-btn idle" type="button" onClick={onUseInClipGenerator}>Use in Clip Generator</button>
           )}
