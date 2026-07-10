@@ -402,9 +402,15 @@ export function ScriptStudioPage({ latestScript, onUseInClipGenerator, onGoToTre
 
   function scrollToSection(section: ScriptSectionID) {
     const element = document.getElementById(`script-section-${section}`);
-    element?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     if (highlightTimer.current) window.clearTimeout(highlightTimer.current);
+    document.querySelectorAll('.script-card-highlight').forEach(node => {
+      node.classList.remove('script-card-highlight');
+    });
     element?.classList.add('script-card-highlight');
+    element?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    window.requestAnimationFrame(() => {
+      element?.classList.add('script-card-highlight');
+    });
     highlightTimer.current = window.setTimeout(() => {
       element?.classList.remove('script-card-highlight');
     }, 1300);
