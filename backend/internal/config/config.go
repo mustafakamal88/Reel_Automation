@@ -45,6 +45,13 @@ type Config struct {
 	TikTokResearchSecret   string
 	TikTokResearchToken    string
 
+	GoogleAdsDeveloperToken  string
+	GoogleAdsCustomerID      string
+	GoogleAdsLoginCustomerID string
+	GoogleAdsClientID        string
+	GoogleAdsClientSecret    string
+	GoogleAdsRefreshToken    string
+
 	// Session / encryption
 	SessionSecret      string
 	TokenEncryptionKey string
@@ -93,6 +100,13 @@ func Load() (*Config, error) {
 		TikTokResearchClientID: os.Getenv("TIKTOK_RESEARCH_CLIENT_ID"),
 		TikTokResearchSecret:   os.Getenv("TIKTOK_RESEARCH_CLIENT_SECRET"),
 		TikTokResearchToken:    os.Getenv("TIKTOK_RESEARCH_TOKEN"),
+
+		GoogleAdsDeveloperToken:  os.Getenv("GOOGLE_ADS_DEVELOPER_TOKEN"),
+		GoogleAdsCustomerID:      os.Getenv("GOOGLE_ADS_CUSTOMER_ID"),
+		GoogleAdsLoginCustomerID: os.Getenv("GOOGLE_ADS_LOGIN_CUSTOMER_ID"),
+		GoogleAdsClientID:        os.Getenv("GOOGLE_ADS_CLIENT_ID"),
+		GoogleAdsClientSecret:    os.Getenv("GOOGLE_ADS_CLIENT_SECRET"),
+		GoogleAdsRefreshToken:    os.Getenv("GOOGLE_ADS_REFRESH_TOKEN"),
 
 		SessionSecret:      os.Getenv("SESSION_SECRET"),
 		TokenEncryptionKey: os.Getenv("TOKEN_ENCRYPTION_KEY"),

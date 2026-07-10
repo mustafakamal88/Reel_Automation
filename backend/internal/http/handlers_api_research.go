@@ -24,6 +24,16 @@ type youtubeChannelAnalysisRequest struct {
 	ChannelURL string `json:"channel_url"`
 }
 
+func (s *Server) googleAdsKeywordPlannerStatus() research.ProviderStatus {
+	return research.GoogleAdsKeywordPlannerStatus(
+		s.cfg.GoogleAdsDeveloperToken,
+		s.cfg.GoogleAdsCustomerID,
+		s.cfg.GoogleAdsClientID,
+		s.cfg.GoogleAdsClientSecret,
+		s.cfg.GoogleAdsRefreshToken,
+	)
+}
+
 func (s *Server) handleAnalyzeYouTubeVideo(w http.ResponseWriter, r *http.Request) {
 	var req youtubeVideoAnalysisRequest
 	if err := decodeJSONBody(r, &req); err != nil {
@@ -84,12 +94,25 @@ func (s *Server) handleResearchProviderStatus(w http.ResponseWriter, r *http.Req
 	statuses := []research.ProviderStatus{
 		googleStatus,
 		youtube.Status(),
+		research.YouTubeAnalyticsStatus(),
+		s.googleAdsKeywordPlannerStatus(),
 		research.TikTokResearchStatus(s.cfg.TikTokResearchClientID, s.cfg.TikTokResearchSecret, s.cfg.TikTokResearchToken),
 		research.MetaInstagramStatus(s.cfg.MetaAppID, s.cfg.MetaAppSecret),
 		research.XStatus(s.cfg.XClientID, s.cfg.XClientSecret),
 		research.FacebookStatus(s.cfg.MetaAppID, s.cfg.MetaAppSecret),
 	}
 	jsonOK(w, map[string]any{"providers": statuses})
+}
+
+func (s *Server) handleAnalyzeNicheOpportunities(w http.ResponseWriter, r *http.Request) {
+	var req research.NicheOpportunityRequest
+	if err := decodeJSONBody(r, &req); err != nil {
+		jsonError(w, "invalid request body: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	provider := research.NewYouTubeProvider(s.cfg.YouTubeAPIKey, nil)
+	result := research.AnalyzeNicheOpportunities(r.Context(), provider, req, s.googleAdsKeywordPlannerStatus())
+	jsonOK(w, result)
 }
 
 func (s *Server) handleGenerateResearchScript(w http.ResponseWriter, r *http.Request) {

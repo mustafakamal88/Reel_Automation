@@ -2701,6 +2701,15 @@ input[type="file"]::file-selector-button {
   gap: 8px;
 }
 
+.form-grid {
+  display: grid;
+  gap: 12px;
+}
+
+.form-grid.two {
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+
 .small-capability {
   border: 1px solid var(--border-card);
   background: var(--bg-subtle);

@@ -3,11 +3,14 @@ import type { Platform } from '../types';
 import { PLATFORMS } from '../data/platforms';
 import {
   ApiError,
+  analyzeNicheOpportunities,
   analyzeYouTubeChannel,
   analyzeYouTubeVideo,
   discoverTrendCandidates,
   generateResearchScript,
   getResearchProviderStatus,
+  type NicheOpportunity,
+  type NicheOpportunityResponse,
   type ReelContentPackage,
   type ResearchScriptGenerationRequest,
   type ResearchScriptSourceType,
@@ -268,6 +271,12 @@ export function TrendFinderPage({ initialFilter = 'all', onFilterChange, onStatu
     handleGenerateResearch(candidate.id, candidate, researchScriptFromChannelIdea(channelResult, idea, region || 'US', language || 'en-US'));
   }
 
+  function generateFromNicheOpportunity(opportunity: NicheOpportunity) {
+    const key = nicheOpportunityKey(opportunity);
+    const candidate = candidateFromNicheOpportunity(opportunity);
+    handleGenerateResearch(key, candidate, researchScriptFromNicheOpportunity(opportunity));
+  }
+
   return (
     <section className="page-section">
       <div className="page-hero compact">
@@ -354,11 +363,10 @@ export function TrendFinderPage({ initialFilter = 'all', onFilterChange, onStatu
       {tab === 'niche' && (
         <NicheFinderTab
           providers={providers}
-          candidates={response?.candidates ?? []}
           region={region || 'US'}
           language={language || 'en-US'}
           audience={audienceText || 'Global'}
-          onGenerate={(candidate) => handleGenerate(candidate, 'niche_idea')}
+          onGenerate={generateFromNicheOpportunity}
           generated={generated}
           generationErrors={generationErrors}
           generatingID={generatingID}
@@ -643,54 +651,175 @@ function YouTubeChannelTab({ value, onChange, onAnalyze, loading, result, onGene
   );
 }
 
-function NicheFinderTab({ providers, candidates, region, language, audience, onGenerate, generated, generationErrors, generatingID, onOpenScriptStudio }: {
+function NicheFinderTab({ providers, region, language, audience, onGenerate, generated, generationErrors, generatingID, onOpenScriptStudio }: {
   providers: ResearchProviderStatus[];
-  candidates: TrendCandidate[];
   region: string;
   language: string;
   audience: string;
-  onGenerate: (candidate: TrendCandidate) => void;
+  onGenerate: (opportunity: NicheOpportunity) => void;
   generated: Record<string, ReelContentPackage>;
   generationErrors: Record<string, string>;
   generatingID: string | null;
   onOpenScriptStudio?: () => void;
 }) {
-  const activeProviders = providers.filter(p => p.status === 'active').map(p => p.id);
-  const hasEnough = activeProviders.length >= 2 && candidates.length >= 3;
-  const ideas = candidates.slice(0, 5).map((candidate, idx) => ({
-    candidate,
-    score: Math.max(1, Math.round(candidate.score * (idx === 0 ? 1 : 0.92))),
-  }));
+  const [seedKeyword, setSeedKeyword] = useState('');
+  const [platform, setPlatform] = useState('youtube');
+  const [localAudience, setLocalAudience] = useState(audience);
+  const [contentStyle, setContentStyle] = useState('short-form explainers');
+  const [monetizationGoal, setMonetizationGoal] = useState('ads, affiliates, and products');
+  const [creatorSkillLevel, setCreatorSkillLevel] = useState('intermediate');
+  const [difficulty, setDifficulty] = useState('medium');
+  const [loading, setLoading] = useState(false);
+  const [result, setResult] = useState<NicheOpportunityResponse | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const providerMap = new Map(providers.map(provider => [provider.id, provider]));
+
+  function runAnalysis() {
+    if (!seedKeyword.trim()) return;
+    setLoading(true);
+    setError(null);
+    setResult(null);
+    analyzeNicheOpportunities({
+      seed_keyword: seedKeyword.trim(),
+      platform,
+      country: region,
+      language,
+      audience: localAudience || audience,
+      content_style: contentStyle,
+      monetization_goal: monetizationGoal,
+      creator_skill_level: creatorSkillLevel,
+      production_difficulty_preference: difficulty,
+    })
+      .then(setResult)
+      .catch(err => setError(err instanceof ApiError ? err.message : 'Niche opportunity analysis failed.'))
+      .finally(() => setLoading(false));
+  }
+
   return (
     <div style={{ display: 'grid', gap: 12 }}>
       <div className="settings-card">
         <div className="settings-card-title">Niche Finder inputs</div>
-        <MetricGrid values={{ Platform: activeProviders.length ? activeProviders.join(', ') : 'Need connected sources', Country: region, Language: language, Audience: audience, 'Content style': 'From workspace defaults', 'Monetization goal': 'Not set' }} />
-      </div>
-      {!hasEnough && (
-        <div className="empty-state">
-          <div className="empty-icon">ND</div>
-          <div className="empty-title">Need more connected sources.</div>
-          <div className="empty-desc">Niche ideas require enough real cross-source provider data. Google Trends can seed research, but connect YouTube/TikTok/Instagram/X/Facebook before TrendCortex calls this a niche opportunity.</div>
+        <div className="form-grid two">
+          <TextInput label="Seed keyword/topic" value={seedKeyword} onChange={setSeedKeyword} placeholder="AI tools, UK visa, trading, football transfers" />
+          <Select label="Platform" value={platform} onChange={setPlatform} options={[{ label: 'YouTube', value: 'youtube' }, { label: 'Short-form video', value: 'short_form' }]} />
+          <TextInput label="Audience/culture" value={localAudience} onChange={setLocalAudience} placeholder="UK Pakistani, South Asian students, US creators" />
+          <Select label="Content style" value={contentStyle} onChange={setContentStyle} options={[
+            { label: 'Short-form explainers', value: 'short-form explainers' },
+            { label: 'Tutorials', value: 'tutorials' },
+            { label: 'Reviews', value: 'reviews' },
+            { label: 'News breakdowns', value: 'news breakdowns' },
+            { label: 'Case studies', value: 'case studies' },
+          ]} />
+          <Select label="Monetization goal" value={monetizationGoal} onChange={setMonetizationGoal} options={[
+            { label: 'Ads, affiliates, products', value: 'ads, affiliates, and products' },
+            { label: 'Affiliate revenue', value: 'affiliate reviews and buying intent' },
+            { label: 'Course/education sales', value: 'education, courses, and community' },
+            { label: 'Brand deals', value: 'brand deals and sponsorships' },
+          ]} />
+          <Select label="Creator skill level" value={creatorSkillLevel} onChange={setCreatorSkillLevel} options={[
+            { label: 'Beginner', value: 'beginner' },
+            { label: 'Intermediate', value: 'intermediate' },
+            { label: 'Advanced/expert', value: 'advanced expert' },
+          ]} />
+          <Select label="Production difficulty" value={difficulty} onChange={setDifficulty} options={[
+            { label: 'Low/simple', value: 'low simple' },
+            { label: 'Medium', value: 'medium' },
+            { label: 'High/polished', value: 'high polished' },
+          ]} />
         </div>
-      )}
-      {hasEnough && (
+        <button className="generate-btn idle" type="button" onClick={runAnalysis} disabled={!seedKeyword.trim() || loading}>
+          {loading ? 'Analyzing...' : 'Analyze niche opportunity'}
+        </button>
+        <MetricGrid values={{
+          Country: region,
+          Language: language,
+          'YouTube Data API': providerMap.get('youtube_data_api')?.status || 'unknown',
+          'Google Ads Keyword Planner': providerMap.get('google_ads_keyword_planner')?.status || 'not_configured',
+          'YouTube Analytics': providerMap.get('youtube_analytics')?.status || 'not_configured',
+          'Google Trends RSS': providerMap.get('google_trends_rss')?.status || 'unknown',
+        }} />
+      </div>
+
+      <div className="neutral-callout">
+        Monetization is estimated from public/proxy signals, not exact YouTube RPM. Connect Google Ads Keyword Planner for stronger monetization estimates; exact revenue/RPM requires future authorized YouTube Analytics for owned channels.
+      </div>
+
+      {error && <EmptyState icon="ER" title="Niche analysis failed." desc={error} />}
+      {result && result.status !== 'ok' && <HonestResultState result={result} />}
+      {result?.status === 'ok' && (
         <div style={{ display: 'grid', gap: 10 }}>
-          {ideas.map(({ candidate, score }) => (
-            <TrendCandidateCard
-              key={`niche-${candidate.id}`}
-              candidate={{ ...candidate, score }}
-              audience={audience}
-              generated={generated[`niche-${candidate.id}`]}
-              generationError={generationErrors[`niche-${candidate.id}`]}
-              generating={generatingID === `niche-${candidate.id}`}
-              onGenerate={() => onGenerate(candidate)}
-              onOpenScriptStudio={onOpenScriptStudio}
-            />
-          ))}
+          {(result.opportunities ?? []).map(opportunity => {
+            const key = nicheOpportunityKey(opportunity);
+            return (
+              <NicheOpportunityCard
+                key={key}
+                opportunity={opportunity}
+                generated={generated[key]}
+                generationError={generationErrors[key]}
+                generating={generatingID === key}
+                onGenerate={() => onGenerate(opportunity)}
+                onOpenScriptStudio={onOpenScriptStudio}
+              />
+            );
+          })}
+          <Limitations items={result.limitations ?? []} />
         </div>
       )}
     </div>
+  );
+}
+
+function NicheOpportunityCard({ opportunity, generated, generationError, generating, onGenerate, onOpenScriptStudio }: {
+  opportunity: NicheOpportunity;
+  generated?: ReelContentPackage;
+  generationError?: string;
+  generating: boolean;
+  onGenerate: () => void;
+  onOpenScriptStudio?: () => void;
+}) {
+  return (
+    <article style={{ display: 'grid', gap: 14, padding: '14px 16px', background: 'var(--bg-card)', border: '1px solid var(--border-card)', borderRadius: 8 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'flex-start', flexWrap: 'wrap' }}>
+        <div style={{ minWidth: 0 }}>
+          <div style={{ fontSize: 16, fontWeight: 800, color: 'var(--text-primary)', overflowWrap: 'anywhere' }}>{opportunity.niche_name}</div>
+          <div style={{ marginTop: 4, fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-dim)', textTransform: 'uppercase' }}>
+            {opportunity.platform} · {opportunity.country} · {opportunity.language} · {opportunity.estimated_monetization_level} monetization estimate
+          </div>
+        </div>
+        <div style={{ textAlign: 'right', minWidth: 96 }}>
+          <div style={{ fontFamily: 'var(--font-mono)', fontSize: 22, fontWeight: 800, color: 'var(--green)' }}>{Math.round(opportunity.opportunity_score)}</div>
+          <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text-dim)', textTransform: 'uppercase' }}>opportunity</div>
+        </div>
+      </div>
+      <MetricGrid values={{
+        'Success probability': opportunity.success_probability,
+        'Demand score': Math.round(opportunity.demand_score),
+        'Monetization score': Math.round(opportunity.monetization_score),
+        'Competition level': opportunity.competition_level,
+        Confidence: `${Math.round((opportunity.confidence || 0) * 100)}%`,
+      }} />
+      <TextBlock label="Why this niche" value={opportunity.success_reason} />
+      <TextBlock label="Demand" value={opportunity.demand_reason} />
+      <TextBlock label="Monetization" value={`${opportunity.monetization_reason} Confidence: ${opportunity.monetization_confidence || 'low'}.`} />
+      <TextBlock label="Competition" value={opportunity.competition_reason} />
+      <LabelledChips label="Evidence" items={opportunity.evidence_sources ?? []} />
+      <LabelledChips label="Supporting keywords" items={opportunity.supporting_keywords ?? []} />
+      <LabelledChips label="Related channels" items={opportunity.related_channels ?? []} />
+      <SectionList label="First 10 video ideas" items={opportunity.first_10_video_ideas ?? []} />
+      <SectionList label="Suggested titles" items={opportunity.suggested_titles ?? []} />
+      <SectionList label="Suggested clip angles" items={opportunity.suggested_clip_angles ?? []} />
+      <SectionList label="Risks" items={opportunity.risks ?? []} />
+      <ScriptAction
+        label="Generate Script"
+        generating={generating}
+        generated={Boolean(generated)}
+        error={generationError}
+        onGenerate={onGenerate}
+        onOpenScriptStudio={onOpenScriptStudio}
+      />
+      {generated && <GeneratedPackageView pkg={generated} />}
+      <Limitations items={opportunity.limitations ?? []} />
+    </article>
   );
 }
 
@@ -975,6 +1104,80 @@ function candidateFromChannel(result: YouTubeChannelAnalysisResponse, idea: stri
     source_url: result.metadata?.source_url,
     evidence: result.metadata?.score_reason || result.message,
     status: 'discovered',
+  };
+}
+
+function nicheOpportunityKey(opportunity: NicheOpportunity): string {
+  return `niche-${stableKey(`${opportunity.niche_name}-${opportunity.country}-${opportunity.language}`)}`;
+}
+
+function candidateFromNicheOpportunity(opportunity: NicheOpportunity): TrendCandidate {
+  return {
+    id: nicheOpportunityKey(opportunity),
+    source: 'niche_idea',
+    region: opportunity.country || 'US',
+    language: opportunity.language || 'en-US',
+    keyword: opportunity.niche_name,
+    title: opportunity.niche_name,
+    score: opportunity.opportunity_score,
+    discovered_at: new Date().toISOString(),
+    evidence: opportunity.success_reason || opportunity.demand_reason,
+    status: 'discovered',
+  };
+}
+
+function researchScriptFromNicheOpportunity(opportunity: NicheOpportunity): ResearchScriptGenerationRequest {
+  return {
+    source_type: 'niche_idea',
+    source_id: nicheOpportunityKey(opportunity),
+    topic: opportunity.niche_name,
+    title: opportunity.suggested_titles?.[0] || opportunity.niche_name,
+    summary: [
+      `Opportunity score: ${Math.round(opportunity.opportunity_score)}.`,
+      `Success probability: ${opportunity.success_probability}.`,
+      opportunity.success_reason,
+      opportunity.demand_reason,
+      opportunity.monetization_reason,
+      opportunity.competition_reason,
+      (opportunity.first_10_video_ideas ?? []).slice(0, 5).join(' '),
+    ].filter(Boolean).join(' '),
+    keywords: [
+      opportunity.niche_name,
+      ...(opportunity.supporting_keywords ?? []),
+      ...(opportunity.suggested_keywords ?? []),
+    ],
+    inferred_niche: opportunity.niche_name,
+    inferred_angle: opportunity.suggested_clip_angles?.[0] || opportunity.success_reason,
+    performance_signals: {
+      demand_score: opportunity.demand_score,
+      monetization_score: opportunity.monetization_score,
+      competition_score: opportunity.competition_score,
+      success_probability_score: opportunity.success_probability_score,
+      opportunity_score: opportunity.opportunity_score,
+      competition_level: opportunity.competition_level,
+      estimated_monetization_level: opportunity.estimated_monetization_level,
+    },
+    suggested_angle: opportunity.suggested_clip_angles?.[0],
+    target_platforms: ['instagram', 'tiktok', 'youtube', 'facebook', 'x'],
+    content_style: opportunity.content_style || 'Short-form creator script',
+    duration_seconds: 30,
+    evidence: {
+      evidence_sources: opportunity.evidence_sources,
+      related_channels: opportunity.related_channels,
+      related_videos: opportunity.related_videos,
+      risks: opportunity.risks,
+      first_10_video_ideas: opportunity.first_10_video_ideas,
+      monetization_note: 'Estimated from public/proxy signals, not exact YouTube RPM.',
+    },
+    metadata: {
+      source_provider: 'niche_opportunity_engine',
+      score: opportunity.opportunity_score,
+      confidence: opportunity.confidence,
+      platform: opportunity.platform,
+    },
+    limitations: opportunity.limitations,
+    language: opportunity.language || 'en-US',
+    region: opportunity.country || 'US',
   };
 }
 

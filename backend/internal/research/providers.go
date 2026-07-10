@@ -55,6 +55,52 @@ type ProviderStatus struct {
 	Limitations []string `json:"limitations,omitempty"`
 }
 
+func GoogleAdsKeywordPlannerStatus(developerToken, customerID, clientID, clientSecret, refreshToken string) ProviderStatus {
+	configured := strings.TrimSpace(developerToken) != "" &&
+		strings.TrimSpace(customerID) != "" &&
+		strings.TrimSpace(clientID) != "" &&
+		strings.TrimSpace(clientSecret) != "" &&
+		strings.TrimSpace(refreshToken) != ""
+	if !configured {
+		return ProviderStatus{
+			ID:       "google_ads_keyword_planner",
+			Name:     "Google Ads Keyword Planner",
+			Platform: "google_ads",
+			Status:   StatusNotConfigured,
+			Message:  "Connect Google Ads Keyword Planner for stronger monetization estimates.",
+			Scopes:   []string{"avg_monthly_searches", "competition", "top_of_page_bid"},
+			Limitations: []string{
+				"Google Ads API credentials are not configured, so monetization uses category and commercial-intent heuristics with low confidence.",
+			},
+		}
+	}
+	return ProviderStatus{
+		ID:       "google_ads_keyword_planner",
+		Name:     "Google Ads Keyword Planner",
+		Platform: "google_ads",
+		Status:   StatusUnavailable,
+		Message:  "Credentials are present, but Keyword Planner fetching is not enabled in this build. Monetization still uses proxy heuristics.",
+		Scopes:   []string{"avg_monthly_searches", "competition", "top_of_page_bid"},
+		Limitations: []string{
+			"No Google Ads keyword volume, CPC, or bid data is returned until the Keyword Planner provider is implemented.",
+		},
+	}
+}
+
+func YouTubeAnalyticsStatus() ProviderStatus {
+	return ProviderStatus{
+		ID:       "youtube_analytics",
+		Name:     "YouTube Analytics",
+		Platform: "youtube",
+		Status:   StatusNotConfigured,
+		Message:  "Not connected. Future owned-channel analytics can provide authorized revenue/RPM for channels you own.",
+		Scopes:   []string{"owned channel revenue", "owned channel RPM", "traffic sources"},
+		Limitations: []string{
+			"Exact YouTube revenue/RPM is unavailable for public niches without authorized owned-channel analytics.",
+		},
+	}
+}
+
 type ProviderResultMetadata struct {
 	SourceProvider string    `json:"source_provider"`
 	SourceURL      string    `json:"source_url,omitempty"`
@@ -146,12 +192,14 @@ type ChannelAnalysisResult struct {
 }
 
 type ChannelVideoSummary struct {
-	VideoID     string  `json:"video_id"`
-	Title       string  `json:"title"`
-	PublishedAt string  `json:"published_at"`
-	Views       *uint64 `json:"views,omitempty"`
-	Likes       *uint64 `json:"likes,omitempty"`
-	Comments    *uint64 `json:"comments,omitempty"`
+	VideoID      string  `json:"video_id"`
+	Title        string  `json:"title"`
+	ChannelID    string  `json:"channel_id,omitempty"`
+	ChannelTitle string  `json:"channel_title,omitempty"`
+	PublishedAt  string  `json:"published_at"`
+	Views        *uint64 `json:"views,omitempty"`
+	Likes        *uint64 `json:"likes,omitempty"`
+	Comments     *uint64 `json:"comments,omitempty"`
 }
 
 type KeywordIntelligence struct {
@@ -667,8 +715,10 @@ type youtubeSearchResponse struct {
 			ChannelID string `json:"channelId"`
 		} `json:"id"`
 		Snippet struct {
-			ChannelID string `json:"channelId"`
-			Title     string `json:"title"`
+			PublishedAt  string `json:"publishedAt"`
+			ChannelID    string `json:"channelId"`
+			ChannelTitle string `json:"channelTitle"`
+			Title        string `json:"title"`
 		} `json:"snippet"`
 	} `json:"items"`
 }
@@ -770,12 +820,15 @@ func (p *YouTubeProvider) fetchChannelVideos(ctx context.Context, channelID, ord
 	ids := []string{}
 	titles := map[string]string{}
 	published := map[string]string{}
+	channelTitles := map[string]string{}
 	for _, item := range search.Items {
 		if item.ID.VideoID == "" {
 			continue
 		}
 		ids = append(ids, item.ID.VideoID)
 		titles[item.ID.VideoID] = item.Snippet.Title
+		published[item.ID.VideoID] = item.Snippet.PublishedAt
+		channelTitles[item.ID.VideoID] = item.Snippet.ChannelTitle
 	}
 	if len(ids) == 0 {
 		return []ChannelVideoSummary{}, nil
@@ -796,12 +849,87 @@ func (p *YouTubeProvider) fetchChannelVideos(ctx context.Context, channelID, ord
 		}
 		published[video.ID] = video.Snippet.PublishedAt
 		out = append(out, ChannelVideoSummary{
-			VideoID:     video.ID,
-			Title:       title,
-			PublishedAt: published[video.ID],
-			Views:       parseUintPtr(video.Statistics.ViewCount),
-			Likes:       parseUintPtr(video.Statistics.LikeCount),
-			Comments:    parseUintPtr(video.Statistics.CommentCount),
+			VideoID:      video.ID,
+			Title:        title,
+			ChannelID:    video.Snippet.ChannelID,
+			ChannelTitle: firstNonEmpty(video.Snippet.ChannelTitle, channelTitles[video.ID]),
+			PublishedAt:  published[video.ID],
+			Views:        parseUintPtr(video.Statistics.ViewCount),
+			Likes:        parseUintPtr(video.Statistics.LikeCount),
+			Comments:     parseUintPtr(video.Statistics.CommentCount),
+		})
+	}
+	return out, nil
+}
+
+func (p *YouTubeProvider) SearchVideos(ctx context.Context, query, region, language string, limit int) ([]ChannelVideoSummary, error) {
+	if p.apiKey == "" {
+		return nil, ErrNotConfigured
+	}
+	query = strings.TrimSpace(query)
+	if query == "" {
+		return []ChannelVideoSummary{}, nil
+	}
+	if limit <= 0 || limit > 50 {
+		limit = 25
+	}
+	params := map[string]string{
+		"part":       "snippet",
+		"type":       "video",
+		"q":          query,
+		"maxResults": strconv.Itoa(limit),
+		"order":      "relevance",
+		"key":        p.apiKey,
+	}
+	if strings.TrimSpace(region) != "" {
+		params["regionCode"] = strings.TrimSpace(region)
+	}
+	if strings.TrimSpace(language) != "" {
+		params["relevanceLanguage"] = strings.Split(strings.TrimSpace(language), "-")[0]
+	}
+	searchURL := youtubeAPIURL("search", params)
+	var search youtubeSearchResponse
+	if err := p.getJSON(ctx, searchURL, &search); err != nil {
+		return nil, err
+	}
+	ids := []string{}
+	titles := map[string]string{}
+	published := map[string]string{}
+	channelIDs := map[string]string{}
+	channelTitles := map[string]string{}
+	for _, item := range search.Items {
+		if item.ID.VideoID == "" {
+			continue
+		}
+		ids = append(ids, item.ID.VideoID)
+		titles[item.ID.VideoID] = item.Snippet.Title
+		published[item.ID.VideoID] = item.Snippet.PublishedAt
+		channelIDs[item.ID.VideoID] = item.Snippet.ChannelID
+		channelTitles[item.ID.VideoID] = item.Snippet.ChannelTitle
+	}
+	if len(ids) == 0 {
+		return []ChannelVideoSummary{}, nil
+	}
+	videosURL := youtubeAPIURL("videos", map[string]string{"part": "snippet,statistics", "id": strings.Join(ids, ","), "key": p.apiKey})
+	var videos youtubeVideosResponse
+	if err := p.getJSON(ctx, videosURL, &videos); err != nil {
+		return nil, err
+	}
+	out := make([]ChannelVideoSummary, 0, len(videos.Items))
+	for _, video := range videos.Items {
+		if video.ID == "" {
+			continue
+		}
+		title := firstNonEmpty(video.Snippet.Title, titles[video.ID])
+		out = append(out, ChannelVideoSummary{
+			VideoID:      video.ID,
+			Title:        title,
+			ChannelID:    firstNonEmpty(video.Snippet.ChannelID, channelIDs[video.ID]),
+			ChannelTitle: firstNonEmpty(video.Snippet.ChannelTitle, channelTitles[video.ID]),
+			PublishedAt:  firstNonEmpty(video.Snippet.PublishedAt, published[video.ID]),
+			Views:        parseUintPtr(video.Statistics.ViewCount),
+			Likes:        parseUintPtr(video.Statistics.LikeCount),
+			Comments:     parseUintPtr(video.Statistics.CommentCount),
 		})
 	}
 	return out, nil

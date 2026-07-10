@@ -91,6 +91,17 @@ export function SettingsPage({ settings: initial, onSave }: Props) {
         </div>
 
         <div className="settings-card">
+          <div className="settings-card-title">Monetization Data Providers</div>
+          <div className="status-list">
+            <ProviderStatusRow providers={providers} id="youtube_analytics" fallbackLabel="YouTube Analytics" />
+            <ProviderStatusRow providers={providers} id="google_ads_keyword_planner" fallbackLabel="Google Ads Keyword Planner" />
+            <ProviderStatusRow providers={providers} id="youtube_data_api" fallbackLabel="YouTube Data API" />
+            <ProviderStatusRow providers={providers} id="google_trends_rss" fallbackLabel="Google Trends RSS" />
+          </div>
+          <div className="muted-note">Exact revenue/RPM requires authorized YouTube Analytics for owned channels. Public niche monetization uses proxy estimates.</div>
+        </div>
+
+        <div className="settings-card">
           <div className="settings-card-title">AI / Script Provider</div>
           <div className="status-list">
             <StatusRow label="OpenAI" value="Ready when the server-side key is configured" />

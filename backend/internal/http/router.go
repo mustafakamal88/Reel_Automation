@@ -85,6 +85,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /api/research/providers/status", s.handleResearchProviderStatus)
 	mux.HandleFunc("POST /api/research/youtube/video", s.handleAnalyzeYouTubeVideo)
 	mux.HandleFunc("POST /api/research/youtube/channel", s.handleAnalyzeYouTubeChannel)
+	mux.HandleFunc("POST /api/research/niche/opportunities", s.handleAnalyzeNicheOpportunities)
 	mux.HandleFunc("POST /api/research/script", s.handleGenerateResearchScript)
 
 	mux.HandleFunc("POST /api/topics/score", s.handleScoreTopics)

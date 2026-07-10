@@ -293,6 +293,69 @@ export interface ResearchScriptGenerationResponse {
   package: ReelContentPackage;
 }
 
+export interface NicheOpportunityRequest {
+  seed_keyword: string;
+  platform: string;
+  country: string;
+  language: string;
+  audience: string;
+  content_style: string;
+  monetization_goal: string;
+  creator_skill_level: string;
+  production_difficulty_preference: string;
+}
+
+export interface NicheOpportunity {
+  niche_name: string;
+  platform: string;
+  country: string;
+  language: string;
+  audience: string;
+  content_style: string;
+  demand_score: number;
+  monetization_score: number;
+  monetization_confidence?: string;
+  competition_score: number;
+  creator_fit_score?: number;
+  success_probability_score: number;
+  success_probability: 'low' | 'possible' | 'promising' | 'strong' | string;
+  opportunity_score: number;
+  confidence: number;
+  evidence_sources?: string[];
+  supporting_keywords?: string[];
+  related_channels?: string[];
+  related_videos?: {
+    video_id: string;
+    title: string;
+    channel_id?: string;
+    channel_title?: string;
+    published_at: string;
+    views?: number;
+    likes?: number;
+    comments?: number;
+  }[];
+  estimated_monetization_level: 'low' | 'medium' | 'high' | 'very_high' | string;
+  monetization_reason: string;
+  competition_level: 'low' | 'medium' | 'high' | 'saturated' | string;
+  competition_reason: string;
+  demand_reason: string;
+  success_reason: string;
+  risks?: string[];
+  first_10_video_ideas?: string[];
+  suggested_keywords?: string[];
+  suggested_titles?: string[];
+  suggested_clip_angles?: string[];
+  limitations?: string[];
+}
+
+export interface NicheOpportunityResponse {
+  status: 'ok' | 'not_configured' | 'invalid_input' | 'provider_error' | 'insufficient_data' | string;
+  message: string;
+  provider_status?: ResearchProviderStatus[];
+  opportunities?: NicheOpportunity[];
+  limitations?: string[];
+}
+
 export interface TopicScore {
   id: string;
   workspace_id: string;
@@ -454,6 +517,13 @@ export async function generateReelScript(body: ReelContentGenerationRequest): Pr
 
 export async function generateResearchScript(body: ResearchScriptGenerationRequest): Promise<ResearchScriptGenerationResponse> {
   return apiFetch('/api/research/script', {
+    method: 'POST',
+    body: JSON.stringify(body),
+  });
+}
+
+export async function analyzeNicheOpportunities(body: NicheOpportunityRequest): Promise<NicheOpportunityResponse> {
+  return apiFetch('/api/research/niche/opportunities', {
     method: 'POST',
     body: JSON.stringify(body),
   });
