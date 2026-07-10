@@ -534,7 +534,7 @@ func isUsefulTerm(term string) bool {
 }
 
 var stopWords = map[string]bool{
-	"the": true, "and": true, "for": true, "with": true, "from": true, "that": true, "this": true, "you": true, "your": true,
+	"the": true, "and": true, "for": true, "with": true, "from": true, "that": true, "this": true, "they": true, "them": true, "their": true, "say": true, "says": true, "said": true, "you": true, "your": true, "its": true,
 	"are": true, "was": true, "were": true, "how": true, "why": true, "what": true, "when": true, "where": true, "will": true,
 	"can": true, "into": true, "about": true, "video": true, "videos": true, "shorts": true, "youtube": true, "official": true,
 	"http": true, "https": true, "www": true, "com": true, "watch": true, "subscribe": true, "channel": true, "new": true, "full": true,
