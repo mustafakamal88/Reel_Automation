@@ -378,6 +378,12 @@ body {
 
 .generate-btn.idle:hover { filter: brightness(1.08); }
 
+.generate-btn.secondary {
+  background: var(--bg-subtle);
+  color: var(--text-secondary);
+  border-color: var(--border-card);
+}
+
 .generate-btn.done {
   background: var(--green-dim);
   color: var(--green);
@@ -436,6 +442,51 @@ body {
   font-family: var(--font-mono);
   font-size: 10px;
   color: var(--text-dim);
+}
+
+.link-button {
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  padding: 0;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.trend-filter-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.source-availability-list {
+  display: grid;
+  gap: 8px;
+}
+
+.source-availability-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border: 1px solid var(--border-card);
+  background: var(--bg-card);
+  border-radius: 8px;
+  padding: 10px 12px;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.source-availability-row strong {
+  color: var(--text-muted);
+  font-size: 12px;
 }
 
 /* ─── Signal cards ───────────────────────────────────────────── */
@@ -2691,6 +2742,12 @@ body {
   font-size: 20px;
 }
 
+.modal-header p {
+  margin: 5px 0 0;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
 .modal-close {
   width: 32px;
   height: 32px;
@@ -2729,12 +2786,60 @@ body {
   font-size: 12px;
 }
 
+.publish-selection {
+  display: grid;
+  gap: 8px;
+}
+
 .publish-checkbox {
   display: flex;
   align-items: center;
   gap: 9px;
+  min-height: 38px;
+  border: 1px solid var(--border-card);
+  background: var(--bg-subtle);
+  border-radius: 8px;
+  padding: 8px 10px;
   color: var(--text-secondary);
   font-size: 13px;
+}
+
+.publish-checkbox.select-all {
+  background: var(--bg-card);
+  font-weight: 800;
+}
+
+.publish-checkbox.disabled {
+  color: var(--text-dim);
+}
+
+.publish-platform-name {
+  flex: 1;
+  color: var(--text-secondary) !important;
+  font-weight: 700;
+}
+
+.status-badge {
+  margin-left: auto;
+  border: 1px solid var(--border-card);
+  background: var(--bg-card);
+  color: var(--text-dim) !important;
+  border-radius: 999px;
+  padding: 3px 8px;
+  font-size: 11px !important;
+  white-space: nowrap;
+}
+
+.status-badge.connected {
+  border-color: var(--green-border);
+  background: var(--green-dim);
+  color: var(--green) !important;
+}
+
+.publish-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 .connection-card {

@@ -26,6 +26,9 @@ interface Props {
 }
 
 const PUBLISH_PLATFORMS = ['youtube', 'tiktok', 'instagram', 'facebook', 'x'] as const;
+type PublishPlatform = typeof PUBLISH_PLATFORMS[number];
+const DIRECT_PUBLISHING_ENABLED = false;
+
 const PLATFORM_LABELS: Record<string, string> = {
   youtube: 'YouTube Shorts',
   tiktok: 'TikTok',
@@ -106,7 +109,7 @@ export function ClipStudioPage({ onNavigate }: Props) {
   const [error, setError] = useState<string | null>(null);
 
   const packageReady = clipPackageReady(result);
-  const connectedPublishPlatforms = connections.filter(conn => PUBLISH_PLATFORMS.includes(conn.platform as typeof PUBLISH_PLATFORMS[number]) && conn.status === 'connected' && conn.can_publish);
+  const connectedAccountPlatforms = connections.filter(conn => PUBLISH_PLATFORMS.includes(conn.platform as PublishPlatform) && conn.status === 'connected');
   const sourceStatus = useMemo(() => getClipSourceStatus(source, sourceUrl), [source, sourceUrl]);
   const generateDisabledReason = clipGenerateDisabledReason({ source, rightsConfirmed, prompt, busy, uploadBusy, urlImportBusy });
   const canGenerate = generateDisabledReason === null;
@@ -309,7 +312,7 @@ export function ClipStudioPage({ onNavigate }: Props) {
           <StatusPill label="Source ready" active={Boolean(source && sourceCanGenerate(source))} />
           <StatusPill label="Clips generated" active={Boolean(result?.success)} />
           <StatusPill label="Package ready" active={packageReady} />
-          <StatusPill label="Social accounts not connected" active={connectedPublishPlatforms.length === 0} neutral />
+          <StatusPill label={connectedAccountPlatforms.length > 0 ? 'Social account connected' : 'Social accounts not connected'} active neutral />
         </div>
 
         <div style={{ fontSize: 12, color: sourceStatus.tone === 'danger' ? 'var(--red)' : sourceStatus.tone === 'ready' ? 'var(--green)' : 'var(--text-muted)', background: sourceStatus.tone === 'danger' ? 'rgba(232,115,107,0.08)' : sourceStatus.tone === 'ready' ? 'rgba(95,211,154,0.08)' : 'var(--bg-subtle)', border: sourceStatus.tone === 'danger' ? '1px solid rgba(232,115,107,0.25)' : sourceStatus.tone === 'ready' ? '1px solid rgba(95,211,154,0.25)' : '1px solid var(--border)', borderRadius: 6, padding: '8px 10px' }}>
@@ -399,7 +402,7 @@ export function ClipStudioPage({ onNavigate }: Props) {
           <button className="generate-btn idle" onClick={handleDownload} disabled={downloadBusy || !packageReady} type="button" style={{ opacity: packageReady ? 1 : 0.55 }}>
             {downloadBusy ? 'Downloading...' : 'Download ZIP'}
           </button>
-          <button className="generate-btn idle" onClick={() => setPublishOpen(true)} type="button">
+          <button className="generate-btn idle" onClick={() => setPublishOpen(true)} disabled={!packageReady} title={packageReady ? undefined : 'Generate clips first.'} type="button" style={{ opacity: packageReady ? 1 : 0.55 }}>
             Publish
           </button>
         </div>
@@ -415,7 +418,9 @@ export function ClipStudioPage({ onNavigate }: Props) {
         <PublishModal
           connections={connections}
           connectionsLoaded={connectionsLoaded}
-          connectedPlatforms={connectedPublishPlatforms}
+          onDownload={handleDownload}
+          downloadDisabled={downloadBusy || !packageReady}
+          downloadLabel={downloadBusy ? 'Downloading...' : 'Download ZIP'}
           onClose={() => setPublishOpen(false)}
           onConnections={() => {
             setPublishOpen(false);
@@ -439,17 +444,20 @@ function StatusPill({ label, active, neutral = false }: { label: string; active:
 function PublishModal({
   connections,
   connectionsLoaded,
-  connectedPlatforms,
+  onDownload,
+  downloadDisabled,
+  downloadLabel,
   onClose,
   onConnections,
 }: {
   connections: PlatformStatus[];
   connectionsLoaded: boolean;
-  connectedPlatforms: PlatformStatus[];
+  onDownload: () => void;
+  downloadDisabled: boolean;
+  downloadLabel: string;
   onClose: () => void;
   onConnections: () => void;
 }) {
-  const hasConnected = connectedPlatforms.length > 0;
   const visibleConnections = PUBLISH_PLATFORMS.map(platform => connections.find(conn => conn.platform === platform) || {
     platform,
     name: PLATFORM_LABELS[platform],
@@ -457,6 +465,20 @@ function PublishModal({
     scopes: [],
     can_publish: false,
   } as PlatformStatus);
+  const connectedPlatforms = visibleConnections.filter(conn => conn.status === 'connected');
+  const hasConnected = connectedPlatforms.length > 0;
+  const selectablePlatforms = visibleConnections.filter(conn => conn.status === 'connected' && conn.can_publish);
+  const [selected, setSelected] = useState<PublishPlatform[]>([]);
+  const selectedPublishableCount = selected.filter(platform => selectablePlatforms.some(conn => conn.platform === platform)).length;
+  const allSelectableSelected = selectablePlatforms.length > 0 && selectablePlatforms.every(conn => selected.includes(conn.platform as PublishPlatform));
+
+  function togglePlatform(platform: PublishPlatform) {
+    setSelected(current => current.includes(platform) ? current.filter(item => item !== platform) : [...current, platform]);
+  }
+
+  function toggleAll() {
+    setSelected(allSelectableSelected ? [] : selectablePlatforms.map(conn => conn.platform as PublishPlatform));
+  }
 
   return (
     <div className="modal-layer" role="dialog" aria-modal="true" aria-label="Publish clips">
@@ -465,38 +487,61 @@ function PublishModal({
         <div className="modal-header">
           <div>
             <div className="page-eyebrow">Publish</div>
-            <h2>{hasConnected ? 'Choose platforms' : 'Connect your social accounts first'}</h2>
+            <h2>Publish generated clips</h2>
+            <p>Choose where you want to publish this package.</p>
           </div>
           <button className="modal-close" type="button" onClick={onClose}>x</button>
         </div>
 
         {!hasConnected && (
           <>
-            <p className="muted-note">Publishing is disabled until real OAuth/API connections exist. Your generated ZIP is ready for manual download.</p>
-            <div className="publish-platform-grid">
-              {visibleConnections.map(conn => (
-                <div key={conn.platform} className="publish-platform-card">
-                  <strong>{PLATFORM_LABELS[conn.platform] || conn.name}</strong>
-                  <span>{connectionsLoaded && conn.status === 'connected' ? 'Connected' : 'Not connected'}</span>
-                </div>
-              ))}
+            {!connectionsLoaded && <div className="muted-note">Loading account status...</div>}
+            <div className="neutral-callout">
+              <strong>No social accounts connected yet.</strong>
+              <div>Connect accounts to publish directly, or download the ZIP for manual posting.</div>
             </div>
-            <button className="generate-btn idle" type="button" onClick={onConnections}>Go to Connections</button>
+            <div className="publish-actions">
+              <button className="generate-btn idle" type="button" onClick={onConnections}>Go to Connections</button>
+              <button className="generate-btn idle secondary" type="button" onClick={onDownload} disabled={downloadDisabled}>{downloadLabel}</button>
+              <button className="generate-btn idle secondary" type="button" onClick={onClose}>Cancel</button>
+            </div>
           </>
         )}
 
         {hasConnected && (
           <>
-            <p className="muted-note">Select the connected platforms to publish to. Upload is still disabled until publishing endpoints are implemented.</p>
-            <label className="publish-checkbox"><input type="checkbox" disabled /> Select all</label>
-            {visibleConnections.map(conn => (
-              <label key={conn.platform} className="publish-checkbox">
-                <input type="checkbox" disabled={conn.status !== 'connected' || !conn.can_publish} />
-                {PLATFORM_LABELS[conn.platform] || conn.name}
-                <span>{conn.status === 'connected' ? 'Connected' : 'Not connected'}</span>
+            {!connectionsLoaded && <div className="muted-note">Loading account status...</div>}
+            <div className="publish-selection">
+              <label className="publish-checkbox select-all">
+                <input type="checkbox" checked={allSelectableSelected} onChange={toggleAll} disabled={selectablePlatforms.length === 0} />
+                Select all
               </label>
-            ))}
-            <button className="generate-btn idle" type="button" disabled>Publishing API required</button>
+              {visibleConnections.map(conn => {
+                const platform = conn.platform as PublishPlatform;
+                const connected = conn.status === 'connected';
+                const uploadEnabled = connected && conn.can_publish;
+                return (
+                  <label key={conn.platform} className={`publish-checkbox platform-row${uploadEnabled ? '' : ' disabled'}`}>
+                    <input
+                      type="checkbox"
+                      checked={selected.includes(platform)}
+                      onChange={() => togglePlatform(platform)}
+                      disabled={!uploadEnabled}
+                    />
+                    <span className="publish-platform-name">{PLATFORM_LABELS[conn.platform] || conn.name}</span>
+                    {!connected && <span className="status-badge">Connect required</span>}
+                    {connected && !conn.can_publish && <span className="status-badge">Upload not enabled yet</span>}
+                    {uploadEnabled && <span className="status-badge connected">Connected</span>}
+                  </label>
+                );
+              })}
+            </div>
+            <div className="neutral-callout">Direct publishing is not enabled yet. Download ZIP for manual posting.</div>
+            <div className="publish-actions">
+              <button className="generate-btn idle" type="button" disabled={selectedPublishableCount === 0 || !DIRECT_PUBLISHING_ENABLED}>Publish selected</button>
+              <button className="generate-btn idle secondary" type="button" onClick={onDownload} disabled={downloadDisabled}>{downloadLabel}</button>
+              <button className="generate-btn idle secondary" type="button" onClick={onClose}>Cancel</button>
+            </div>
           </>
         )}
       </div>

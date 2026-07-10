@@ -65,9 +65,10 @@ interface Props {
   onStatusChange?: (status: string) => void;
   onScriptGenerated?: (candidate: TrendCandidate, pkg: ReelContentPackage) => void;
   onOpenScriptStudio?: () => void;
+  onManageDataSources?: () => void;
 }
 
-export function TrendFinderPage({ initialFilter = 'all', onFilterChange, onStatusChange, onScriptGenerated, onOpenScriptStudio }: Props) {
+export function TrendFinderPage({ initialFilter = 'all', onFilterChange, onStatusChange, onScriptGenerated, onOpenScriptStudio, onManageDataSources }: Props) {
   const [tab, setTab] = useState<ResearchTab>('keywords');
   const [platformFilter, setPlatformFilter] = useState<Platform | 'all'>(initialFilter);
   const [regionChoice, setRegionChoice] = useState('US');
@@ -273,7 +274,7 @@ export function TrendFinderPage({ initialFilter = 'all', onFilterChange, onStatu
         <div>
           <div className="page-eyebrow">Trend Intelligence</div>
           <h1>Daily creator research from connected sources.</h1>
-          <p>TrendCortex shows real provider data when available and clear not-configured states when a source is not connected.</p>
+          <p>Research trends, analyze YouTube videos and channels, and turn useful findings into creator scripts.</p>
         </div>
       </div>
 
@@ -312,10 +313,11 @@ export function TrendFinderPage({ initialFilter = 'all', onFilterChange, onStatu
           generatingID={generatingID}
           onGenerate={handleGenerate}
           onOpenScriptStudio={onOpenScriptStudio}
+          onManageDataSources={onManageDataSources}
         />
       )}
 
-      {tab === 'platforms' && <PlatformTrendsTab providers={providers} />}
+      {tab === 'platforms' && <PlatformTrendsTab providers={providers} onManageDataSources={onManageDataSources} />}
 
       {tab === 'video' && (
         <YouTubeVideoTab
@@ -394,7 +396,13 @@ function TrendingKeywordsTab(props: {
   generatingID: string | null;
   onGenerate: (candidate: TrendCandidate) => void;
   onOpenScriptStudio?: () => void;
+  onManageDataSources?: () => void;
 }) {
+  const sourceOptions = sourceFilterOptions(props.providers);
+  const selectedSource = PLATFORM_FILTERS.find(filter => filter.id === props.platformFilter);
+  const selectedProvider = selectedSource?.providerID ? props.providers.find(provider => provider.id === selectedSource.providerID) : null;
+  const selectedUnavailable = props.providers.length > 0 && props.platformFilter !== 'all' && selectedProvider?.status !== 'active';
+
   return (
     <>
       <div className="settings-card" style={{ marginBottom: 14 }}>
@@ -406,38 +414,15 @@ function TrendingKeywordsTab(props: {
           {props.languageChoice === 'custom' && <TextInput label="Custom language" value={props.customLanguage} onChange={props.setCustomLanguage} placeholder="e.g. en-GB" />}
           <Select label="Culture / audience" value={props.audience} onChange={props.setAudience} options={AUDIENCE_OPTIONS.map(value => ({ label: value, value }))} />
           {props.audience === 'custom text' && <TextInput label="Custom audience" value={props.customAudience} onChange={props.setCustomAudience} placeholder="Audience or subculture" />}
+          <Select label="Platform/source filter" value={props.platformFilter} onChange={value => props.setPlatformFilter(value as Platform | 'all')} options={sourceOptions} />
         </div>
-        <div className="muted-note">Audience fit is used only for script/niche context unless a connected provider returns matching real data.</div>
+        <div className="trend-filter-footer">
+          <span>Showing trends from connected sources. Audience fit is used for script and niche context.</span>
+          <button type="button" className="link-button" onClick={props.onManageDataSources}>Manage data sources</button>
+        </div>
       </div>
 
-      <ProviderStatusGrid providers={props.providers} response={props.response} loading={props.loading} />
-
-      <div className="filter-bar" role="group" aria-label="Filter by source">
-        {PLATFORM_FILTERS.map(filter => {
-          const active = filter.id === props.platformFilter;
-          const count = countForFilter(filter.id, props.response?.candidates ?? []);
-          return (
-            <button
-              key={filter.id}
-              className="filter-chip"
-              onClick={() => props.setPlatformFilter(filter.id)}
-              aria-pressed={active}
-              style={{
-                background: active ? '#1c2026' : 'var(--bg-card)',
-                borderColor: active ? '#343942' : 'var(--border-card)',
-                color: active ? 'var(--text-primary)' : 'var(--text-muted)',
-                fontFamily: 'inherit',
-                cursor: 'pointer',
-              }}
-              type="button"
-            >
-              <span className="filter-chip-dot" style={{ background: dotForFilter(filter.id) }} />
-              {filter.label}
-              <span className="filter-chip-count">{count}</span>
-            </button>
-          );
-        })}
-      </div>
+      {selectedUnavailable && <div className="neutral-callout" style={{ marginBottom: 14 }}>Connect this source in Settings to use it.</div>}
 
       <DiscoveryState loading={props.loading} error={props.error} response={props.response} filteredCount={props.filteredCandidates.length} />
 
@@ -461,27 +446,37 @@ function TrendingKeywordsTab(props: {
   );
 }
 
-function PlatformTrendsTab({ providers }: { providers: ResearchProviderStatus[] }) {
+function PlatformTrendsTab({ providers, onManageDataSources }: { providers: ResearchProviderStatus[]; onManageDataSources?: () => void }) {
   const rows = PLATFORM_FILTERS.filter(p => p.id !== 'all');
+  const activeRows = rows.filter(row => providers.find(provider => provider.id === row.providerID)?.status === 'active');
   return (
-    <div className="settings-card">
-      <div className="settings-card-title">Per-platform availability</div>
-      <div className="status-list">
+    <div style={{ display: 'grid', gap: 12 }}>
+      <div className="settings-card">
+        <div className="settings-card-title">Platform Trends</div>
+        <div className="muted-note">
+          {activeRows.length > 0
+            ? 'Showing trends from connected sources. No estimated platform trend counts are shown.'
+            : 'Connect trend sources in Settings to compare platform-specific trends.'}
+        </div>
+        {onManageDataSources && (
+          <button type="button" className="link-button" onClick={onManageDataSources} style={{ marginTop: 10 }}>
+            Manage data sources
+          </button>
+        )}
+      </div>
+      <div className="source-availability-list" aria-label="Source availability">
         {rows.map(row => {
           const provider = providers.find(p => p.id === row.providerID);
           const status = provider?.status ?? 'not_configured';
           const active = status === 'active';
           return (
-            <div className="status-row" key={row.id}>
+            <div className="source-availability-row" key={row.id}>
               <span>{row.label}</span>
-              <strong style={{ color: active ? 'var(--green)' : undefined }}>
-                {active ? 'Active' : 'Connect API credentials in Settings to enable this source.'}
-              </strong>
+              <strong>{active ? 'Connected' : 'Not connected'}</strong>
             </div>
           );
         })}
       </div>
-      <div className="muted-note">No fake platform counts are shown. Platform trend tables appear only when official provider data is connected and returned.</div>
     </div>
   );
 }
@@ -701,25 +696,6 @@ function NicheFinderTab({ providers, candidates, region, language, audience, onG
           ))}
         </div>
       )}
-    </div>
-  );
-}
-
-function ProviderStatusGrid({ providers, response, loading }: { providers: ResearchProviderStatus[]; response: TrendDiscoveryResponse | null; loading: boolean }) {
-  return (
-    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 10, marginBottom: 16 }}>
-      {PLATFORM_FILTERS.filter(p => p.id !== 'all').map(filter => {
-        const provider = providers.find(p => p.id === filter.providerID);
-        const status = filter.id === 'gt' && loading ? 'checking' : provider?.status ?? 'not_configured';
-        const good = status === 'active' || (filter.id === 'gt' && response?.provider_status === 'ok');
-        return (
-          <div key={filter.id} className="settings-card" style={{ padding: '12px 14px', borderRadius: 8 }}>
-            <div style={{ fontSize: 12, fontWeight: 800, color: 'var(--text-primary)' }}>{provider?.name ?? filter.label}</div>
-            <div style={{ fontSize: 11, color: good ? 'var(--green)' : 'var(--text-dim)', marginTop: 5 }}>{statusLabel(status)}</div>
-            <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: 5 }}>{provider?.message ?? 'Connect API credentials in Settings to enable this source.'}</div>
-          </div>
-        );
-      })}
     </div>
   );
 }
@@ -958,15 +934,13 @@ function Limitations({ items }: { items: string[] }) {
   );
 }
 
-function countForFilter(filter: Platform | 'all', candidates: TrendCandidate[]): number {
-  if (filter === 'all') return candidates.length;
-  if (filter === 'gt') return candidates.filter(c => c.source === 'google_trends_rss').length;
-  return 0;
-}
-
-function dotForFilter(filter: Platform | 'all'): string {
-  if (filter === 'all') return '#a78bfa';
-  return PLATFORMS[filter]?.color ?? '#a78bfa';
+function sourceFilterOptions(providers: ResearchProviderStatus[]): { label: string; value: string }[] {
+  return PLATFORM_FILTERS.map(filter => {
+    if (filter.id === 'all') return { label: filter.label, value: filter.id };
+    const provider = providers.find(item => item.id === filter.providerID);
+    const available = provider?.status === 'active' || providers.length === 0;
+    return { label: available ? filter.label : `${filter.label} - not connected`, value: filter.id };
+  });
 }
 
 function statusSubtitle(response: TrendDiscoveryResponse | null): string {

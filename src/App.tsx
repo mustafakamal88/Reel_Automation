@@ -58,7 +58,14 @@ export default function App() {
 
         <div className="scroll-area">
           {view === 'dashboard' && <DashboardPage latestScript={latestScript} onNavigate={navigate} />}
-          {view === 'trendFinder' && <TrendFinderPage onStatusChange={setTrendSubtitle} onScriptGenerated={handleScriptGenerated} onOpenScriptStudio={() => navigate('scriptStudio')} />}
+          {view === 'trendFinder' && (
+            <TrendFinderPage
+              onStatusChange={setTrendSubtitle}
+              onScriptGenerated={handleScriptGenerated}
+              onOpenScriptStudio={() => navigate('scriptStudio')}
+              onManageDataSources={() => navigate('settings')}
+            />
+          )}
           {view === 'scriptStudio' && <ScriptStudioPage latestScript={latestScript} onUseInClipGenerator={() => navigate('clipStudio')} />}
           {view === 'clipStudio' && <ClipStudioPage onNavigate={navigate} />}
           {view === 'connections' && <SocialConnectionsPage />}
