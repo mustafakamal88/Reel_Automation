@@ -312,10 +312,10 @@ export function ClipStudioPage({ onNavigate }: Props) {
           <StatusPill label="Source ready" active={Boolean(source && sourceCanGenerate(source))} />
           <StatusPill label="Clips generated" active={Boolean(result?.success)} />
           <StatusPill label="Package ready" active={packageReady} />
-          <StatusPill label={connectedAccountPlatforms.length > 0 ? 'Social account connected' : 'Social accounts not connected'} active neutral />
+          <StatusPill label={connectedAccountPlatforms.length > 0 ? 'Social account connected' : 'Social accounts not connected'} active={connectedAccountPlatforms.length > 0} neutral />
         </div>
 
-        <div style={{ fontSize: 12, color: sourceStatus.tone === 'danger' ? 'var(--red)' : sourceStatus.tone === 'ready' ? 'var(--green)' : 'var(--text-muted)', background: sourceStatus.tone === 'danger' ? 'rgba(232,115,107,0.08)' : sourceStatus.tone === 'ready' ? 'rgba(95,211,154,0.08)' : 'var(--bg-subtle)', border: sourceStatus.tone === 'danger' ? '1px solid rgba(232,115,107,0.25)' : sourceStatus.tone === 'ready' ? '1px solid rgba(95,211,154,0.25)' : '1px solid var(--border)', borderRadius: 6, padding: '8px 10px' }}>
+        <div style={{ fontSize: 12, color: sourceStatus.tone === 'danger' ? 'var(--red)' : sourceStatus.tone === 'ready' ? 'var(--green)' : 'var(--text-muted)', background: sourceStatus.tone === 'danger' ? 'rgba(232,115,107,0.06)' : sourceStatus.tone === 'ready' ? 'rgba(95,211,154,0.08)' : 'var(--bg-subtle)', border: sourceStatus.tone === 'danger' ? '1px solid rgba(232,115,107,0.18)' : sourceStatus.tone === 'ready' ? '1px solid rgba(95,211,154,0.2)' : '1px solid var(--border-card)', borderRadius: 6, padding: '8px 10px' }}>
           <div style={{ fontWeight: 800, color: 'inherit', marginBottom: 3 }}>{sourceStatus.label}</div>
           <div>{clipStatusMessage}</div>
         </div>
@@ -391,7 +391,7 @@ export function ClipStudioPage({ onNavigate }: Props) {
           </div>
         </details>
 
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+        <div className="clip-action-row">
           <button className="generate-btn idle" onClick={handleGenerate} disabled={!canGenerate} title={generateDisabledReason || undefined} type="button">
             {busy ? 'Generating clips...' : 'Generate Clips'}
           </button>
@@ -482,18 +482,20 @@ function PublishModal({
       <div className="publish-modal">
         <div className="modal-header">
           <div>
-            <div className="page-eyebrow">Publish</div>
             <h2>Publish generated clips</h2>
             <p>Choose where you want to publish this package.</p>
           </div>
-          <button className="modal-close" type="button" onClick={onClose}>x</button>
+          <button className="modal-close" type="button" onClick={onClose} aria-label="Close publish modal">x</button>
         </div>
 
-        {!hasConnected && (
+        {!connectionsLoaded && (
+          <div className="neutral-callout">Loading account status...</div>
+        )}
+
+        {connectionsLoaded && !hasConnected && (
           <>
-            {!connectionsLoaded && <div className="muted-note">Loading account status...</div>}
             <div className="neutral-callout">
-              <strong>No social accounts connected yet.</strong>
+              <strong>Connect social accounts first</strong>
               <div>Connect accounts to publish directly, or download the ZIP for manual posting.</div>
             </div>
             <div className="publish-actions">
@@ -504,9 +506,8 @@ function PublishModal({
           </>
         )}
 
-        {hasConnected && (
+        {connectionsLoaded && hasConnected && (
           <>
-            {!connectionsLoaded && <div className="muted-note">Loading account status...</div>}
             <div className="publish-selection">
               <label className="publish-checkbox select-all">
                 <input type="checkbox" checked={allSelectableSelected} onChange={toggleAll} disabled={selectablePlatforms.length === 0} />

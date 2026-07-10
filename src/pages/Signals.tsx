@@ -301,7 +301,6 @@ export function TrendFinderPage({ initialFilter = 'all', onFilterChange, onStatu
           customAudience={customAudience}
           setCustomAudience={setCustomAudience}
           audienceText={audienceText}
-          providers={providers}
           platformFilter={platformFilter}
           setPlatformFilter={setFilter}
           response={response}
@@ -384,7 +383,6 @@ function TrendingKeywordsTab(props: {
   customAudience: string;
   setCustomAudience: (value: string) => void;
   audienceText: string;
-  providers: ResearchProviderStatus[];
   platformFilter: Platform | 'all';
   setPlatformFilter: (value: Platform | 'all') => void;
   response: TrendDiscoveryResponse | null;
@@ -398,10 +396,7 @@ function TrendingKeywordsTab(props: {
   onOpenScriptStudio?: () => void;
   onManageDataSources?: () => void;
 }) {
-  const sourceOptions = sourceFilterOptions(props.providers);
-  const selectedSource = PLATFORM_FILTERS.find(filter => filter.id === props.platformFilter);
-  const selectedProvider = selectedSource?.providerID ? props.providers.find(provider => provider.id === selectedSource.providerID) : null;
-  const selectedUnavailable = props.providers.length > 0 && props.platformFilter !== 'all' && selectedProvider?.status !== 'active';
+  const sourceOptions = sourceFilterOptions();
 
   return (
     <>
@@ -421,8 +416,6 @@ function TrendingKeywordsTab(props: {
           <button type="button" className="link-button" onClick={props.onManageDataSources}>Manage data sources</button>
         </div>
       </div>
-
-      {selectedUnavailable && <div className="neutral-callout" style={{ marginBottom: 14 }}>Connect this source in Settings to use it.</div>}
 
       <DiscoveryState loading={props.loading} error={props.error} response={props.response} filteredCount={props.filteredCandidates.length} />
 
@@ -450,13 +443,13 @@ function PlatformTrendsTab({ providers, onManageDataSources }: { providers: Rese
   const rows = PLATFORM_FILTERS.filter(p => p.id !== 'all');
   const activeRows = rows.filter(row => providers.find(provider => provider.id === row.providerID)?.status === 'active');
   return (
-    <div style={{ display: 'grid', gap: 12 }}>
-      <div className="settings-card">
+    <div className="platform-trends-panel">
+      <div className="settings-card platform-trends-intro">
         <div className="settings-card-title">Platform Trends</div>
         <div className="muted-note">
           {activeRows.length > 0
-            ? 'Showing trends from connected sources. No estimated platform trend counts are shown.'
-            : 'Connect trend sources in Settings to compare platform-specific trends.'}
+            ? 'Explore creator research by platform from configured sources. Trend counts are only shown when returned by real sources.'
+            : 'Connect trend sources in Settings to compare platform-specific creator research.'}
         </div>
         {onManageDataSources && (
           <button type="button" className="link-button" onClick={onManageDataSources} style={{ marginTop: 10 }}>
@@ -464,15 +457,16 @@ function PlatformTrendsTab({ providers, onManageDataSources }: { providers: Rese
           </button>
         )}
       </div>
-      <div className="source-availability-list" aria-label="Source availability">
+      <div className="platform-trend-tabs" aria-label="Platform trend sections">
         {rows.map(row => {
-          const provider = providers.find(p => p.id === row.providerID);
-          const status = provider?.status ?? 'not_configured';
-          const active = status === 'active';
+          const platform = PLATFORMS[row.id as Platform];
           return (
-            <div className="source-availability-row" key={row.id}>
-              <span>{row.label}</span>
-              <strong>{active ? 'Connected' : 'Not connected'}</strong>
+            <div className="platform-trend-tab-card" key={row.id}>
+              <div className="platform-trend-tab-title">
+                <span className="filter-chip-dot" style={{ background: platform.color }} />
+                {row.label}
+              </div>
+              <div className="muted-note">No platform-specific trend results returned yet.</div>
             </div>
           );
         })}
@@ -934,13 +928,8 @@ function Limitations({ items }: { items: string[] }) {
   );
 }
 
-function sourceFilterOptions(providers: ResearchProviderStatus[]): { label: string; value: string }[] {
-  return PLATFORM_FILTERS.map(filter => {
-    if (filter.id === 'all') return { label: filter.label, value: filter.id };
-    const provider = providers.find(item => item.id === filter.providerID);
-    const available = provider?.status === 'active' || providers.length === 0;
-    return { label: available ? filter.label : `${filter.label} - not connected`, value: filter.id };
-  });
+function sourceFilterOptions(): { label: string; value: string }[] {
+  return PLATFORM_FILTERS.map(filter => ({ label: filter.label, value: filter.id }));
 }
 
 function statusSubtitle(response: TrendDiscoveryResponse | null): string {
