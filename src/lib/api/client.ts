@@ -59,9 +59,10 @@ export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> 
     let code = 'unknown';
     let message = `HTTP ${res.status}`;
     try {
-      const body = await res.json() as { error?: string };
+      const body = await res.json() as { code?: string; error?: string };
+      if (body.code) code = body.code;
       if (body.error) {
-        code = body.error.split(':')[0].trim().toLowerCase().replace(/\s+/g, '_');
+        if (!body.code) code = body.error.split(':')[0].trim().toLowerCase().replace(/\s+/g, '_');
         message = body.error;
       }
     } catch { /* non-JSON error body */ }
@@ -230,7 +231,9 @@ export interface ReelContentPackage {
   hook: string;
   script: string;
   caption: string;
+  description?: string;
   hashtags: string[];
+  platform_posts?: Record<string, string>;
   thumbnail_brief: string;
   instagram_caption: string;
   tiktok_caption: string;
@@ -239,6 +242,13 @@ export interface ReelContentPackage {
   facebook_caption: string;
   x_caption: string;
   safety_grounding_notes: string[];
+  grounding?: string;
+  source_type?: string;
+  source_url?: string;
+  created_at?: string;
+  inferred_keywords?: string[];
+  inferred_niche?: string;
+  inferred_angle?: string;
   provider_metadata: {
     provider: string;
     model: string;
@@ -252,6 +262,34 @@ export interface ReelContentPackage {
 }
 
 export interface ReelContentGenerationResponse {
+  package: ReelContentPackage;
+}
+
+export type ResearchScriptSourceType = 'google_trend' | 'youtube_video_analysis' | 'youtube_channel_analysis' | 'niche_idea';
+
+export interface ResearchScriptGenerationRequest {
+  source_type: ResearchScriptSourceType;
+  source_id?: string;
+  source_url?: string;
+  topic?: string;
+  title?: string;
+  summary?: string;
+  keywords?: string[];
+  inferred_niche?: string;
+  inferred_angle?: string;
+  performance_signals?: Record<string, unknown>;
+  suggested_angle?: string;
+  target_platforms?: string[];
+  content_style?: string;
+  duration_seconds?: number;
+  evidence?: Record<string, unknown>;
+  metadata?: Record<string, unknown>;
+  limitations?: string[];
+  language?: string;
+  region?: string;
+}
+
+export interface ResearchScriptGenerationResponse {
   package: ReelContentPackage;
 }
 
@@ -409,6 +447,13 @@ export async function getResearchProviderStatus(): Promise<{ providers: Research
 
 export async function generateReelScript(body: ReelContentGenerationRequest): Promise<ReelContentGenerationResponse> {
   return apiFetch('/api/reels/generate-script', {
+    method: 'POST',
+    body: JSON.stringify(body),
+  });
+}
+
+export async function generateResearchScript(body: ResearchScriptGenerationRequest): Promise<ResearchScriptGenerationResponse> {
+  return apiFetch('/api/research/script', {
     method: 'POST',
     body: JSON.stringify(body),
   });

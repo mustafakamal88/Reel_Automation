@@ -20,6 +20,22 @@ function TextBlock({ label, value }: { label: string; value?: string }) {
   );
 }
 
+function sourceLabel(source?: string): string {
+  switch (source) {
+    case 'youtube_video_analysis':
+      return 'YouTube Video Analysis';
+    case 'youtube_channel_analysis':
+      return 'YouTube Channel Analysis';
+    case 'google_trend':
+    case 'google_trends_rss':
+      return 'Trend';
+    case 'niche_idea':
+      return 'Niche';
+    default:
+      return source?.replaceAll('_', ' ') || 'Research';
+  }
+}
+
 export function ScriptStudioPage({ latestScript, onUseInClipGenerator }: Props) {
   if (!latestScript) {
     return (
@@ -34,6 +50,9 @@ export function ScriptStudioPage({ latestScript, onUseInClipGenerator }: Props) 
   }
 
   const pkg = latestScript.package;
+  const sourceType = pkg.source_type || latestScript.candidate.source;
+  const sourceURL = pkg.source_url || pkg.provider_metadata.source_url || latestScript.candidate.source_url;
+  const createdAt = pkg.created_at || pkg.provider_metadata.generated_at || latestScript.savedAt;
   const platformText = [
     ['Instagram', pkg.instagram_caption],
     ['TikTok', pkg.tiktok_caption],
@@ -52,6 +71,7 @@ export function ScriptStudioPage({ latestScript, onUseInClipGenerator }: Props) 
     `Hashtags: ${pkg.hashtags.join(' ')}`,
     `Thumbnail brief: ${pkg.thumbnail_brief}`,
   ].join('\n\n');
+  const hashtagText = pkg.hashtags.join(' ');
 
   return (
     <section className="page-section">
@@ -59,29 +79,42 @@ export function ScriptStudioPage({ latestScript, onUseInClipGenerator }: Props) 
         <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', alignItems: 'flex-start' }}>
           <div>
             <div style={{ fontSize: 12, color: 'var(--text-dim)', fontFamily: 'var(--font-mono)', textTransform: 'uppercase' }}>
-              Selected trend
+              {sourceLabel(sourceType)}
             </div>
             <div style={{ fontSize: 20, fontWeight: 800, color: 'var(--text-primary)', marginTop: 5, overflowWrap: 'anywhere' }}>
               {latestScript.candidate.title || latestScript.candidate.keyword}
             </div>
-            <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 6 }}>
-              {latestScript.candidate.source.replaceAll('_', ' ')} · saved {new Date(latestScript.savedAt).toLocaleString()}
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', marginTop: 8 }}>
+              <span className="platform-toggle">{sourceLabel(sourceType)}</span>
+              <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>saved {new Date(createdAt).toLocaleString()}</span>
+              {sourceURL && <a href={sourceURL} target="_blank" rel="noreferrer" style={{ fontSize: 12, color: 'var(--accent)' }}>Source evidence</a>}
             </div>
           </div>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
             <button className="generate-btn idle" type="button" onClick={() => void copyText(exportText)}>Copy all</button>
+            <button className="generate-btn idle" type="button" onClick={() => void copyText(pkg.hook)}>Copy hook</button>
             <button className="generate-btn idle" type="button" onClick={() => void copyText(pkg.script)}>Copy script</button>
             <button className="generate-btn idle" type="button" onClick={() => void copyText(pkg.caption)}>Copy caption</button>
+            <button className="generate-btn idle" type="button" onClick={() => void copyText(hashtagText)}>Copy hashtags</button>
             {onUseInClipGenerator && <button className="generate-btn idle" type="button" onClick={onUseInClipGenerator}>Use in Clip Generator</button>}
           </div>
         </div>
 
+        {(pkg.inferred_keywords?.length || pkg.inferred_niche || pkg.inferred_angle) && (
+          <div className="status-list">
+            {pkg.inferred_keywords?.length ? <div className="status-row"><span>Inferred keywords</span><strong>{pkg.inferred_keywords.join(', ')}</strong></div> : null}
+            {pkg.inferred_niche ? <div className="status-row"><span>Inferred niche</span><strong>{pkg.inferred_niche}</strong></div> : null}
+            {pkg.inferred_angle ? <div className="status-row"><span>Inferred angle</span><strong>{pkg.inferred_angle}</strong></div> : null}
+          </div>
+        )}
+
         <TextBlock label="Hook" value={pkg.hook} />
         <TextBlock label="Script" value={pkg.script} />
         <TextBlock label="Caption" value={pkg.caption} />
-        <TextBlock label="Description" value={pkg.youtube_description} />
+        <TextBlock label="Description" value={pkg.description || pkg.youtube_description} />
         {pkg.hashtags.length > 0 && <TextBlock label="Hashtags" value={pkg.hashtags.join(' ')} />}
         <TextBlock label="Thumbnail brief" value={pkg.thumbnail_brief} />
+        <TextBlock label="Grounding / evidence" value={pkg.grounding} />
 
         {platformText.length > 0 && (
           <div style={{ display: 'grid', gap: 10 }}>

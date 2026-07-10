@@ -6,9 +6,11 @@ import {
   analyzeYouTubeChannel,
   analyzeYouTubeVideo,
   discoverTrendCandidates,
-  generateReelScript,
+  generateResearchScript,
   getResearchProviderStatus,
   type ReelContentPackage,
+  type ResearchScriptGenerationRequest,
+  type ResearchScriptSourceType,
   type ResearchProviderStatus,
   type TrendCandidate,
   type TrendDiscoveryResponse,
@@ -62,9 +64,10 @@ interface Props {
   onFilterChange?: (f: Platform | 'all') => void;
   onStatusChange?: (status: string) => void;
   onScriptGenerated?: (candidate: TrendCandidate, pkg: ReelContentPackage) => void;
+  onOpenScriptStudio?: () => void;
 }
 
-export function TrendFinderPage({ initialFilter = 'all', onFilterChange, onStatusChange, onScriptGenerated }: Props) {
+export function TrendFinderPage({ initialFilter = 'all', onFilterChange, onStatusChange, onScriptGenerated, onOpenScriptStudio }: Props) {
   const [tab, setTab] = useState<ResearchTab>('keywords');
   const [platformFilter, setPlatformFilter] = useState<Platform | 'all'>(initialFilter);
   const [regionChoice, setRegionChoice] = useState('US');
@@ -152,29 +155,66 @@ export function TrendFinderPage({ initialFilter = 'all', onFilterChange, onStatu
     onFilterChange?.(next);
   }
 
-  function handleGenerate(candidate: TrendCandidate) {
-    setGeneratingID(candidate.id);
+  function handleGenerate(candidate: TrendCandidate, sourceType: ResearchScriptSourceType = 'google_trend') {
+    const generationKey = sourceType === 'niche_idea' ? `niche-${candidate.id}` : candidate.id;
+    setGeneratingID(generationKey);
     setGenerationErrors(prev => {
       const next = { ...prev };
-      delete next[candidate.id];
+      delete next[generationKey];
       return next;
     });
-    generateReelScript({
-      trend_candidate_id: candidate.id,
-      trend_candidate: candidate,
-      platform_targets: ['instagram', 'tiktok', 'youtube', 'facebook', 'x'],
-      duration_target: '30s',
+    generateResearchScript({
+      source_type: sourceType,
+      source_id: candidate.id,
+      source_url: candidate.source_url,
+      topic: candidate.keyword,
+      title: candidate.title || candidate.keyword,
+      summary: candidate.evidence,
+      keywords: [candidate.keyword].filter(Boolean),
+      suggested_angle: sourceType === 'niche_idea' ? `For ${audienceText || 'Global'}: turn this into a focused niche creator video.` : undefined,
+      target_platforms: ['instagram', 'tiktok', 'youtube', 'facebook', 'x'],
+      content_style: 'Short-form creator script',
+      duration_seconds: 30,
       language: candidate.language || language || 'en-US',
       region: candidate.region || region || 'US',
+      evidence: {
+        score: candidate.score,
+        source: candidate.source,
+        evidence: candidate.evidence,
+      },
+      metadata: {
+        score: candidate.score,
+        source_provider: candidate.source,
+        source_url: candidate.source_url,
+      },
     })
       .then(data => {
-        setGenerated(prev => ({ ...prev, [candidate.id]: data.package }));
+        const storedCandidate = { ...candidate, source: sourceType };
+        setGenerated(prev => ({ ...prev, [generationKey]: data.package }));
+        onScriptGenerated?.(storedCandidate, data.package);
+      })
+      .catch(err => {
+        setGenerationErrors(prev => ({ ...prev, [generationKey]: err instanceof ApiError ? err.message : 'Script generation request failed.' }));
+      })
+      .finally(() => setGeneratingID(current => (current === generationKey ? null : current)));
+  }
+
+  function handleGenerateResearch(generationKey: string, candidate: TrendCandidate, body: ResearchScriptGenerationRequest) {
+    setGeneratingID(generationKey);
+    setGenerationErrors(prev => {
+      const next = { ...prev };
+      delete next[generationKey];
+      return next;
+    });
+    generateResearchScript(body)
+      .then(data => {
+        setGenerated(prev => ({ ...prev, [generationKey]: data.package }));
         onScriptGenerated?.(candidate, data.package);
       })
       .catch(err => {
-        setGenerationErrors(prev => ({ ...prev, [candidate.id]: err instanceof ApiError ? err.message : 'Script generation request failed.' }));
+        setGenerationErrors(prev => ({ ...prev, [generationKey]: err instanceof ApiError ? err.message : 'Script generation request failed.' }));
       })
-      .finally(() => setGeneratingID(current => (current === candidate.id ? null : current)));
+      .finally(() => setGeneratingID(current => (current === generationKey ? null : current)));
   }
 
   function analyzeVideo() {
@@ -217,12 +257,14 @@ export function TrendFinderPage({ initialFilter = 'all', onFilterChange, onStatu
 
   function generateFromVideo() {
     if (!videoResult || videoResult.status !== 'ok') return;
-    handleGenerate(candidateFromVideo(videoResult, region || 'US', language || 'en-US'));
+    const candidate = candidateFromVideo(videoResult, region || 'US', language || 'en-US');
+    handleGenerateResearch(candidate.id, candidate, researchScriptFromVideo(videoResult, region || 'US', language || 'en-US'));
   }
 
   function generateFromChannelIdea(idea: string) {
     if (!channelResult || channelResult.status !== 'ok') return;
-    handleGenerate(candidateFromChannel(channelResult, idea, region || 'US', language || 'en-US'));
+    const candidate = candidateFromChannel(channelResult, idea, region || 'US', language || 'en-US');
+    handleGenerateResearch(candidate.id, candidate, researchScriptFromChannelIdea(channelResult, idea, region || 'US', language || 'en-US'));
   }
 
   return (
@@ -269,6 +311,7 @@ export function TrendFinderPage({ initialFilter = 'all', onFilterChange, onStatu
           generationErrors={generationErrors}
           generatingID={generatingID}
           onGenerate={handleGenerate}
+          onOpenScriptStudio={onOpenScriptStudio}
         />
       )}
 
@@ -282,6 +325,11 @@ export function TrendFinderPage({ initialFilter = 'all', onFilterChange, onStatu
           loading={videoLoading}
           result={videoResult}
           onGenerate={generateFromVideo}
+          generationKey={videoResult?.status === 'ok' ? candidateFromVideo(videoResult, region || 'US', language || 'en-US').id : null}
+          generated={generated}
+          generationErrors={generationErrors}
+          generatingID={generatingID}
+          onOpenScriptStudio={onOpenScriptStudio}
         />
       )}
 
@@ -293,6 +341,12 @@ export function TrendFinderPage({ initialFilter = 'all', onFilterChange, onStatu
           loading={channelLoading}
           result={channelResult}
           onGenerateIdea={generateFromChannelIdea}
+          generated={generated}
+          generationErrors={generationErrors}
+          generatingID={generatingID}
+          region={region || 'US'}
+          language={language || 'en-US'}
+          onOpenScriptStudio={onOpenScriptStudio}
         />
       )}
 
@@ -303,10 +357,11 @@ export function TrendFinderPage({ initialFilter = 'all', onFilterChange, onStatu
           region={region || 'US'}
           language={language || 'en-US'}
           audience={audienceText || 'Global'}
-          onGenerate={handleGenerate}
+          onGenerate={(candidate) => handleGenerate(candidate, 'niche_idea')}
           generated={generated}
           generationErrors={generationErrors}
           generatingID={generatingID}
+          onOpenScriptStudio={onOpenScriptStudio}
         />
       )}
     </section>
@@ -338,6 +393,7 @@ function TrendingKeywordsTab(props: {
   generationErrors: Record<string, string>;
   generatingID: string | null;
   onGenerate: (candidate: TrendCandidate) => void;
+  onOpenScriptStudio?: () => void;
 }) {
   return (
     <>
@@ -396,6 +452,7 @@ function TrendingKeywordsTab(props: {
               generationError={props.generationErrors[candidate.id]}
               generating={props.generatingID === candidate.id}
               onGenerate={() => props.onGenerate(candidate)}
+              onOpenScriptStudio={props.onOpenScriptStudio}
             />
           ))}
         </div>
@@ -429,14 +486,22 @@ function PlatformTrendsTab({ providers }: { providers: ResearchProviderStatus[] 
   );
 }
 
-function YouTubeVideoTab({ value, onChange, onAnalyze, loading, result, onGenerate }: {
+function YouTubeVideoTab({ value, onChange, onAnalyze, loading, result, onGenerate, generationKey, generated, generationErrors, generatingID, onOpenScriptStudio }: {
   value: string;
   onChange: (value: string) => void;
   onAnalyze: () => void;
   loading: boolean;
   result: YouTubeVideoAnalysisResponse | null;
   onGenerate: () => void;
+  generationKey: string | null;
+  generated: Record<string, ReelContentPackage>;
+  generationErrors: Record<string, string>;
+  generatingID: string | null;
+  onOpenScriptStudio?: () => void;
 }) {
+  const generatedPackage = generationKey ? generated[generationKey] : undefined;
+  const generationError = generationKey ? generationErrors[generationKey] : undefined;
+  const generating = Boolean(generationKey && generatingID === generationKey);
   return (
     <AnalyzerShell
       title="YouTube Video Analyzer"
@@ -478,7 +543,14 @@ function YouTubeVideoTab({ value, onChange, onAnalyze, loading, result, onGenera
           </ResultCard>
           <ResultCard title="Suggested remake angles">
             <List items={result.suggested_remake_angles ?? []} />
-            <button className="generate-btn idle" type="button" onClick={onGenerate}>Generate Script from this analysis</button>
+            <ScriptAction
+              label="Generate Script from this analysis"
+              generating={generating}
+              generated={Boolean(generatedPackage)}
+              error={generationError}
+              onGenerate={onGenerate}
+              onOpenScriptStudio={onOpenScriptStudio}
+            />
           </ResultCard>
           <Limitations items={result.limitations ?? []} />
         </div>
@@ -487,13 +559,19 @@ function YouTubeVideoTab({ value, onChange, onAnalyze, loading, result, onGenera
   );
 }
 
-function YouTubeChannelTab({ value, onChange, onAnalyze, loading, result, onGenerateIdea }: {
+function YouTubeChannelTab({ value, onChange, onAnalyze, loading, result, onGenerateIdea, generated, generationErrors, generatingID, region, language, onOpenScriptStudio }: {
   value: string;
   onChange: (value: string) => void;
   onAnalyze: () => void;
   loading: boolean;
   result: YouTubeChannelAnalysisResponse | null;
   onGenerateIdea: (idea: string) => void;
+  generated: Record<string, ReelContentPackage>;
+  generationErrors: Record<string, string>;
+  generatingID: string | null;
+  region: string;
+  language: string;
+  onOpenScriptStudio?: () => void;
 }) {
   return (
     <AnalyzerShell
@@ -525,9 +603,22 @@ function YouTubeChannelTab({ value, onChange, onAnalyze, loading, result, onGene
           <ResultCard title="Content opportunities"><List items={result.opportunities ?? []} /></ResultCard>
           <ResultCard title="Suggested next 10 video ideas">
             <List items={result.suggested_content_ideas ?? []} />
-            {(result.suggested_content_ideas ?? []).slice(0, 3).map(idea => (
-              <button key={idea} className="generate-btn idle" type="button" onClick={() => onGenerateIdea(idea)}>Generate Script: {idea}</button>
-            ))}
+            {(result.suggested_content_ideas ?? []).map(idea => {
+              const key = candidateFromChannel(result, idea, region, language).id;
+              return (
+                <div key={idea} style={{ display: 'grid', gap: 8 }}>
+                  <div style={{ fontSize: 12, color: 'var(--text-muted)', overflowWrap: 'anywhere' }}>{idea}</div>
+                  <ScriptAction
+                    label="Generate Script"
+                    generating={generatingID === key}
+                    generated={Boolean(generated[key])}
+                    error={generationErrors[key]}
+                    onGenerate={() => onGenerateIdea(idea)}
+                    onOpenScriptStudio={onOpenScriptStudio}
+                  />
+                </div>
+              );
+            })}
           </ResultCard>
           <Limitations items={result.limitations ?? []} />
         </div>
@@ -536,7 +627,7 @@ function YouTubeChannelTab({ value, onChange, onAnalyze, loading, result, onGene
   );
 }
 
-function NicheFinderTab({ providers, candidates, region, language, audience, onGenerate, generated, generationErrors, generatingID }: {
+function NicheFinderTab({ providers, candidates, region, language, audience, onGenerate, generated, generationErrors, generatingID, onOpenScriptStudio }: {
   providers: ResearchProviderStatus[];
   candidates: TrendCandidate[];
   region: string;
@@ -546,6 +637,7 @@ function NicheFinderTab({ providers, candidates, region, language, audience, onG
   generated: Record<string, ReelContentPackage>;
   generationErrors: Record<string, string>;
   generatingID: string | null;
+  onOpenScriptStudio?: () => void;
 }) {
   const activeProviders = providers.filter(p => p.status === 'active').map(p => p.id);
   const hasEnough = activeProviders.length >= 2 && candidates.length >= 3;
@@ -573,10 +665,11 @@ function NicheFinderTab({ providers, candidates, region, language, audience, onG
               key={`niche-${candidate.id}`}
               candidate={{ ...candidate, score }}
               audience={audience}
-              generated={generated[candidate.id]}
-              generationError={generationErrors[candidate.id]}
-              generating={generatingID === candidate.id}
+              generated={generated[`niche-${candidate.id}`]}
+              generationError={generationErrors[`niche-${candidate.id}`]}
+              generating={generatingID === `niche-${candidate.id}`}
               onGenerate={() => onGenerate(candidate)}
+              onOpenScriptStudio={onOpenScriptStudio}
             />
           ))}
         </div>
@@ -604,13 +697,14 @@ function ProviderStatusGrid({ providers, response, loading }: { providers: Resea
   );
 }
 
-function TrendCandidateCard({ candidate, audience, generated, generationError, generating, onGenerate }: {
+function TrendCandidateCard({ candidate, audience, generated, generationError, generating, onGenerate, onOpenScriptStudio }: {
   candidate: TrendCandidate;
   audience: string;
   generated?: ReelContentPackage;
   generationError?: string;
   generating: boolean;
   onGenerate: () => void;
+  onOpenScriptStudio?: () => void;
 }) {
   const scoreReason = `Why this scored high: ${candidate.source === 'google_trends_rss' ? 'Google Trends RSS provided current evidence; score reflects provider traffic/recency, evidence quality, and selected audience context.' : 'Score reflects connected public metadata, source confidence, evidence quality, and audience fit.'} Scores are directional, not exact rankings.`;
   return (
@@ -627,11 +721,14 @@ function TrendCandidateCard({ candidate, audience, generated, generationError, g
         {candidate.evidence && <TextBlock label="Evidence" value={candidate.evidence} />}
         <TextBlock label="Score explanation" value={scoreReason} />
         {candidate.source_url && <a href={candidate.source_url} target="_blank" rel="noreferrer" style={{ display: 'inline-block', marginTop: 8, fontSize: 12, color: 'var(--accent)' }}>Source evidence</a>}
-        <div style={{ marginTop: 12, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          <button className="generate-btn idle" type="button" onClick={onGenerate} disabled={generating}>{generating ? 'Generating...' : 'Generate Script'}</button>
-          {generated && <span style={{ alignSelf: 'center', fontSize: 12, color: 'var(--green)' }}>Script ready in Script Studio</span>}
-        </div>
-        {generationError && <div style={{ marginTop: 10, fontSize: 12, color: 'var(--red)', overflowWrap: 'anywhere' }}>{generationError}</div>}
+        <ScriptAction
+          label="Generate Script"
+          generating={generating}
+          generated={Boolean(generated)}
+          error={generationError}
+          onGenerate={onGenerate}
+          onOpenScriptStudio={onOpenScriptStudio}
+        />
         {generated && <GeneratedPackageView pkg={generated} />}
       </div>
       <div style={{ textAlign: 'right', minWidth: 88 }}>
@@ -694,6 +791,30 @@ function HonestResultState({ result }: { result: { status: string; message: stri
     <div className="neutral-callout">
       <strong>{statusLabel(result.status)}:</strong> {result.message}
       <Limitations items={result.limitations ?? []} />
+    </div>
+  );
+}
+
+function ScriptAction({ label, generating, generated, error, onGenerate, onOpenScriptStudio }: {
+  label: string;
+  generating: boolean;
+  generated: boolean;
+  error?: string;
+  onGenerate: () => void;
+  onOpenScriptStudio?: () => void;
+}) {
+  return (
+    <div style={{ marginTop: 12, display: 'grid', gap: 8 }}>
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+        <button className="generate-btn idle" type="button" onClick={onGenerate} disabled={generating}>
+          {generating ? 'Generating...' : label}
+        </button>
+        {generated && <span style={{ alignSelf: 'center', fontSize: 12, color: 'var(--green)' }}>Script generated</span>}
+        {generated && onOpenScriptStudio && (
+          <button className="generate-btn idle" type="button" onClick={onOpenScriptStudio}>Open in Script Studio</button>
+        )}
+      </div>
+      {error && <div style={{ fontSize: 12, color: 'var(--red)', overflowWrap: 'anywhere' }}>{error}</div>}
     </div>
   );
 }
@@ -787,7 +908,7 @@ function candidateFromVideo(result: YouTubeVideoAnalysisResponse, region: string
   const keyword = result.extracted_keywords?.[0] || result.title || 'YouTube video analysis';
   return {
     id: `youtube-video-${result.video_id || Date.now()}`,
-    source: 'youtube_data_api',
+    source: 'youtube_video_analysis',
     region,
     language,
     keyword,
@@ -802,8 +923,8 @@ function candidateFromVideo(result: YouTubeVideoAnalysisResponse, region: string
 
 function candidateFromChannel(result: YouTubeChannelAnalysisResponse, idea: string, region: string, language: string): TrendCandidate {
   return {
-    id: `youtube-channel-${result.channel_id || Date.now()}-${idea}`,
-    source: 'youtube_data_api',
+    id: `youtube-channel-${result.channel_id || Date.now()}-${stableKey(idea)}`,
+    source: 'youtube_channel_analysis',
     region,
     language,
     keyword: idea,
@@ -814,6 +935,95 @@ function candidateFromChannel(result: YouTubeChannelAnalysisResponse, idea: stri
     evidence: result.metadata?.score_reason || result.message,
     status: 'discovered',
   };
+}
+
+function researchScriptFromVideo(result: YouTubeVideoAnalysisResponse, region: string, language: string): ResearchScriptGenerationRequest {
+  const title = result.title || 'YouTube video analysis';
+  return {
+    source_type: 'youtube_video_analysis',
+    source_id: result.video_id,
+    source_url: result.metadata?.source_url || result.video_url,
+    topic: result.extracted_keywords?.[0] || title,
+    title,
+    summary: [
+      result.message,
+      result.hook_analysis,
+      result.title_structure_analysis,
+      result.description_hashtag_analysis,
+    ].filter(Boolean).join(' '),
+    keywords: [...(result.extracted_keywords ?? []), ...(result.tags ?? [])],
+    inferred_niche: result.inferred_niche,
+    inferred_angle: result.inferred_content_angle,
+    performance_signals: {
+      views: result.views,
+      likes: result.likes,
+      comments: result.comments,
+      ...(result.performance_signals ?? {}),
+    },
+    suggested_angle: result.suggested_remake_angles?.[0],
+    target_platforms: ['instagram', 'tiktok', 'youtube', 'facebook', 'x'],
+    content_style: 'Short-form remake script from public YouTube metadata',
+    duration_seconds: 30,
+    evidence: {
+      channel_title: result.channel_title,
+      channel_id: result.channel_id,
+      published_at: result.published_at,
+      category: result.category,
+      duration: result.duration,
+      public_topic_details: result.public_topic_details,
+      score_reason: result.metadata?.score_reason,
+    },
+    metadata: result.metadata ? { ...result.metadata } : undefined,
+    limitations: result.limitations,
+    language,
+    region,
+  };
+}
+
+function researchScriptFromChannelIdea(result: YouTubeChannelAnalysisResponse, idea: string, region: string, language: string): ResearchScriptGenerationRequest {
+  return {
+    source_type: 'youtube_channel_analysis',
+    source_id: `${result.channel_id || 'channel'}-${stableKey(idea)}`,
+    source_url: result.metadata?.source_url || result.channel_url,
+    topic: idea,
+    title: idea,
+    summary: [
+      result.message,
+      result.likely_strategy,
+      result.opportunities?.join(' '),
+    ].filter(Boolean).join(' '),
+    keywords: [...(result.repeated_keywords ?? []), ...(result.content_pillars ?? []), ...(result.top_video_topics ?? [])],
+    inferred_niche: result.channel_niche,
+    inferred_angle: result.likely_strategy,
+    performance_signals: {
+      subscribers: result.subscribers,
+      views: result.views,
+      video_count: result.video_count,
+      subscriber_view_ratio: result.subscriber_view_ratio,
+      ...(result.view_distribution ?? {}),
+    },
+    suggested_angle: idea,
+    target_platforms: ['instagram', 'tiktok', 'youtube', 'facebook', 'x'],
+    content_style: 'Short-form script based on public channel strategy analysis',
+    duration_seconds: 30,
+    evidence: {
+      channel_title: result.channel_title,
+      channel_id: result.channel_id,
+      country: result.country,
+      content_pillars: result.content_pillars,
+      title_patterns: result.title_patterns,
+      recent_videos: result.recent_videos,
+      score_reason: result.metadata?.score_reason,
+    },
+    metadata: result.metadata ? { ...result.metadata } : undefined,
+    limitations: result.limitations,
+    language,
+    region,
+  };
+}
+
+function stableKey(value: string): string {
+  return value.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '').slice(0, 60) || 'idea';
 }
 
 function formatValue(value: unknown): string {

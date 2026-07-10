@@ -117,6 +117,7 @@ func (g OpenAIGenerator) Generate(ctx context.Context, req GenerateRequest) (mod
 		return models.ReelContentPackage{}, fmt.Errorf("OpenAI text generation JSON parse failed: %w", err)
 	}
 	pkg.ProviderMetadata = metadata(req, model)
+	completePackageMetadata(&pkg, req.Candidate)
 	return pkg, nil
 }
 
@@ -242,6 +243,7 @@ func parseReelContentPackage(content string) (models.ReelContentPackage, error) 
 		Hook:               openAI.Hook,
 		Script:             openAI.Script,
 		Caption:            openAI.Caption,
+		Description:        openAI.YouTubeDescription,
 		Hashtags:           []string(openAI.Hashtags),
 		ThumbnailBrief:     openAI.ThumbnailBrief,
 		InstagramCaption:   openAI.InstagramCaption,
@@ -251,8 +253,51 @@ func parseReelContentPackage(content string) (models.ReelContentPackage, error) 
 		FacebookCaption:    openAI.FacebookCaption,
 		XCaption:           openAI.XCaption,
 		SafetyGrounding:    openAI.SafetyGrounding,
-		ProviderMetadata:   openAI.ProviderMetadata,
+		PlatformPosts: map[string]string{
+			"instagram": openAI.InstagramCaption,
+			"tiktok":    openAI.TikTokCaption,
+			"youtube":   openAI.YouTubeDescription,
+			"facebook":  openAI.FacebookCaption,
+			"x":         openAI.XCaption,
+		},
+		ProviderMetadata: openAI.ProviderMetadata,
 	}, nil
+}
+
+func completePackageMetadata(pkg *models.ReelContentPackage, candidate models.TrendCandidate) {
+	if pkg.Description == "" {
+		pkg.Description = pkg.YouTubeDescription
+	}
+	if pkg.PlatformPosts == nil {
+		pkg.PlatformPosts = map[string]string{}
+	}
+	if pkg.InstagramCaption != "" {
+		pkg.PlatformPosts["instagram"] = pkg.InstagramCaption
+	}
+	if pkg.TikTokCaption != "" {
+		pkg.PlatformPosts["tiktok"] = pkg.TikTokCaption
+	}
+	if pkg.YouTubeDescription != "" {
+		pkg.PlatformPosts["youtube"] = pkg.YouTubeDescription
+	}
+	if pkg.FacebookCaption != "" {
+		pkg.PlatformPosts["facebook"] = pkg.FacebookCaption
+	}
+	if pkg.XCaption != "" {
+		pkg.PlatformPosts["x"] = pkg.XCaption
+	}
+	if pkg.GroundingEvidence == "" {
+		pkg.GroundingEvidence = candidate.Evidence
+	}
+	if pkg.SourceType == "" {
+		pkg.SourceType = candidate.Source
+	}
+	if pkg.SourceURL == "" {
+		pkg.SourceURL = candidate.SourceURL
+	}
+	if pkg.CreatedAt == "" {
+		pkg.CreatedAt = time.Now().UTC().Format(time.RFC3339)
+	}
 }
 
 func normalizeHashtags(tags []string) []string {
@@ -345,7 +390,7 @@ func metadata(req GenerateRequest, model string) models.ReelProviderMetadata {
 
 func isRealSupportedSource(source string) bool {
 	switch strings.TrimSpace(strings.ToLower(source)) {
-	case "google_trends_rss":
+	case "google_trends_rss", "google_trend", "youtube_video_analysis", "youtube_channel_analysis", "niche_idea":
 		return true
 	default:
 		return false

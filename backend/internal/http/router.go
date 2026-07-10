@@ -85,6 +85,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /api/research/providers/status", s.handleResearchProviderStatus)
 	mux.HandleFunc("POST /api/research/youtube/video", s.handleAnalyzeYouTubeVideo)
 	mux.HandleFunc("POST /api/research/youtube/channel", s.handleAnalyzeYouTubeChannel)
+	mux.HandleFunc("POST /api/research/script", s.handleGenerateResearchScript)
 
 	mux.HandleFunc("POST /api/topics/score", s.handleScoreTopics)
 	mux.HandleFunc("GET /api/topics/scores", s.handleListTopicScores)
@@ -187,4 +188,10 @@ func jsonError(w http.ResponseWriter, msg string, code int) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
 	json.NewEncoder(w).Encode(map[string]string{"error": msg})
+}
+
+func jsonErrorCode(w http.ResponseWriter, codeName, msg string, status int) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	json.NewEncoder(w).Encode(map[string]string{"code": codeName, "error": msg})
 }
