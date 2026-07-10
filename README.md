@@ -22,6 +22,8 @@ TrendCortex is a short-form video automation workspace backed by a Go API and Po
 
 ## Local development
 
+Before any UI change, follow [docs/UI_UX_ENGINEERING_STANDARD.md](docs/UI_UX_ENGINEERING_STANDARD.md).
+
 ```bash
 npm install
 npm run dev

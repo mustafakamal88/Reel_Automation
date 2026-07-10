@@ -66,7 +66,13 @@ export default function App() {
               onManageDataSources={() => navigate('settings')}
             />
           )}
-          {view === 'scriptStudio' && <ScriptStudioPage latestScript={latestScript} onUseInClipGenerator={() => navigate('clipStudio')} />}
+          {view === 'scriptStudio' && (
+            <ScriptStudioPage
+              latestScript={latestScript}
+              onUseInClipGenerator={() => navigate('clipStudio')}
+              onGoToTrendFinder={() => navigate('trendFinder')}
+            />
+          )}
           {view === 'clipStudio' && <ClipStudioPage onNavigate={navigate} />}
           {view === 'connections' && <SocialConnectionsPage />}
           {view === 'settings' && (
