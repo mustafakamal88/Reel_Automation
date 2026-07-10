@@ -437,7 +437,9 @@ func (p *YouTubeProvider) AnalyzeChannel(ctx context.Context, channelURL string)
 		TopicDetails:      channel.TopicDetails.TopicCategories,
 		RecentVideoTitles: videoTitles(videos),
 	})
+	keywordIntel = removeChannelIdentityKeywords(keywordIntel, channel.Snippet.Title)
 	keywordIntel = p.enhanceChannelKeywords(ctx, keywordIntel, channel.Snippet.Title)
+	keywordIntel = removeChannelIdentityKeywords(keywordIntel, channel.Snippet.Title)
 	keywords := append(append([]string{}, keywordIntel.PrimaryKeywords...), keywordIntel.SecondaryKeywords...)
 	nicheAnalysis := ClassifyNiche(KeywordExtractionInput{
 		Title:             channel.Snippet.Title,

@@ -325,7 +325,7 @@ func ChannelStrategy(niche NicheAnalysis, pillars []string, patterns []string, d
 	if len(pillars) == 0 {
 		return "Insufficient public metadata to infer a clear strategy."
 	}
-	return "Likely strategy: publish repeatable " + niche.ContentFormat + " content in " + niche.PrimaryNiche + " around " + strings.Join(topN(pillars, 3), ", ") + ". Public title patterns suggest " + strings.Join(topN(patterns, 2), " and ") + "; view distribution highlights which visible topics overperform. This is inferred from public metadata only."
+	return "Publish repeatable " + niche.ContentFormat + " content in " + niche.PrimaryNiche + " around " + strings.Join(topN(pillars, 3), ", ") + ". Public title patterns suggest " + strings.Join(topN(patterns, 2), " and ") + "; view distribution highlights which visible topics overperform. This is inferred from public metadata only."
 }
 
 func ChannelOpportunities(niche NicheAnalysis, pillars []string, kw KeywordIntelligence) CreatorOpportunities {
@@ -353,7 +353,7 @@ func ChannelOpportunities(niche NicheAnalysis, pillars []string, kw KeywordIntel
 }
 
 func SuggestedChannelIdeas(niche NicheAnalysis, kw KeywordIntelligence, pillars []string) []string {
-	seeds := unique(append(append([]string{}, pillars...), kw.PrimaryKeywords...))
+	seeds := highSignalIdeaSeeds(unique(append(append([]string{}, pillars...), kw.PrimaryKeywords...)))
 	if len(seeds) == 0 {
 		seeds = []string{niche.SubNiche}
 	}
@@ -375,6 +375,50 @@ func SuggestedChannelIdeas(niche NicheAnalysis, kw KeywordIntelligence, pillars 
 		ideas = append(ideas, sprintf(tmpl, seed))
 	}
 	return ideas
+}
+
+func removeChannelIdentityKeywords(kw KeywordIntelligence, channelTitle string) KeywordIntelligence {
+	titleTokens := tokenizeUseful(channelTitle, map[string]bool{})
+	if len(titleTokens) == 0 {
+		return kw
+	}
+	kw.PrimaryKeywords = filterIdentityTerms(kw.PrimaryKeywords, titleTokens)
+	kw.SecondaryKeywords = filterIdentityTerms(kw.SecondaryKeywords, titleTokens)
+	kw.LongTailPhrases = filterIdentityTerms(kw.LongTailPhrases, titleTokens)
+	return kw
+}
+
+func filterIdentityTerms(values, titleTokens []string) []string {
+	out := []string{}
+	for _, value := range values {
+		lower := strings.ToLower(value)
+		matches := 0
+		for _, token := range titleTokens {
+			if strings.Contains(lower, token) {
+				matches++
+			}
+		}
+		if matches == len(titleTokens) || (len(titleTokens) == 1 && matches == 1) {
+			continue
+		}
+		out = append(out, value)
+	}
+	return out
+}
+
+func highSignalIdeaSeeds(values []string) []string {
+	out := []string{}
+	for _, value := range values {
+		words := strings.Fields(strings.ToLower(value))
+		if len(words) == 1 && (stopWords[words[0]] || words[0] == "pro" || words[0] == "best") {
+			continue
+		}
+		if strings.Contains(strings.ToLower(value), " they ") {
+			continue
+		}
+		out = append(out, value)
+	}
+	return out
 }
 
 func SuggestedShortClipIdeas(niche NicheAnalysis, kw KeywordIntelligence, pillars []string) []string {
