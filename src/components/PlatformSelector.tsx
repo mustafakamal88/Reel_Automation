@@ -1,3 +1,4 @@
+import type { CSSProperties } from 'react';
 import type { Platform } from '../types';
 import { PLATFORMS } from '../data/platforms';
 
@@ -46,7 +47,7 @@ export function PlatformSelector({
               style={{
                 '--platform-color': meta.color,
                 '--platform-bg': meta.bg,
-              } as React.CSSProperties}
+              } as CSSProperties}
             >
               <span className="platform-selector-dot" aria-hidden="true" />
               <span>{meta.name}</span>
