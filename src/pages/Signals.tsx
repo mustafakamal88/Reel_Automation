@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useId, useMemo, useState, type ReactNode } from 'react';
 import type { Platform, View } from '../types';
 import { PLATFORMS } from '../data/platforms';
 import {
@@ -556,28 +556,28 @@ function PlatformTrendsTab({ providers, response, loading, error, generated, gen
 
       <div className="platform-results-section">
         <div className="section-kicker">Trend results</div>
-        {loading && <EmptyState icon={selectedMeta.short} title="Checking platform trend data." desc="Looking for real results from configured providers." />}
-        {!loading && error && <EmptyState icon="ER" title="Platform trend research is unavailable." desc={error} />}
+        {loading && <EmptyState tone="loading" title="Checking platform trend data." desc="Looking for real results from configured providers." />}
+        {!loading && error && <EmptyState tone="error" title="Platform trend research is unavailable." desc={error} />}
         {!loading && !error && providerStatus === 'not_configured' && (
           <PlatformSetupState onManageDataSources={onManageDataSources} />
         )}
         {!loading && !error && providerStatus === 'unavailable' && (
           <EmptyState
-            icon={selectedMeta.short}
+            tone="unavailable"
             title="Platform API unavailable or unsupported."
             desc={selectedProvider?.message || 'This platform does not currently return official platform trend data in this build.'}
           />
         )}
         {!loading && !error && providerStatus === 'active' && candidates.length === 0 && (
           <EmptyState
-            icon={selectedMeta.short}
+            tone="empty"
             title="No platform-specific trend results are available yet."
             desc="The provider is configured, but it did not return social-platform trend results for this request."
           />
         )}
         {!loading && !error && providerStatus === 'unknown' && (
           <EmptyState
-            icon={selectedMeta.short}
+            tone="warning"
             title="Platform trend research is not configured yet."
             desc="Provider status is not available. Open Connections to review platform access."
           />
@@ -605,16 +605,12 @@ function PlatformTrendsTab({ providers, response, loading, error, generated, gen
 
 function PlatformSetupState({ onManageDataSources }: { onManageDataSources?: () => void }) {
   return (
-    <div className="empty-state">
-      <div className="empty-icon">CN</div>
-      <div className="empty-title">Platform trend research is not configured yet.</div>
-      <div className="empty-desc">Connect or configure platform access before platform-specific trend data can appear here.</div>
-      {onManageDataSources && (
-        <button type="button" className="generate-btn idle" onClick={onManageDataSources}>
-          Open Connections
-        </button>
-      )}
-    </div>
+    <EmptyState
+      tone="warning"
+      title="Platform trend research is not configured yet."
+      desc="Connect or configure platform access before platform-specific trend data can appear here."
+      action={onManageDataSources ? <button type="button" className="generate-btn idle" onClick={onManageDataSources}>Open Connections</button> : undefined}
+    />
   );
 }
 
@@ -900,7 +896,7 @@ function NicheFinderTab({ providers, region, language, audience, onGenerate, gen
         Revenue potential is directional. Connect Google Ads Keyword Planner for stronger monetization research data; owned-channel revenue still requires YouTube Analytics.
       </div>
 
-      {error && <EmptyState icon="ER" title="Niche analysis failed." desc={error} />}
+      {error && <EmptyState tone="error" title="Niche analysis failed." desc={error} />}
       {result && result.status !== 'ok' && <HonestResultState result={result} />}
       {result?.status === 'ok' && (
         <div style={{ display: 'grid', gap: 10 }}>
@@ -1051,28 +1047,33 @@ function AnalyzerShell({ title, description, inputLabel, value, onChange, onAnal
 }
 
 function DiscoveryState({ loading, error, response, filteredCount }: { loading: boolean; error: string | null; response: TrendDiscoveryResponse | null; filteredCount: number }) {
-  if (loading) return <EmptyState icon="ST" title="Loading trend candidates." desc="Checking available trend sources." />;
-  if (error) return <EmptyState icon="ER" title="Trend discovery is unavailable." desc={error} />;
-  if (response?.provider_status === 'provider_not_configured') return <EmptyState icon="NC" title="No trend source configured." desc={response.message || 'Configure a trend source in Connections to collect trends.'} />;
-  if (response?.provider_status === 'no_data') return <EmptyState icon="ND" title="No trends found." desc={response.message || 'The selected trend source returned no candidates for this request.'} />;
-  if (response?.provider_status === 'provider_error') return <EmptyState icon="PE" title="Trend source unavailable." desc={response.message || 'The selected trend source could not return results.'} />;
-  if (response?.provider_status === 'ok' && filteredCount === 0) return <EmptyState icon="ST" title="No candidates for this source." desc="Try another source, region, language, or audience." />;
+  if (loading) return <EmptyState tone="loading" title="Loading trend candidates." desc="Checking available trend sources." />;
+  if (error) return <EmptyState tone="error" title="Trend discovery is unavailable." desc={error} />;
+  if (response?.provider_status === 'provider_not_configured') return <EmptyState tone="warning" title="No trend source configured." desc={response.message || 'Configure a trend source in Connections to collect trends.'} />;
+  if (response?.provider_status === 'no_data') return <EmptyState tone="empty" title="No trends found." desc={response.message || 'The selected trend source returned no candidates for this request.'} />;
+  if (response?.provider_status === 'provider_error') return <EmptyState tone="unavailable" title="Trend source unavailable." desc={response.message || 'The selected trend source could not return results.'} />;
+  if (response?.provider_status === 'ok' && filteredCount === 0) return <EmptyState tone="empty" title="No candidates for this source." desc="Try another source, region, language, or audience." />;
   return null;
 }
 
-function EmptyState({ icon, title, desc }: { icon: string; title: string; desc: string }) {
+type StateTone = 'empty' | 'loading' | 'error' | 'warning' | 'unavailable' | 'success' | 'info';
+
+function EmptyState({ tone = 'empty', title, desc, action }: { tone?: StateTone; title: string; desc: string; action?: ReactNode }) {
+  const role = tone === 'error' ? 'alert' : 'status';
+  const ariaLive = tone === 'loading' || tone === 'error' || tone === 'success' ? 'polite' : undefined;
   return (
-    <div className="empty-state">
-      <div className="empty-icon">{icon}</div>
+    <div className={`empty-state system-state is-${tone}`} role={role} aria-live={ariaLive}>
+      <div className="empty-icon" aria-hidden="true">{stateIcon(tone)}</div>
       <div className="empty-title">{title}</div>
       <div className="empty-desc">{desc}</div>
+      {action && <div className="empty-action">{action}</div>}
     </div>
   );
 }
 
 function HonestResultState({ result }: { result: { status: string; message: string; limitations?: string[] } }) {
   return (
-    <div className="neutral-callout">
+    <div className={`neutral-callout status-banner ${result.status === 'ok' ? 'is-success' : 'is-warning'}`} role="status">
       <strong>{statusLabel(result.status)}:</strong> {result.message}
       <Limitations items={result.limitations ?? []} />
     </div>
@@ -1088,17 +1089,17 @@ function ScriptAction({ label, generating, generated, error, onGenerate, onOpenS
   onOpenScriptStudio?: () => void;
 }) {
   return (
-    <div style={{ marginTop: 12, display: 'grid', gap: 8 }}>
-      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+    <div className="script-action">
+      <div className="script-action-buttons">
         <button className="generate-btn idle" type="button" onClick={onGenerate} disabled={generating}>
           {generating ? 'Generating...' : label}
         </button>
-        {generated && <span style={{ alignSelf: 'center', fontSize: 12, color: 'var(--green)' }}>Script generated</span>}
+        {generated && <span className="inline-success" role="status">Script generated</span>}
         {generated && onOpenScriptStudio && (
           <button className="generate-btn idle" type="button" onClick={onOpenScriptStudio}>Open in Script Studio</button>
         )}
       </div>
-      {error && <div style={{ fontSize: 12, color: 'var(--red)', overflowWrap: 'anywhere' }}>{error}</div>}
+      {error && <div className="inline-error" role="alert">{error}</div>}
     </div>
   );
 }
@@ -1113,22 +1114,24 @@ function ResultCard({ title, children }: { title: string; children: ReactNode })
 }
 
 function Select({ label, value, onChange, options }: { label: string; value: string; onChange: (value: string) => void; options: { label: string; value: string }[] }) {
+  const id = useId();
   return (
-    <label className="form-group">
-      <span className="form-label">{label}</span>
-      <select className="form-input" value={value} onChange={event => onChange(event.target.value)}>
+    <div className="form-group">
+      <label className="form-label" htmlFor={id}>{label}</label>
+      <select id={id} className="form-input" value={value} onChange={event => onChange(event.target.value)}>
         {options.map(option => <option key={`${option.label}-${option.value}`} value={option.value}>{option.label}</option>)}
       </select>
-    </label>
+    </div>
   );
 }
 
 function TextInput({ label, value, onChange, placeholder }: { label: string; value: string; onChange: (value: string) => void; placeholder: string }) {
+  const id = useId();
   return (
-    <label className="form-group">
-      <span className="form-label">{label}</span>
-      <input className="form-input" value={value} onChange={event => onChange(event.target.value)} placeholder={placeholder} />
-    </label>
+    <div className="form-group">
+      <label className="form-label" htmlFor={id}>{label}</label>
+      <input id={id} className="form-input" value={value} onChange={event => onChange(event.target.value)} placeholder={placeholder} />
+    </div>
   );
 }
 
@@ -1268,6 +1271,16 @@ function formatDateTime(value: string): string {
 
 function statusLabel(status: string): string {
   return userStatusLabel(status);
+}
+
+function stateIcon(tone: StateTone): string {
+  if (tone === 'loading') return '...';
+  if (tone === 'error') return '!';
+  if (tone === 'warning') return '!';
+  if (tone === 'success') return 'ok';
+  if (tone === 'unavailable') return '-';
+  if (tone === 'info') return 'i';
+  return '0';
 }
 
 function userStatusLabel(status: unknown): string {

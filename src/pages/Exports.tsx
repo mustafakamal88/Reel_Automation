@@ -119,8 +119,8 @@ export function ExportsPage() {
           </div>
 
           {!loadingJobs && !hasExports && (
-            <div className="empty-state" style={{ margin: 0, padding: '48px 16px' }}>
-              <div className="empty-icon">ZIP</div>
+            <div className="empty-state system-state is-empty" style={{ margin: 0, padding: '48px 16px' }} role="status">
+              <div className="empty-icon" aria-hidden="true">i</div>
               <div className="empty-title">No exports yet. Generate clips to create your first package.</div>
             </div>
           )}

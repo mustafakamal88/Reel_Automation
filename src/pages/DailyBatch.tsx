@@ -319,8 +319,8 @@ export function DailyBatchPage() {
           )}
 
           {!pkg && state !== 'pending' && (
-            <div className="empty-state" style={{ margin: 0 }}>
-              <div className="empty-icon">6</div>
+            <div className="empty-state system-state is-empty" style={{ margin: 0 }} role="status">
+              <div className="empty-icon" aria-hidden="true">i</div>
               <div className="empty-title">No daily ZIP generated yet.</div>
               <div className="empty-desc">Run Generate Today's 6 to build the real package.</div>
             </div>

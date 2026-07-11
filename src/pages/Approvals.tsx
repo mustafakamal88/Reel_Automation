@@ -37,8 +37,8 @@ export function ApprovalsPage(_props: Props) {
         })}
       </div>
 
-      <div className="empty-state">
-        <div className="empty-icon">AP</div>
+      <div className="empty-state system-state is-empty" role="status">
+        <div className="empty-icon" aria-hidden="true">i</div>
         <div className="empty-title">No reels awaiting approval.</div>
         <div className="empty-desc">Approved, rejected, and pending reels will appear here after real reel plans exist.</div>
       </div>

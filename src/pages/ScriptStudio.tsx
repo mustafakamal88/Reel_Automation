@@ -366,9 +366,9 @@ export function ScriptStudioPage({ latestScript, onUseInClipGenerator, onGoToTre
   if (!latestScript) {
     return (
       <section className="page-section">
-        <div className="script-empty-state">
-          <div className="empty-icon">SS</div>
-          <div className="empty-title">No script selected yet.</div>
+        <div className="script-empty-state system-state is-empty" role="status">
+          <div className="empty-icon" aria-hidden="true">i</div>
+          <h1 className="empty-title">No script selected yet.</h1>
           <div className="empty-desc">Generate a script from Research to start.</div>
           {onGoToTrendFinder && (
             <button className="generate-btn idle" type="button" onClick={onGoToTrendFinder}>Go to Research</button>

@@ -15,7 +15,7 @@ export function ComingSoonPage({ eyebrow, title, description }: Props) {
         </div>
       </div>
 
-      <div className="settings-card coming-soon-card">
+      <div className="settings-card coming-soon-card system-state is-unavailable" role="status">
         <div className="coming-soon-badge">Coming soon</div>
         <div>
           <div className="settings-card-title">{title}</div>

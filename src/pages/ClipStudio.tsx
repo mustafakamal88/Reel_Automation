@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { cloneElement, isValidElement, useEffect, useId, useMemo, useState, type ReactElement, type ReactNode } from 'react';
 import {
   ApiError,
   downloadClipStudioZip,
@@ -55,25 +55,16 @@ function errMsg(err: unknown, fallback: string): string {
   return fallback;
 }
 
-function inputStyle(): React.CSSProperties {
-  return {
-    width: '100%',
-    border: '1px solid var(--border-strong)',
-    background: 'var(--bg-input)',
-    color: 'var(--text-primary)',
-    borderRadius: 8,
-    padding: '10px 12px',
-    fontSize: 14,
-    minHeight: 40,
-  };
-}
-
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
+function Field({ label, children }: { label: string; children: ReactNode }) {
+  const id = useId();
+  const control = isValidElement(children)
+    ? cloneElement(children as ReactElement<{ id?: string }>, { id: (children as ReactElement<{ id?: string }>).props.id ?? id })
+    : children;
   return (
-    <label className="form-group clip-field">
-      <span className="form-label">{label}</span>
-      {children}
-    </label>
+    <div className="form-group clip-field">
+      <label className="form-label" htmlFor={id}>{label}</label>
+      {control}
+    </div>
   );
 }
 
@@ -266,6 +257,14 @@ export function ClipStudioPage({ onNavigate }: Props) {
 
   return (
     <section className="page-section">
+      <div className="page-hero compact">
+        <div>
+          <div className="page-eyebrow">Content</div>
+          <h1>Clip Generator</h1>
+          <p>Import a real source, confirm rights, set clip direction, and download generated packages when the backend returns output.</p>
+        </div>
+      </div>
+
       <div className="clip-workspace">
         <div className="clip-workspace-main settings-card">
           <div className="clip-section-header">
@@ -291,7 +290,7 @@ export function ClipStudioPage({ onNavigate }: Props) {
                   setResult(null);
                 }}
                 placeholder="https://example.com/source.mp4"
-                style={inputStyle()}
+                className="form-input"
               />
             </Field>
             <Field label="Upload video">
@@ -299,7 +298,7 @@ export function ClipStudioPage({ onNavigate }: Props) {
                 type="file"
                 accept="video/mp4,video/quicktime,video/webm,.mp4,.mov,.webm"
                 onChange={event => void handleUpload(event.target.files?.[0])}
-                style={inputStyle()}
+                className="form-input"
               />
             </Field>
           </div>
@@ -332,12 +331,12 @@ export function ClipStudioPage({ onNavigate }: Props) {
           </div>
 
         <Field label="Prompt / instruction">
-          <textarea value={prompt} onChange={event => setPrompt(event.target.value)} rows={4} placeholder="Describe the clips you want." style={{ ...inputStyle(), resize: 'vertical', minHeight: 112, fontSize: 13 }} />
+          <textarea className="form-textarea clip-prompt-textarea" value={prompt} onChange={event => setPrompt(event.target.value)} rows={4} placeholder="Describe the clips you want." />
         </Field>
 
         <div className="form-grid four">
           <Field label="Clip length">
-            <select value={clipLength} onChange={event => setClipLength(event.target.value as typeof clipLength)} style={inputStyle()}>
+            <select className="form-input" value={clipLength} onChange={event => setClipLength(event.target.value as typeof clipLength)}>
               <option value="auto">Auto</option>
               <option value="15s">15s</option>
               <option value="30s">30s</option>
@@ -346,21 +345,21 @@ export function ClipStudioPage({ onNavigate }: Props) {
             </select>
           </Field>
           <Field label="Number of clips">
-            <select value={clipCount} onChange={event => setClipCount(Number(event.target.value) as 1 | 3 | 6)} style={inputStyle()}>
+            <select className="form-input" value={clipCount} onChange={event => setClipCount(Number(event.target.value) as 1 | 3 | 6)}>
               <option value={1}>1</option>
               <option value={3}>3</option>
               <option value={6}>6</option>
             </select>
           </Field>
           <Field label="Layout mode">
-            <select value={layoutMode} onChange={event => setLayoutMode(event.target.value as ClipLayoutMode)} style={inputStyle()}>
+            <select className="form-input" value={layoutMode} onChange={event => setLayoutMode(event.target.value as ClipLayoutMode)}>
               <option value="blurred_background">Blurred background</option>
               <option value="fill_crop">Fill crop</option>
               <option value="fit_with_bars">Fit with bars</option>
             </select>
           </Field>
           <Field label="CTA size">
-            <select value={ctaSize} onChange={event => setCtaSize(event.target.value as ClipCTASize)} style={inputStyle()}>
+            <select className="form-input" value={ctaSize} onChange={event => setCtaSize(event.target.value as ClipCTASize)}>
               <option value="small">Small</option>
               <option value="medium">Medium</option>
               <option value="large">Large</option>
@@ -369,13 +368,13 @@ export function ClipStudioPage({ onNavigate }: Props) {
         </div>
 
         <div className="form-grid three">
-          <Field label="Top text"><input value={topText} onChange={event => setTopText(event.target.value)} style={inputStyle()} /></Field>
-          <Field label="Bottom text"><input value={bottomText} onChange={event => setBottomText(event.target.value)} style={inputStyle()} /></Field>
-          <Field label="Watermark / channel name"><input value={watermark} onChange={event => setWatermark(event.target.value)} style={inputStyle()} /></Field>
+          <Field label="Top text"><input className="form-input" value={topText} onChange={event => setTopText(event.target.value)} /></Field>
+          <Field label="Bottom text"><input className="form-input" value={bottomText} onChange={event => setBottomText(event.target.value)} /></Field>
+          <Field label="Watermark / channel name"><input className="form-input" value={watermark} onChange={event => setWatermark(event.target.value)} /></Field>
         </div>
 
         <Field label="Caption text optional">
-          <textarea value={captionText} onChange={event => setCaptionText(event.target.value)} rows={2} placeholder="Leave blank to hide captions." style={{ ...inputStyle(), resize: 'vertical', minHeight: 70, fontSize: 13 }} />
+          <textarea className="form-textarea clip-caption-textarea" value={captionText} onChange={event => setCaptionText(event.target.value)} rows={2} placeholder="Leave blank to hide captions." />
         </Field>
 
         <label className="rights-check">
@@ -389,16 +388,16 @@ export function ClipStudioPage({ onNavigate }: Props) {
           </summary>
           <div className="form-grid three rights-grid">
             <Field label="Source model">
-              <select value={sourceModel} onChange={event => setSourceModel(event.target.value as ClipSourceModel)} style={inputStyle()}>
+              <select className="form-input" value={sourceModel} onChange={event => setSourceModel(event.target.value as ClipSourceModel)}>
                 {SOURCE_MODELS.map(item => <option key={item.value} value={item.value}>{item.label}</option>)}
               </select>
             </Field>
-            <Field label="Source title"><input value={sourceTitle} onChange={event => setSourceTitle(event.target.value)} style={inputStyle()} /></Field>
-            <Field label="Source creator"><input value={sourceCreator} onChange={event => setSourceCreator(event.target.value)} style={inputStyle()} /></Field>
-            <Field label="License"><input value={sourceLicense} onChange={event => setSourceLicense(event.target.value)} style={inputStyle()} /></Field>
-            <Field label="Attribution text"><input value={attributionText} onChange={event => setAttributionText(event.target.value)} style={inputStyle()} /></Field>
-            <Field label="Copyright overlay"><input value={copyrightOverlayText} onChange={event => setCopyrightOverlayText(event.target.value)} style={inputStyle()} /></Field>
-            <Field label="Platform source"><input value={platformSource} onChange={event => setPlatformSource(event.target.value)} style={inputStyle()} /></Field>
+            <Field label="Source title"><input className="form-input" value={sourceTitle} onChange={event => setSourceTitle(event.target.value)} /></Field>
+            <Field label="Source creator"><input className="form-input" value={sourceCreator} onChange={event => setSourceCreator(event.target.value)} /></Field>
+            <Field label="License"><input className="form-input" value={sourceLicense} onChange={event => setSourceLicense(event.target.value)} /></Field>
+            <Field label="Attribution text"><input className="form-input" value={attributionText} onChange={event => setAttributionText(event.target.value)} /></Field>
+            <Field label="Copyright overlay"><input className="form-input" value={copyrightOverlayText} onChange={event => setCopyrightOverlayText(event.target.value)} /></Field>
+            <Field label="Platform source"><input className="form-input" value={platformSource} onChange={event => setPlatformSource(event.target.value)} /></Field>
           </div>
         </details>
 

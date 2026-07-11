@@ -23,8 +23,8 @@ export function ScoringPage() {
             </div>
           ))}
         </div>
-        <div className="empty-state" style={{ margin: 0, borderRadius: 0 }}>
-          <div className="empty-icon">SC</div>
+        <div className="empty-state system-state is-empty" style={{ margin: 0, borderRadius: 0 }} role="status">
+          <div className="empty-icon" aria-hidden="true">i</div>
           <div className="empty-title">No live trend data connected yet.</div>
           <div className="empty-desc">Connect trend sources/API keys to start collecting real trend data.</div>
         </div>

@@ -117,8 +117,8 @@ export function PipelinePage() {
 
   return (
     <section className="page-section">
-      <div className="empty-state" style={{ marginBottom: 16 }}>
-        <div className="empty-icon">PL</div>
+      <div className="empty-state system-state is-empty" style={{ marginBottom: 16 }} role="status">
+        <div className="empty-icon" aria-hidden="true">i</div>
         <div className="empty-title">No real reels generated yet.</div>
         <div className="empty-desc">Run the Phase 4D render + ZIP test to generate the first local export.</div>
       </div>

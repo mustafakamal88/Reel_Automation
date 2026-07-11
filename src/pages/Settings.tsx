@@ -201,8 +201,8 @@ function AISettings({ providers, providerError }: { providers: ResearchProviderS
       <section className="settings-card">
         <div className="settings-card-title">Model selection</div>
         <p className="settings-section-desc">Model/provider selection is not exposed because this frontend does not have a supported model configuration endpoint.</p>
-        <div className="empty-state inline-empty-state">
-          <div className="empty-icon">AI</div>
+        <div className="empty-state inline-empty-state system-state is-unavailable" role="status">
+          <div className="empty-icon" aria-hidden="true">-</div>
           <div className="empty-title">Selection unavailable</div>
           <div className="empty-desc">Generation uses the backend configuration for this environment.</div>
         </div>

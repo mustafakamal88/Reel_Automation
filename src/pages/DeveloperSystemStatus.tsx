@@ -45,8 +45,8 @@ export function DeveloperSystemStatusPage() {
   if (!import.meta.env.DEV) {
     return (
       <section className="page-section">
-        <div className="empty-state">
-          <div className="empty-icon">DEV</div>
+        <div className="empty-state system-state is-unavailable" role="status">
+          <div className="empty-icon" aria-hidden="true">-</div>
           <div className="empty-title">Developer diagnostics are unavailable.</div>
           <div className="empty-desc">This page is only rendered in development builds.</div>
         </div>
@@ -68,8 +68,8 @@ export function DeveloperSystemStatusPage() {
 
       <div className="settings-card developer-status-card">
         <div className="settings-card-title">Provider diagnostics</div>
-        {loading && <div className="muted-note">Checking provider status.</div>}
-        {error && <div className="neutral-callout"><strong>Error:</strong> {error}</div>}
+        {loading && <div className="status-banner is-loading" role="status" aria-live="polite"><strong>Checking status:</strong> Provider readiness is being loaded.</div>}
+        {error && <div className="status-banner is-error" role="alert"><strong>Status unavailable:</strong> {error}</div>}
         <div className="status-list">
           {sorted.map(provider => (
             <div className="status-row" key={provider.id}>

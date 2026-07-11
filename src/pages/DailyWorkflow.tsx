@@ -21,8 +21,8 @@ export function DailyWorkflowPage() {
         ))}
       </div>
 
-      <div className="empty-state">
-        <div className="empty-icon">WF</div>
+      <div className="empty-state system-state is-empty" role="status">
+        <div className="empty-icon" aria-hidden="true">i</div>
         <div className="empty-title">No batch runs yet.</div>
         <div className="empty-desc">No uploads have been attempted. Connect accounts and configure provider keys first.</div>
       </div>

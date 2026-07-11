@@ -117,66 +117,68 @@ export default function App() {
         />
 
         <div className="scroll-area">
-          {view === 'dashboard' && <DashboardPage latestScript={latestScript} onNavigate={navigate} />}
-          {['trendingKeywords', 'platformTrends', 'youtubeVideoAnalyzer', 'youtubeChannelAnalyzer', 'nicheFinder'].includes(view) && (
-            <AIToolPage
-              tool={view as 'trendingKeywords' | 'platformTrends' | 'youtubeVideoAnalyzer' | 'youtubeChannelAnalyzer' | 'nicheFinder'}
-              onScriptGenerated={handleScriptGenerated}
-              onOpenScriptStudio={() => navigate('scriptStudio')}
-              onManageDataSources={() => navigate('connections')}
-            />
-          )}
-          {view === 'scriptStudio' && (
-            <ScriptStudioPage
-              latestScript={latestScript}
-              onUseInClipGenerator={() => navigate('clipStudio')}
-              onGoToTrendFinder={() => navigate('trendingKeywords')}
-            />
-          )}
-          {view === 'clipStudio' && <ClipStudioPage onNavigate={navigate} />}
-          {view === 'voiceStudio' && (
-            <ComingSoonPage
-              eyebrow="Content"
-              title="Voice Studio"
-              description="Voice generation and narration controls will live here once real voice-provider support is available."
-            />
-          )}
-          {view === 'thumbnailStudio' && (
-            <ComingSoonPage
-              eyebrow="Content"
-              title="Thumbnail Studio"
-              description="Thumbnail design, export presets, and brand-safe variants will live here when the feature is implemented."
-            />
-          )}
-          {view === 'assets' && (
-            <ComingSoonPage
-              eyebrow="Content"
-              title="Assets"
-              description="A workspace for uploaded brand assets, reusable media, and approved creative materials is planned."
-            />
-          )}
-          {view === 'connections' && <SocialConnectionsPage />}
-          {view === 'calendar' && (
-            <ComingSoonPage
-              eyebrow="Publishing"
-              title="Calendar"
-              description="Scheduling, review dates, and publishing plans will appear here after real scheduling support is added."
-            />
-          )}
-          {view === 'analytics' && (
-            <ComingSoonPage
-              eyebrow="Publishing"
-              title="Analytics"
-              description="Performance reporting will appear here after real connected-platform analytics are available."
-            />
-          )}
-          {view === 'settings' && (
-            <SettingsPage
-              settings={settings}
-              onSave={handleSaveSettings}
-            />
-          )}
-          {view === 'developerSystemStatus' && <DeveloperSystemStatusPage />}
+          <div key={view} className="workspace-route">
+            {view === 'dashboard' && <DashboardPage latestScript={latestScript} onNavigate={navigate} />}
+            {['trendingKeywords', 'platformTrends', 'youtubeVideoAnalyzer', 'youtubeChannelAnalyzer', 'nicheFinder'].includes(view) && (
+              <AIToolPage
+                tool={view as 'trendingKeywords' | 'platformTrends' | 'youtubeVideoAnalyzer' | 'youtubeChannelAnalyzer' | 'nicheFinder'}
+                onScriptGenerated={handleScriptGenerated}
+                onOpenScriptStudio={() => navigate('scriptStudio')}
+                onManageDataSources={() => navigate('connections')}
+              />
+            )}
+            {view === 'scriptStudio' && (
+              <ScriptStudioPage
+                latestScript={latestScript}
+                onUseInClipGenerator={() => navigate('clipStudio')}
+                onGoToTrendFinder={() => navigate('trendingKeywords')}
+              />
+            )}
+            {view === 'clipStudio' && <ClipStudioPage onNavigate={navigate} />}
+            {view === 'voiceStudio' && (
+              <ComingSoonPage
+                eyebrow="Content"
+                title="Voice Studio"
+                description="Voice generation and narration controls will live here once real voice-provider support is available."
+              />
+            )}
+            {view === 'thumbnailStudio' && (
+              <ComingSoonPage
+                eyebrow="Content"
+                title="Thumbnail Studio"
+                description="Thumbnail design, export presets, and brand-safe variants will live here when the feature is implemented."
+              />
+            )}
+            {view === 'assets' && (
+              <ComingSoonPage
+                eyebrow="Content"
+                title="Assets"
+                description="A workspace for uploaded brand assets, reusable media, and approved creative materials is planned."
+              />
+            )}
+            {view === 'connections' && <SocialConnectionsPage />}
+            {view === 'calendar' && (
+              <ComingSoonPage
+                eyebrow="Publishing"
+                title="Calendar"
+                description="Scheduling, review dates, and publishing plans will appear here after real scheduling support is added."
+              />
+            )}
+            {view === 'analytics' && (
+              <ComingSoonPage
+                eyebrow="Publishing"
+                title="Analytics"
+                description="Performance reporting will appear here after real connected-platform analytics are available."
+              />
+            )}
+            {view === 'settings' && (
+              <SettingsPage
+                settings={settings}
+                onSave={handleSaveSettings}
+              />
+            )}
+            {view === 'developerSystemStatus' && <DeveloperSystemStatusPage />}
+          </div>
         </div>
       </main>
 

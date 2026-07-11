@@ -46,6 +46,9 @@ This standard applies to every user-facing TrendCortex page, component, workflow
 - Disabled controls must explain why they are disabled.
 - Primary actions must appear in a dedicated and predictable action area.
 - Button labels must describe the user outcome, not backend mechanics.
+- Buttons must use semantic `<button>` elements for actions and links only for navigation.
+- Touch targets should be approximately 44px tall on mobile.
+- Button groups must wrap or stack before labels clip or controls become unreachable.
 
 ## Cards And Surfaces
 
@@ -57,6 +60,57 @@ This standard applies to every user-facing TrendCortex page, component, workflow
 - User-facing copy should be plain-language creator workflow copy, not API/provider terminology.
 - Raw backend enum values must be translated into user-friendly UI labels.
 - Logos must be evaluated at actual sidebar and favicon sizes.
+- The right workspace should be centered inside a controlled content width, normally 1320px-1440px.
+- Data-heavy pages may use the wider end of the workspace range, but forms must not create very long text fields.
+- Card hierarchy must distinguish static information, interactive selections, form panels, status cards, and empty states.
+- Interactive cards may use subtle hover feedback only when the whole card is actionable.
+- Do not use large shadows, repeated backdrop blur, or decorative gradients to compensate for weak hierarchy.
+
+## Forms And Controls
+
+- Every form control must have a visible label or an accessible name.
+- Short text belongs in `<input>`, long text in `<textarea>`, and option sets in `<select>`, radio cards, checkboxes, segmented controls, or tabs as appropriate.
+- Field labels, helper text, values, and validation messages must not collide at tablet or mobile widths.
+- Textareas must remain usable on mobile and at 125% and 150% browser zoom.
+- Dropdown arrows and selected values must stay aligned at all inspected breakpoints.
+- Focus states must be visible on buttons, links, tabs, fields, cards, and disclosure controls.
+
+## Semantic Colour
+
+- Cyan/teal is the brand accent for primary actions, active tabs, selected states, focus, and key workflow affordances.
+- Green is for connected, saved, ready, and successful states.
+- Amber is for setup needed, unavailable-but-recoverable, warnings, and unsaved work.
+- Red/pink is only for failed, destructive, or genuine error states.
+- Blue/cyan is for informational or loading states.
+- Neutral grey is for coming soon, disabled, unavailable by design, and not connected.
+- Colour must never be the only indicator of state; labels, icons, and copy must also communicate the state.
+
+## System States
+
+- Empty, loading, error, success, unavailable, account-not-connected, provider-not-configured, and coming-soon states must use shared spacing, icon treatment, headings, explanation copy, and semantic colour.
+- State headings must be product-facing and honest.
+- State descriptions should be short and explain what is happening or what is missing.
+- A next action should appear only when a real action is available.
+- Do not show unexplained acronym placeholders such as `ER`, `NC`, `DEV`, or similar large letter tiles.
+
+## Motion
+
+- Page transitions may animate only the right workspace content, never the sidebar.
+- Route changes should render immediately and use short, subtle opacity/position motion.
+- Animation must not cause layout shifts, text blur, horizontal overflow, slow navigation, hydration issues, or repeated replay on trivial state updates.
+- Avoid full-screen fades and dark overlays for route transitions.
+- Respect `prefers-reduced-motion`; nonessential motion must be disabled or reduced.
+- Prefer CSS transitions and keyframes over adding animation libraries.
+
+## Responsive Workspace
+
+- Desktop pages should use balanced grids and shared container edges for page titles, banners, tabs, cards, and forms.
+- Tablet layouts may keep two columns only where content fits naturally; otherwise collapse to one column.
+- Mobile layouts must be single-column, readable, and free of horizontal overflow.
+- Tabs and segmented controls must scroll or wrap without clipping labels.
+- Page title and action areas must wrap naturally.
+- Cards, banners, and form rows must stack before text or controls overlap.
+- Main content must not disappear beneath the header or drawer.
 
 ## Workflow Model
 
@@ -98,3 +152,7 @@ Before committing any UI change, Codex must visually inspect desktop, tablet, an
 - No broken CTA flow.
 - No console errors.
 - A successful build does not count as visual QA.
+- Code checks alone are never sufficient for UI approval.
+- Inspect representative routes in the internal browser, interact with tabs, fields, dropdowns, buttons, hover states where possible, and keyboard focus.
+- Verify 100%, 125%, and 150% browser zoom for affected layouts when the change touches workspace structure, cards, forms, tabs, or responsive behavior.
+- Screenshot representative before/after pages when the task requires visual review.

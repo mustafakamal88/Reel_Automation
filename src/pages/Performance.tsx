@@ -11,8 +11,8 @@ export function PerformancePage() {
         ))}
       </div>
 
-      <div className="empty-state">
-        <div className="empty-icon">PF</div>
+      <div className="empty-state system-state is-empty" role="status">
+        <div className="empty-icon" aria-hidden="true">i</div>
         <div className="empty-title">No real publishing history yet.</div>
         <div className="empty-desc">Performance analytics will appear after real uploads are connected.</div>
       </div>
