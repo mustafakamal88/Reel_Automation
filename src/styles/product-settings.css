@@ -1,0 +1,152 @@
+.settings-product-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 20px;
+}
+
+.settings-card-primary,
+.settings-card-wide {
+  min-height: 0;
+}
+
+.settings-card-wide {
+  grid-column: 1 / -1;
+}
+
+.settings-card-header,
+.platform-selector-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 20px;
+}
+
+.settings-form-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 16px;
+}
+
+.settings-form-grid.single {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.settings-form-span {
+  grid-column: 1 / -1;
+}
+
+.platform-selector-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.platform-selector-option {
+  --platform-color: var(--accent);
+  --platform-bg: var(--accent-dim);
+  min-height: 42px;
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  padding: 9px 13px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: var(--bg-subtle);
+  color: var(--text-secondary);
+  font: inherit;
+  font-weight: 500;
+  cursor: pointer;
+  transition: border-color 160ms ease, background 160ms ease, color 160ms ease, transform 160ms ease;
+}
+
+.platform-selector-option:hover {
+  border-color: color-mix(in srgb, var(--platform-color) 58%, var(--border-strong));
+  color: var(--text-primary);
+  transform: translateY(-1px);
+}
+
+.platform-selector-option:focus-visible {
+  outline: 2px solid var(--platform-color);
+  outline-offset: 2px;
+}
+
+.platform-selector-option.selected {
+  border-color: var(--platform-color);
+  background: var(--platform-bg);
+  color: var(--platform-color);
+}
+
+.platform-selector-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 3px;
+  background: var(--platform-color);
+  flex: 0 0 auto;
+}
+
+.platform-selector-check {
+  width: 14px;
+  color: var(--platform-color);
+  font-size: 12px;
+  line-height: 1;
+  text-align: center;
+}
+
+.platform-selector.compact .platform-selector-options {
+  gap: 8px;
+}
+
+.platform-selector.compact .platform-selector-option {
+  min-height: 36px;
+  padding: 7px 11px;
+  font-size: 13px;
+}
+
+.settings-info-strip {
+  display: flex;
+  align-items: center;
+  min-height: 0;
+}
+
+.settings-info-strip .muted-note {
+  max-width: 840px;
+}
+
+@media (max-width: 980px) {
+  .settings-product-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .settings-card-wide {
+    grid-column: auto;
+  }
+}
+
+@media (max-width: 680px) {
+  .settings-product-grid {
+    gap: 14px;
+  }
+
+  .settings-form-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .settings-form-span {
+    grid-column: auto;
+  }
+
+  .platform-selector-options {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .platform-selector-option {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .platform-selector-check {
+    margin-left: auto;
+  }
+}
