@@ -2,16 +2,21 @@ import type { View } from '../types';
 
 const VIEW_META: Record<View, { title: string; sub: string }> = {
   dashboard:              { title: 'Dashboard',                sub: 'Trend research, scripts, clips, and publishing readiness' },
-  aiTools:                { title: 'Research Tools',           sub: 'Find trends, channels, and niche ideas worth acting on.' },
   trendingKeywords:       { title: 'Trending Keywords',        sub: 'Find active search and social topics by market.' },
-  platformTrends:         { title: 'Platform Trends',          sub: 'Compare trend signals from each connected source.' },
-  youtubeVideoAnalyzer:   { title: 'YouTube Video Analyzer',   sub: 'Break down a video into hooks, keywords, and script angles.' },
-  youtubeChannelAnalyzer: { title: 'YouTube Channel Analyzer', sub: 'Review a channel profile, content patterns, and next-video ideas.' },
+  platformTrends:         { title: 'Platform Trends',          sub: 'Compare trend data from each connected platform.' },
+  youtubeVideoAnalyzer:   { title: 'Video Analyzer',           sub: 'Break down a YouTube video into hooks, keywords, and script angles.' },
+  youtubeChannelAnalyzer: { title: 'Channel Analyzer',         sub: 'Review a YouTube channel profile, content patterns, and next-video ideas.' },
   nicheFinder:            { title: 'Niche Finder',             sub: 'Evaluate demand, competition and readiness for a creator niche.' },
   scriptStudio:           { title: 'Script Studio',            sub: 'Generated scripts and platform copy' },
   clipStudio:             { title: 'Clip Generator',           sub: 'Upload a video or provide a direct video URL, then download clips' },
+  voiceStudio:            { title: 'Voice Studio',             sub: 'Planned narration and voice workflow' },
+  thumbnailStudio:        { title: 'Thumbnail Studio',         sub: 'Planned thumbnail creation workflow' },
+  assets:                 { title: 'Assets',                   sub: 'Planned creative asset workspace' },
   connections:            { title: 'Connections',              sub: 'Connect accounts to publish directly from Clip Generator' },
+  calendar:               { title: 'Calendar',                 sub: 'Planned publishing schedule' },
+  analytics:              { title: 'Analytics',                sub: 'Planned connected-platform performance reporting' },
   settings:               { title: 'Settings',                 sub: 'Workspace preferences and product configuration' },
+  developerSystemStatus:  { title: 'System Status',            sub: 'Development-only provider diagnostics' },
 };
 
 interface Props {

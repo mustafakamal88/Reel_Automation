@@ -369,9 +369,9 @@ export function ScriptStudioPage({ latestScript, onUseInClipGenerator, onGoToTre
         <div className="script-empty-state">
           <div className="empty-icon">SS</div>
           <div className="empty-title">No script selected yet.</div>
-          <div className="empty-desc">Generate a script from Research Tools to start.</div>
+          <div className="empty-desc">Generate a script from Research to start.</div>
           {onGoToTrendFinder && (
-            <button className="generate-btn idle" type="button" onClick={onGoToTrendFinder}>Go to Research Tools</button>
+            <button className="generate-btn idle" type="button" onClick={onGoToTrendFinder}>Go to Research</button>
           )}
         </div>
       </section>

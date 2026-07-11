@@ -4,16 +4,17 @@ import { storage } from './lib/storage';
 import { MobileNavDrawer, Sidebar } from './components/Sidebar';
 import { Header } from './components/Header';
 import { DashboardPage } from './pages/Dashboard';
-import { AIToolPage, AIToolsLandingPage } from './pages/Signals';
+import { AIToolPage } from './pages/Signals';
 import { ScriptStudioPage } from './pages/ScriptStudio';
 import { ClipStudioPage } from './pages/ClipStudio';
 import { SocialConnectionsPage } from './pages/SocialConnections';
 import { SettingsPage } from './pages/Settings';
+import { DeveloperSystemStatusPage } from './pages/DeveloperSystemStatus';
+import { ComingSoonPage } from './pages/ComingSoon';
 import type { ReelContentPackage, TrendCandidate } from './lib/api/client';
 
 const VIEW_ROUTES: Record<View, string> = {
   dashboard: '/',
-  aiTools: '/ai-tools',
   trendingKeywords: '/ai-tools/trending-keywords',
   platformTrends: '/ai-tools/platform-trends',
   youtubeVideoAnalyzer: '/ai-tools/youtube-video-analyzer',
@@ -21,8 +22,14 @@ const VIEW_ROUTES: Record<View, string> = {
   nicheFinder: '/ai-tools/niche-finder',
   scriptStudio: '/script-studio',
   clipStudio: '/clip-generator',
+  voiceStudio: '/voice-studio',
+  thumbnailStudio: '/thumbnail-studio',
+  assets: '/assets',
   connections: '/connections',
+  calendar: '/calendar',
+  analytics: '/analytics',
   settings: '/settings',
+  developerSystemStatus: '/developer/system-status',
 };
 
 const ROUTE_VIEWS: Record<string, View> = {
@@ -30,7 +37,7 @@ const ROUTE_VIEWS: Record<string, View> = {
   '/dashboard': 'dashboard',
   '/trend-finder': 'trendingKeywords',
   '/signals': 'trendingKeywords',
-  '/ai-tools': 'aiTools',
+  '/ai-tools': 'trendingKeywords',
   '/ai-tools/trending-keywords': 'trendingKeywords',
   '/ai-tools/platform-trends': 'platformTrends',
   '/ai-tools/youtube-video-analyzer': 'youtubeVideoAnalyzer',
@@ -38,8 +45,14 @@ const ROUTE_VIEWS: Record<string, View> = {
   '/ai-tools/niche-finder': 'nicheFinder',
   '/script-studio': 'scriptStudio',
   '/clip-generator': 'clipStudio',
+  '/voice-studio': 'voiceStudio',
+  '/thumbnail-studio': 'thumbnailStudio',
+  '/assets': 'assets',
   '/connections': 'connections',
+  '/calendar': 'calendar',
+  '/analytics': 'analytics',
   '/settings': 'settings',
+  '/developer/system-status': 'developerSystemStatus',
 };
 
 function viewFromLocation(): View {
@@ -54,7 +67,6 @@ export default function App() {
   const [settings, setSettings] = useState(() => storage.getSettings());
   const [latestScript, setLatestScript] = useState(() => storage.getScriptPackage());
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(true);
 
   useEffect(() => {
     const handlePopState = () => {
@@ -96,8 +108,6 @@ export default function App() {
       <Sidebar
         currentView={view}
         onNavigate={navigate}
-        collapsed={sidebarCollapsed}
-        onToggleCollapse={() => setSidebarCollapsed(current => !current)}
       />
 
       <main className="main">
@@ -108,13 +118,12 @@ export default function App() {
 
         <div className="scroll-area">
           {view === 'dashboard' && <DashboardPage latestScript={latestScript} onNavigate={navigate} />}
-          {view === 'aiTools' && <AIToolsLandingPage onNavigate={navigate} />}
           {['trendingKeywords', 'platformTrends', 'youtubeVideoAnalyzer', 'youtubeChannelAnalyzer', 'nicheFinder'].includes(view) && (
             <AIToolPage
               tool={view as 'trendingKeywords' | 'platformTrends' | 'youtubeVideoAnalyzer' | 'youtubeChannelAnalyzer' | 'nicheFinder'}
               onScriptGenerated={handleScriptGenerated}
               onOpenScriptStudio={() => navigate('scriptStudio')}
-              onManageDataSources={() => navigate('settings')}
+              onManageDataSources={() => navigate('connections')}
             />
           )}
           {view === 'scriptStudio' && (
@@ -125,13 +134,49 @@ export default function App() {
             />
           )}
           {view === 'clipStudio' && <ClipStudioPage onNavigate={navigate} />}
+          {view === 'voiceStudio' && (
+            <ComingSoonPage
+              eyebrow="Content"
+              title="Voice Studio"
+              description="Voice generation and narration controls will live here once real voice-provider support is available."
+            />
+          )}
+          {view === 'thumbnailStudio' && (
+            <ComingSoonPage
+              eyebrow="Content"
+              title="Thumbnail Studio"
+              description="Thumbnail design, export presets, and brand-safe variants will live here when the feature is implemented."
+            />
+          )}
+          {view === 'assets' && (
+            <ComingSoonPage
+              eyebrow="Content"
+              title="Assets"
+              description="A workspace for uploaded brand assets, reusable media, and approved creative materials is planned."
+            />
+          )}
           {view === 'connections' && <SocialConnectionsPage />}
+          {view === 'calendar' && (
+            <ComingSoonPage
+              eyebrow="Publishing"
+              title="Calendar"
+              description="Scheduling, review dates, and publishing plans will appear here after real scheduling support is added."
+            />
+          )}
+          {view === 'analytics' && (
+            <ComingSoonPage
+              eyebrow="Publishing"
+              title="Analytics"
+              description="Performance reporting will appear here after real connected-platform analytics are available."
+            />
+          )}
           {view === 'settings' && (
             <SettingsPage
               settings={settings}
               onSave={handleSaveSettings}
             />
           )}
+          {view === 'developerSystemStatus' && <DeveloperSystemStatusPage />}
         </div>
       </main>
 

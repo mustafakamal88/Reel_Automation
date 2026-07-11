@@ -6,7 +6,6 @@ export type ApprovalStatus = 'pending' | 'approved' | 'rejected';
 
 export type View =
   | 'dashboard'
-  | 'aiTools'
   | 'trendingKeywords'
   | 'platformTrends'
   | 'youtubeVideoAnalyzer'
@@ -14,8 +13,14 @@ export type View =
   | 'nicheFinder'
   | 'scriptStudio'
   | 'clipStudio'
+  | 'voiceStudio'
+  | 'thumbnailStudio'
+  | 'assets'
   | 'connections'
-  | 'settings';
+  | 'calendar'
+  | 'analytics'
+  | 'settings'
+  | 'developerSystemStatus';
 
 // ─── Platform connection types (real OAuth state) ─────────────
 
@@ -215,14 +220,24 @@ export interface PerfStats {
 export interface Settings {
   niche: string;
   region: string;
+  language: string;
+  audienceCulture: string;
   platforms: Platform[];
   contentStyle: string;
   riskTolerance: 'low' | 'medium' | 'high';
   brandVoice: string;
+  publishingPlatforms: Platform[];
+  approvalBehavior: 'manual_review' | 'auto_approve';
+  schedulingTimezone: string;
+  defaultVisibility: 'private' | 'unlisted' | 'public';
   defaultTopText: string;
   defaultBottomText: string;
   defaultWatermark: string;
   defaultLayoutMode: 'fit_with_bars' | 'fill_crop' | 'blurred_background';
+  defaultTopColor: string;
+  defaultBottomColor: string;
+  defaultBrandColor: string;
+  logoAssetName: string;
 }
 
 // ─── Pipeline types ───────────────────────────────────────────

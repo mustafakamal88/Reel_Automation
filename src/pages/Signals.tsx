@@ -21,6 +21,7 @@ import {
   type YouTubeVideoAnalysisResponse,
 } from '../lib/api/client';
 import { storage } from '../lib/storage';
+import { TargetPlatformSelector } from '../components/TargetPlatformSelector';
 
 type AIToolView = 'trendingKeywords' | 'platformTrends' | 'youtubeVideoAnalyzer' | 'youtubeChannelAnalyzer' | 'nicheFinder';
 
@@ -28,14 +29,14 @@ const AI_TOOL_PAGE_META: Record<AIToolView, { title: string; eyebrow: string; de
   trendingKeywords: {
     eyebrow: 'Trend research',
     title: 'Trending Keywords',
-    description: 'Filter live trend signals by region, language, audience, and source, then turn the strongest result into a script.',
+    description: 'Filter live trend data by region, language, audience, and source, then turn the strongest result into a script.',
     action: 'Generate Script',
   },
   platformTrends: {
-    eyebrow: 'Source data',
+    eyebrow: 'Platform research',
     title: 'Platform Trends',
-    description: 'See which connected sources are returning trend data and where coverage is still missing.',
-    action: 'Manage data sources',
+    description: 'Explore trend data from connected social platforms.',
+    action: 'Open Connections',
   },
   youtubeVideoAnalyzer: {
     eyebrow: 'YouTube research',
@@ -87,6 +88,14 @@ const PLATFORM_FILTERS: { id: Platform | 'all'; label: string; providerID?: stri
   { id: 'fb', label: 'Facebook', providerID: 'facebook_graph_api' },
 ];
 
+const SOCIAL_PLATFORM_FILTERS: { id: Platform; providerID: string }[] = [
+  { id: 'yt', providerID: 'youtube_data_api' },
+  { id: 'tt', providerID: 'tiktok_research_api' },
+  { id: 'ig', providerID: 'instagram_graph_api' },
+  { id: 'fb', providerID: 'facebook_graph_api' },
+  { id: 'x', providerID: 'x_api' },
+];
+
 interface Props {
   initialFilter?: Platform | 'all';
   onFilterChange?: (f: Platform | 'all') => void;
@@ -100,9 +109,9 @@ export function AIToolsLandingPage({ onNavigate }: { onNavigate: (view: View) =>
     <section className="page-section">
       <div className="page-hero compact">
         <div>
-          <div className="page-eyebrow">Research Tools</div>
+          <div className="page-eyebrow">Research</div>
           <h1>Find trends, channels, and niches worth building around.</h1>
-          <p>Choose a workflow, review the evidence, and turn strong signals into scripts or content plans.</p>
+          <p>Choose a workflow, review the evidence, and turn strong trends into scripts or content plans.</p>
         </div>
       </div>
       <div className="ai-tools-grid">
@@ -361,7 +370,20 @@ export function AIToolPage({ tool, initialFilter = 'all', onFilterChange, onScri
         />
       )}
 
-      {tool === 'platformTrends' && <PlatformTrendsTab providers={providers} onManageDataSources={onManageDataSources} />}
+      {tool === 'platformTrends' && (
+        <PlatformTrendsTab
+          providers={providers}
+          response={response}
+          loading={loading}
+          error={error}
+          generated={generated}
+          generationErrors={generationErrors}
+          generatingID={generatingID}
+          onGenerate={handleGenerate}
+          onOpenScriptStudio={onOpenScriptStudio}
+          onManageDataSources={onManageDataSources}
+        />
+      )}
 
       {tool === 'youtubeVideoAnalyzer' && (
         <YouTubeVideoTab
@@ -457,7 +479,7 @@ function TrendingKeywordsTab(props: {
         </div>
         <div className="trend-filter-footer">
           <span>Showing trends from connected sources. Audience fit is used for script and niche context.</span>
-          <button type="button" className="link-button" onClick={props.onManageDataSources}>Manage data sources</button>
+          <button type="button" className="link-button" onClick={props.onManageDataSources}>Open Connections</button>
         </div>
       </div>
 
@@ -483,38 +505,115 @@ function TrendingKeywordsTab(props: {
   );
 }
 
-function PlatformTrendsTab({ providers, onManageDataSources }: { providers: ResearchProviderStatus[]; onManageDataSources?: () => void }) {
-  const rows = PLATFORM_FILTERS.filter(p => p.id !== 'all');
-  const activeRows = rows.filter(row => providers.find(provider => provider.id === row.providerID)?.status === 'active');
+function PlatformTrendsTab({ providers, response, loading, error, generated, generationErrors, generatingID, onGenerate, onOpenScriptStudio, onManageDataSources }: {
+  providers: ResearchProviderStatus[];
+  response: TrendDiscoveryResponse | null;
+  loading: boolean;
+  error: string | null;
+  generated: Record<string, ReelContentPackage>;
+  generationErrors: Record<string, string>;
+  generatingID: string | null;
+  onGenerate: (candidate: TrendCandidate) => void;
+  onOpenScriptStudio?: () => void;
+  onManageDataSources?: () => void;
+}) {
+  const [selectedPlatform, setSelectedPlatform] = useState<Platform>('yt');
+  const selectedMeta = PLATFORMS[selectedPlatform];
+  const selectedConfig = SOCIAL_PLATFORM_FILTERS.find(platform => platform.id === selectedPlatform);
+  const selectedProvider = providers.find(provider => provider.id === selectedConfig?.providerID);
+  const providerStatus = selectedProvider?.status ?? (error ? 'unavailable' : 'unknown');
+  const candidates = platformCandidates(response?.candidates ?? [], selectedPlatform);
+  const updatedTimes = candidates
+    .map(candidate => candidate.discovered_at)
+    .filter(Boolean)
+    .sort();
+  const lastUpdated = updatedTimes.length ? updatedTimes[updatedTimes.length - 1] : undefined;
+
   return (
     <div className="platform-trends-panel">
-      <div className="settings-card platform-trends-intro">
-        <div className="settings-card-title">Platform Trends</div>
-        <div className="muted-note">
-          {activeRows.length > 0
-            ? 'Explore creator research by platform from configured sources. Trend counts are only shown when returned by real sources.'
-            : 'Connect trend sources in Settings to compare platform-specific creator research.'}
+      <div className="platform-selector-section">
+        <div className="section-kicker">Platform selector</div>
+        <TargetPlatformSelector
+          platforms={SOCIAL_PLATFORM_FILTERS.map(platform => ({ id: platform.id }))}
+          selectedPlatform={selectedPlatform}
+          onSelect={setSelectedPlatform}
+          ariaLabel="Select social platform for trend research"
+        />
+      </div>
+
+      <div className="platform-status-card">
+        <div>
+          <div className="section-kicker">Selected-platform status</div>
+          <h2>{selectedMeta.name}</h2>
+          <p>{platformStatusDescription(providerStatus, selectedProvider)}</p>
         </div>
-        {onManageDataSources && (
-          <button type="button" className="link-button" onClick={onManageDataSources} style={{ marginTop: 10 }}>
-            Manage data sources
-          </button>
+        <div className="platform-status-meta">
+          <span className={`readiness-badge ${semanticStatus(providerStatus).className}`}>{semanticStatus(providerStatus).label}</span>
+          {lastUpdated && <span>Last updated {formatDateTime(lastUpdated)}</span>}
+          {!lastUpdated && <span>Freshness unavailable</span>}
+        </div>
+      </div>
+
+      <div className="platform-results-section">
+        <div className="section-kicker">Trend results</div>
+        {loading && <EmptyState icon={selectedMeta.short} title="Checking platform trend data." desc="Looking for real results from configured providers." />}
+        {!loading && error && <EmptyState icon="ER" title="Platform trend research is unavailable." desc={error} />}
+        {!loading && !error && providerStatus === 'not_configured' && (
+          <PlatformSetupState onManageDataSources={onManageDataSources} />
+        )}
+        {!loading && !error && providerStatus === 'unavailable' && (
+          <EmptyState
+            icon={selectedMeta.short}
+            title="Platform API unavailable or unsupported."
+            desc={selectedProvider?.message || 'This platform does not currently return official platform trend data in this build.'}
+          />
+        )}
+        {!loading && !error && providerStatus === 'active' && candidates.length === 0 && (
+          <EmptyState
+            icon={selectedMeta.short}
+            title="No platform-specific trend results are available yet."
+            desc="The provider is configured, but it did not return social-platform trend results for this request."
+          />
+        )}
+        {!loading && !error && providerStatus === 'unknown' && (
+          <EmptyState
+            icon={selectedMeta.short}
+            title="Platform trend research is not configured yet."
+            desc="Provider status is not available. Open Connections to review platform access."
+          />
+        )}
+        {!loading && !error && candidates.length > 0 && (
+          <div className="platform-results-list">
+            {candidates.map(candidate => (
+              <TrendCandidateCard
+                key={candidate.id}
+                candidate={candidate}
+                audience={selectedMeta.name}
+                generated={generated[candidate.id]}
+                generationError={generationErrors[candidate.id]}
+                generating={generatingID === candidate.id}
+                onGenerate={() => onGenerate(candidate)}
+                onOpenScriptStudio={onOpenScriptStudio}
+              />
+            ))}
+          </div>
         )}
       </div>
-      <div className="platform-trend-tabs" aria-label="Platform trend sections">
-        {rows.map(row => {
-          const platform = PLATFORMS[row.id as Platform];
-          return (
-            <div className="platform-trend-tab-card" key={row.id}>
-              <div className="platform-trend-tab-title">
-                <span className="filter-chip-dot" style={{ background: platform.color }} />
-                {row.label}
-              </div>
-              <div className="muted-note">No platform-specific trend results returned yet.</div>
-            </div>
-          );
-        })}
-      </div>
+    </div>
+  );
+}
+
+function PlatformSetupState({ onManageDataSources }: { onManageDataSources?: () => void }) {
+  return (
+    <div className="empty-state">
+      <div className="empty-icon">CN</div>
+      <div className="empty-title">Platform trend research is not configured yet.</div>
+      <div className="empty-desc">Connect or configure platform access before platform-specific trend data can appear here.</div>
+      {onManageDataSources && (
+        <button type="button" className="generate-btn idle" onClick={onManageDataSources}>
+          Open Connections
+        </button>
+      )}
     </div>
   );
 }
@@ -546,7 +645,7 @@ function YouTubeVideoTab({ value, onChange, onAnalyze, loading, result, onGenera
       loading={loading}
       buttonLabel="Analyze Video"
     >
-      {!result && <div className="neutral-callout">Connect YouTube in Settings to analyze videos.</div>}
+      {!result && <div className="neutral-callout">Connect YouTube in Connections to analyze videos.</div>}
       {result && result.status !== 'ok' && <HonestResultState result={result} />}
       {result?.status === 'ok' && (
         <div style={{ display: 'grid', gap: 10 }}>
@@ -634,7 +733,7 @@ function YouTubeChannelTab({ value, onChange, onAnalyze, loading, result, onGene
       loading={loading}
       buttonLabel="Analyze Channel"
     >
-      {!result && <div className="neutral-callout">Connect YouTube in Settings to analyze channels.</div>}
+      {!result && <div className="neutral-callout">Connect YouTube in Connections to analyze channels.</div>}
       {result && result.status !== 'ok' && <HonestResultState result={result} />}
       {result?.status === 'ok' && (
         <div style={{ display: 'grid', gap: 10 }}>
@@ -798,7 +897,7 @@ function NicheFinderTab({ providers, region, language, audience, onGenerate, gen
       </div>
 
       <div className="neutral-callout">
-        Revenue potential is directional. Connect Google Ads Keyword Planner for stronger monetization signals; owned-channel revenue still requires YouTube Analytics.
+        Revenue potential is directional. Connect Google Ads Keyword Planner for stronger monetization research data; owned-channel revenue still requires YouTube Analytics.
       </div>
 
       {error && <EmptyState icon="ER" title="Niche analysis failed." desc={error} />}
@@ -954,7 +1053,7 @@ function AnalyzerShell({ title, description, inputLabel, value, onChange, onAnal
 function DiscoveryState({ loading, error, response, filteredCount }: { loading: boolean; error: string | null; response: TrendDiscoveryResponse | null; filteredCount: number }) {
   if (loading) return <EmptyState icon="ST" title="Loading trend candidates." desc="Checking available trend sources." />;
   if (error) return <EmptyState icon="ER" title="Trend discovery is unavailable." desc={error} />;
-  if (response?.provider_status === 'provider_not_configured') return <EmptyState icon="NC" title="No trend source configured." desc={response.message || 'Configure a trend source in Settings to collect trends.'} />;
+  if (response?.provider_status === 'provider_not_configured') return <EmptyState icon="NC" title="No trend source configured." desc={response.message || 'Configure a trend source in Connections to collect trends.'} />;
   if (response?.provider_status === 'no_data') return <EmptyState icon="ND" title="No trends found." desc={response.message || 'The selected trend source returned no candidates for this request.'} />;
   if (response?.provider_status === 'provider_error') return <EmptyState icon="PE" title="Trend source unavailable." desc={response.message || 'The selected trend source could not return results.'} />;
   if (response?.provider_status === 'ok' && filteredCount === 0) return <EmptyState icon="ST" title="No candidates for this source." desc="Try another source, region, language, or audience." />;
@@ -1140,6 +1239,33 @@ function sourceFilterOptions(): { label: string; value: string }[] {
   return PLATFORM_FILTERS.map(filter => ({ label: filter.label, value: filter.id }));
 }
 
+function platformCandidates(candidates: TrendCandidate[], platform: Platform): TrendCandidate[] {
+  const sourceMatches: Record<Platform, string[]> = {
+    yt: ['youtube', 'youtube_data_api', 'youtube_video_analysis', 'youtube_channel_analysis'],
+    tt: ['tiktok', 'tiktok_research_api'],
+    ig: ['instagram', 'instagram_graph_api'],
+    fb: ['facebook', 'facebook_graph_api'],
+    x: ['x', 'twitter', 'x_api'],
+    th: ['threads'],
+    gt: ['google_trends_rss'],
+  };
+  const matches = sourceMatches[platform] ?? [];
+  return candidates.filter(candidate => matches.includes(candidate.source));
+}
+
+function platformStatusDescription(status: string, provider?: ResearchProviderStatus): string {
+  if (status === 'active') return provider?.message || 'Provider access is ready. Results appear only when the backend returns platform-specific trend data.';
+  if (status === 'not_configured') return 'Platform access is not configured yet. Use Connections to review available setup options.';
+  if (status === 'unavailable') return provider?.message || 'This platform API is unavailable or unsupported for trend research right now.';
+  return 'Provider status is unavailable. No platform trend data will be shown until status can be checked.';
+}
+
+function formatDateTime(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+}
+
 function statusLabel(status: string): string {
   return userStatusLabel(status);
 }
@@ -1272,7 +1398,7 @@ function researchScriptFromNicheOpportunity(opportunity: NicheOpportunity): Rese
       related_videos: opportunity.related_videos,
       risks: opportunity.risks,
       first_10_video_ideas: opportunity.first_10_video_ideas,
-      monetization_note: 'Directional estimate based on trend and ad-market signals.',
+      monetization_note: 'Directional estimate based on trend and ad-market research data.',
     },
     metadata: {
       source_provider: 'niche_opportunity_engine',

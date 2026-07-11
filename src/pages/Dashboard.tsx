@@ -78,7 +78,7 @@ export function DashboardPage({ latestScript, onNavigate }: Props) {
         <div className="settings-card">
           <div className="settings-card-title">Quick actions</div>
           <div className="quick-actions">
-            <button className="generate-btn idle" type="button" onClick={() => onNavigate('trendingKeywords')}>Open Research Tools</button>
+            <button className="generate-btn idle" type="button" onClick={() => onNavigate('trendingKeywords')}>Open Research</button>
             <button className="generate-btn secondary" type="button" onClick={() => onNavigate('scriptStudio')}>Open Script Studio</button>
             <button className="generate-btn secondary" type="button" onClick={() => onNavigate('clipStudio')}>Open Clip Generator</button>
             <button className="generate-btn secondary" type="button" onClick={() => onNavigate('connections')}>Open Connections</button>

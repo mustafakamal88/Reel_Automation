@@ -67,16 +67,26 @@ const LEGACY_STORED_DATA_MARKERS = [
 ];
 
 export const DEFAULT_SETTINGS: Settings = {
-  niche: 'AI tools & creator workflow',
+  niche: 'Creator workflow and automation',
   region: 'US · Global',
+  language: 'English',
+  audienceCulture: 'US creator economy',
   platforms: ['yt', 'tt', 'ig', 'fb', 'x'],
   contentStyle: 'Educational + entertaining (edutainment)',
   riskTolerance: 'medium',
   brandVoice: 'Direct, confident, no fluff. First-person.',
+  publishingPlatforms: ['yt', 'tt', 'ig'],
+  approvalBehavior: 'manual_review',
+  schedulingTimezone: 'Browser timezone',
+  defaultVisibility: 'private',
   defaultTopText: 'TREND CLIP',
   defaultBottomText: 'FOLLOW FOR MORE',
   defaultWatermark: '@trendcortex',
   defaultLayoutMode: 'blurred_background',
+  defaultTopColor: '#101828',
+  defaultBottomColor: '#0f766e',
+  defaultBrandColor: '#39c7d6',
+  logoAssetName: '',
 };
 
 export const DEFAULT_ACTIVITY: ActivityState = {
@@ -98,7 +108,6 @@ export const DEFAULT_APPROVALS: Record<string, ApprovalStatus> = {
 
 const VALID_VIEWS: View[] = [
   'dashboard',
-  'aiTools',
   'trendingKeywords',
   'platformTrends',
   'youtubeVideoAnalyzer',
@@ -106,8 +115,14 @@ const VALID_VIEWS: View[] = [
   'nicheFinder',
   'scriptStudio',
   'clipStudio',
+  'voiceStudio',
+  'thumbnailStudio',
+  'assets',
   'connections',
+  'calendar',
+  'analytics',
   'settings',
+  'developerSystemStatus',
 ];
 
 const LEGACY_VIEW_MAP: Record<string, View> = {

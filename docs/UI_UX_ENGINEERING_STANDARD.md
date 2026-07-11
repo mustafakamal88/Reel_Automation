@@ -21,6 +21,16 @@ This standard applies to every user-facing TrendCortex page, component, workflow
 - Accessibility contrast and visible keyboard focus states are required.
 - Visual polish must never introduce fake functionality or change API contracts.
 - User-facing pages must never show raw JSON, raw IDs, backend diagnostics, stack traces, provider payloads, or developer wording.
+- Creator-facing UI must not expose backend implementation details.
+- Provider diagnostics belong in development/admin tooling, not normal creator Settings.
+- Platform connection management belongs on Connections.
+- Settings must contain creator-facing preferences only and must not duplicate platform account connection management.
+- Settings must not claim server-side persistence unless a real backend persistence path exists.
+- Shared platform selectors must be implemented as reusable components.
+- Raw backend enum values must not appear in the UI.
+- Google Trends is a research source, not a social publishing platform.
+- Coming Soon states must be honest shells only: no fake metrics, fake activity, or non-functional primary actions.
+- Build success alone does not count as visual QA.
 - Every page must have one clear user goal. Secondary information should support that goal, not compete with it.
 - Every action button must visibly relate to the content it affects. Section actions belong inside or directly beside the affected section.
 - Use progressive disclosure. Advanced, debug, diagnostic, and evidence details must live inside collapsed `Advanced details` or `Advanced evidence data` sections.
@@ -56,9 +66,25 @@ Trend Finder -> Generate Script -> Script Studio -> Use in Clip Generator -> Dow
 
 UI changes must preserve this CTA flow. A user should always understand where they are and what the next useful step is.
 
+## Product Navigation
+
+The main sidebar information architecture is:
+
+- Dashboard
+- Research: Trending Keywords, Platform Trends, Video Analyzer, Channel Analyzer, Niche Finder
+- Content: Script Studio, Clip Generator, Voice Studio, Thumbnail Studio, Assets
+- Publishing: Connections, Calendar, Analytics
+- Settings
+
+Settings subsections belong inside the Settings workspace, not as main sidebar items. Creator settings, platform connections, and developer diagnostics must stay separated:
+
+- Creator settings: Workspace, AI, Publishing defaults, Branding, Billing, Team.
+- Platform account and OAuth setup: Connections.
+- Provider diagnostics, environment readiness, and implementation details: `/developer/system-status`, hidden from normal navigation.
+
 ## Evidence And Grounding
 
-- Evidence must be parsed into clear sections such as source summary, evidence sources, performance signals, related videos, related channels, keywords, and limitations.
+- Evidence must be parsed into clear sections such as source summary, evidence sources, performance indicators, related videos, related channels, keywords, and limitations.
 - Unknown or advanced evidence fields must be hidden inside a collapsed advanced details section.
 - Evidence limitations must be clear but not alarming. Prefer neutral language such as: `Public metadata only. Exact RPM/search ranking requires authorized analytics.`
 
