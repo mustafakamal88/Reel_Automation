@@ -41,7 +41,7 @@ export const DATA_SOURCE_PROVIDERS: IntegrationProvider[] = [
     authType: 'oauth2',
     scopes: [
       { name: 'research.data.basic', description: 'Access public video and creator data', required: true },
-      { name: 'research.adlib.basic', description: 'Trending content signals', required: false },
+      { name: 'research.adlib.basic', description: 'Trending content data', required: false },
     ],
     lastSync: null,
     secretStorageMode: 'backend_encrypted',
@@ -57,7 +57,7 @@ export const DATA_SOURCE_PROVIDERS: IntegrationProvider[] = [
     authType: 'oauth2',
     scopes: [
       { name: 'instagram_basic', description: 'Read hashtag and post metadata', required: true },
-      { name: 'pages_read_engagement', description: 'Reach and engagement signals', required: false },
+      { name: 'pages_read_engagement', description: 'Reach and engagement data', required: false },
     ],
     lastSync: null,
     secretStorageMode: 'backend_encrypted',
@@ -72,7 +72,7 @@ export const DATA_SOURCE_PROVIDERS: IntegrationProvider[] = [
     status: 'not_connected',
     authType: 'oauth2',
     scopes: [
-      { name: 'public_content', description: 'Read public Reels content signals', required: true },
+      { name: 'public_content', description: 'Read public Reels content data', required: true },
     ],
     lastSync: null,
     secretStorageMode: 'backend_encrypted',

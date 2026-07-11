@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
-import type { Platform } from '../types';
+import type { Platform, View } from '../types';
 import { PLATFORMS } from '../data/platforms';
 import {
   ApiError,
@@ -22,15 +22,40 @@ import {
 } from '../lib/api/client';
 import { storage } from '../lib/storage';
 
-type ResearchTab = 'keywords' | 'platforms' | 'video' | 'channel' | 'niche';
+type AIToolView = 'trendingKeywords' | 'platformTrends' | 'youtubeVideoAnalyzer' | 'youtubeChannelAnalyzer' | 'nicheFinder';
 
-const TABS: { id: ResearchTab; label: string }[] = [
-  { id: 'keywords', label: 'Trending Keywords' },
-  { id: 'platforms', label: 'Platform Trends' },
-  { id: 'video', label: 'YouTube Video Analyzer' },
-  { id: 'channel', label: 'YouTube Channel Analyzer' },
-  { id: 'niche', label: 'Niche Finder' },
-];
+const AI_TOOL_PAGE_META: Record<AIToolView, { title: string; eyebrow: string; description: string; action: string }> = {
+  trendingKeywords: {
+    eyebrow: 'Trend research',
+    title: 'Trending Keywords',
+    description: 'Filter live trend signals by region, language, audience, and source, then turn the strongest result into a script.',
+    action: 'Generate Script',
+  },
+  platformTrends: {
+    eyebrow: 'Source data',
+    title: 'Platform Trends',
+    description: 'See which connected sources are returning trend data and where coverage is still missing.',
+    action: 'Manage data sources',
+  },
+  youtubeVideoAnalyzer: {
+    eyebrow: 'YouTube research',
+    title: 'YouTube Video Analyzer',
+    description: 'Paste a YouTube video URL to review hooks, keywords, audience fit, and script angles.',
+    action: 'Analyze Video',
+  },
+  youtubeChannelAnalyzer: {
+    eyebrow: 'YouTube research',
+    title: 'YouTube Channel Analyzer',
+    description: 'Enter a channel URL, handle, or search term to review positioning, formats, and next-video ideas.',
+    action: 'Analyze Channel',
+  },
+  nicheFinder: {
+    eyebrow: 'Opportunity research',
+    title: 'Niche Finder',
+    description: 'Evaluate a seed topic across demand, competition, monetization context and provider readiness.',
+    action: 'Analyze niche opportunity',
+  },
+};
 
 const REGION_OPTIONS = [
   { label: 'Global', value: 'US' },
@@ -65,14 +90,38 @@ const PLATFORM_FILTERS: { id: Platform | 'all'; label: string; providerID?: stri
 interface Props {
   initialFilter?: Platform | 'all';
   onFilterChange?: (f: Platform | 'all') => void;
-  onStatusChange?: (status: string) => void;
   onScriptGenerated?: (candidate: TrendCandidate, pkg: ReelContentPackage) => void;
   onOpenScriptStudio?: () => void;
   onManageDataSources?: () => void;
 }
 
-export function TrendFinderPage({ initialFilter = 'all', onFilterChange, onStatusChange, onScriptGenerated, onOpenScriptStudio, onManageDataSources }: Props) {
-  const [tab, setTab] = useState<ResearchTab>('keywords');
+export function AIToolsLandingPage({ onNavigate }: { onNavigate: (view: View) => void }) {
+  return (
+    <section className="page-section">
+      <div className="page-hero compact">
+        <div>
+          <div className="page-eyebrow">Research Tools</div>
+          <h1>Find trends, channels, and niches worth building around.</h1>
+          <p>Choose a workflow, review the evidence, and turn strong signals into scripts or content plans.</p>
+        </div>
+      </div>
+      <div className="ai-tools-grid">
+        {(Object.keys(AI_TOOL_PAGE_META) as AIToolView[]).map(view => {
+          const meta = AI_TOOL_PAGE_META[view];
+          return (
+            <button key={view} className="ai-tool-card" type="button" onClick={() => onNavigate(view)}>
+              <span>{meta.eyebrow}</span>
+              <strong>{meta.title}</strong>
+              <small>{meta.description}</small>
+            </button>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+export function AIToolPage({ tool, initialFilter = 'all', onFilterChange, onScriptGenerated, onOpenScriptStudio, onManageDataSources }: Props & { tool: AIToolView }) {
   const [platformFilter, setPlatformFilter] = useState<Platform | 'all'>(initialFilter);
   const [regionChoice, setRegionChoice] = useState('US');
   const [customRegion, setCustomRegion] = useState('');
@@ -139,13 +188,6 @@ export function TrendFinderPage({ initialFilter = 'all', onFilterChange, onStatu
       cancelled = true;
     };
   }, [region, language]);
-
-  useEffect(() => {
-    if (!onStatusChange) return;
-    if (loading) onStatusChange('Checking live trend provider status');
-    else if (error) onStatusChange('Trend discovery unavailable');
-    else onStatusChange(statusSubtitle(response));
-  }, [error, loading, onStatusChange, response]);
 
   const filteredCandidates = useMemo(() => {
     const candidates = response?.candidates ?? [];
@@ -277,25 +319,19 @@ export function TrendFinderPage({ initialFilter = 'all', onFilterChange, onStatu
     handleGenerateResearch(key, candidate, researchScriptFromNicheOpportunity(opportunity));
   }
 
+  const meta = AI_TOOL_PAGE_META[tool];
+
   return (
     <section className="page-section">
       <div className="page-hero compact">
         <div>
-          <div className="page-eyebrow">Trend Intelligence</div>
-          <h1>Daily creator research from connected sources.</h1>
-          <p>Research trends, analyze YouTube videos and channels, and turn useful findings into creator scripts.</p>
+          <div className="page-eyebrow">{meta.eyebrow}</div>
+          <h1>{meta.title}</h1>
+          <p>{meta.description}</p>
         </div>
       </div>
 
-      <div className="research-tabs" role="tablist" aria-label="Research mode">
-        {TABS.map(item => (
-          <button key={item.id} className={tab === item.id ? 'active' : ''} type="button" onClick={() => setTab(item.id)}>
-            {item.label}
-          </button>
-        ))}
-      </div>
-
-      {tab === 'keywords' && (
+      {tool === 'trendingKeywords' && (
         <TrendingKeywordsTab
           regionChoice={regionChoice}
           setRegionChoice={setRegionChoice}
@@ -325,9 +361,9 @@ export function TrendFinderPage({ initialFilter = 'all', onFilterChange, onStatu
         />
       )}
 
-      {tab === 'platforms' && <PlatformTrendsTab providers={providers} onManageDataSources={onManageDataSources} />}
+      {tool === 'platformTrends' && <PlatformTrendsTab providers={providers} onManageDataSources={onManageDataSources} />}
 
-      {tab === 'video' && (
+      {tool === 'youtubeVideoAnalyzer' && (
         <YouTubeVideoTab
           value={videoURL}
           onChange={setVideoURL}
@@ -343,7 +379,7 @@ export function TrendFinderPage({ initialFilter = 'all', onFilterChange, onStatu
         />
       )}
 
-      {tab === 'channel' && (
+      {tool === 'youtubeChannelAnalyzer' && (
         <YouTubeChannelTab
           value={channelURL}
           onChange={setChannelURL}
@@ -360,7 +396,7 @@ export function TrendFinderPage({ initialFilter = 'all', onFilterChange, onStatu
         />
       )}
 
-      {tab === 'niche' && (
+      {tool === 'nicheFinder' && (
         <NicheFinderTab
           providers={providers}
           region={region || 'US'}
@@ -408,9 +444,9 @@ function TrendingKeywordsTab(props: {
 
   return (
     <>
-      <div className="settings-card" style={{ marginBottom: 14 }}>
+      <div className="settings-card research-filter-card">
         <div className="settings-card-title">Research filters</div>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: 10 }}>
+        <div className="form-grid four">
           <Select label="Region" value={props.regionChoice} onChange={props.setRegionChoice} options={REGION_OPTIONS} />
           {props.regionChoice === 'custom' && <TextInput label="Custom region code" value={props.customRegion} onChange={props.setCustomRegion} placeholder="e.g. CA, AE" />}
           <Select label="Language" value={props.languageChoice} onChange={props.setLanguageChoice} options={LANGUAGE_OPTIONS} />
@@ -502,7 +538,7 @@ function YouTubeVideoTab({ value, onChange, onAnalyze, loading, result, onGenera
   return (
     <AnalyzerShell
       title="YouTube Video Analyzer"
-      description="Paste a YouTube video URL. Configured analysis uses official YouTube Data API public metadata only."
+      description="Paste a YouTube video URL to review the title, hook, keywords, audience fit, and remake angles."
       inputLabel="YouTube video URL"
       value={value}
       onChange={onChange}
@@ -510,7 +546,7 @@ function YouTubeVideoTab({ value, onChange, onAnalyze, loading, result, onGenera
       loading={loading}
       buttonLabel="Analyze Video"
     >
-      {!result && <div className="neutral-callout">YouTube analysis needs the YouTube analyzer to be configured in Settings.</div>}
+      {!result && <div className="neutral-callout">Connect YouTube in Settings to analyze videos.</div>}
       {result && result.status !== 'ok' && <HonestResultState result={result} />}
       {result?.status === 'ok' && (
         <div style={{ display: 'grid', gap: 10 }}>
@@ -519,7 +555,7 @@ function YouTubeVideoTab({ value, onChange, onAnalyze, loading, result, onGenera
             <MetricGrid values={{ Channel: result.channel_title, Published: result.published_at, Duration: result.duration, Views: result.views, Likes: result.likes, Comments: result.comments }} />
             <TextBlock label="Evidence" value={result.metadata?.score_reason} />
           </ResultCard>
-          <ResultCard title="Performance signals">
+          <ResultCard title="Performance indicators">
             <MetricGrid values={result.performance_signals ?? {}} />
           </ResultCard>
           <ResultCard title="Keyword intelligence">
@@ -590,7 +626,7 @@ function YouTubeChannelTab({ value, onChange, onAnalyze, loading, result, onGene
   return (
     <AnalyzerShell
       title="YouTube Channel Analyzer"
-      description="Paste a YouTube channel URL, @handle, /channel/ID, /c/Name, or query. Resolution uses official YouTube Data API where possible."
+      description="Paste a channel URL, @handle, /channel/ID, /c/Name, or search term to review formats, keywords, and content gaps."
       inputLabel="YouTube channel URL or handle"
       value={value}
       onChange={onChange}
@@ -598,7 +634,7 @@ function YouTubeChannelTab({ value, onChange, onAnalyze, loading, result, onGene
       loading={loading}
       buttonLabel="Analyze Channel"
     >
-      {!result && <div className="neutral-callout">Channel analysis needs the YouTube analyzer to be configured in Settings.</div>}
+      {!result && <div className="neutral-callout">Connect YouTube in Settings to analyze channels.</div>}
       {result && result.status !== 'ok' && <HonestResultState result={result} />}
       {result?.status === 'ok' && (
         <div style={{ display: 'grid', gap: 10 }}>
@@ -696,52 +732,73 @@ function NicheFinderTab({ providers, region, language, audience, onGenerate, gen
   }
 
   return (
-    <div style={{ display: 'grid', gap: 12 }}>
-      <div className="settings-card">
-        <div className="settings-card-title">Niche Finder inputs</div>
-        <div className="form-grid two">
-          <TextInput label="Seed keyword/topic" value={seedKeyword} onChange={setSeedKeyword} placeholder="AI tools, UK visa, trading, football transfers" />
-          <Select label="Platform" value={platform} onChange={setPlatform} options={[{ label: 'YouTube', value: 'youtube' }, { label: 'Short-form video', value: 'short_form' }]} />
-          <TextInput label="Audience/culture" value={localAudience} onChange={setLocalAudience} placeholder="UK Pakistani, South Asian students, US creators" />
-          <Select label="Content style" value={contentStyle} onChange={setContentStyle} options={[
-            { label: 'Short-form explainers', value: 'short-form explainers' },
-            { label: 'Tutorials', value: 'tutorials' },
-            { label: 'Reviews', value: 'reviews' },
-            { label: 'News breakdowns', value: 'news breakdowns' },
-            { label: 'Case studies', value: 'case studies' },
-          ]} />
-          <Select label="Monetization goal" value={monetizationGoal} onChange={setMonetizationGoal} options={[
-            { label: 'Ads, affiliates, products', value: 'ads, affiliates, and products' },
-            { label: 'Affiliate revenue', value: 'affiliate reviews and buying intent' },
-            { label: 'Course/education sales', value: 'education, courses, and community' },
-            { label: 'Brand deals', value: 'brand deals and sponsorships' },
-          ]} />
-          <Select label="Creator skill level" value={creatorSkillLevel} onChange={setCreatorSkillLevel} options={[
-            { label: 'Beginner', value: 'beginner' },
-            { label: 'Intermediate', value: 'intermediate' },
-            { label: 'Advanced/expert', value: 'advanced expert' },
-          ]} />
-          <Select label="Production difficulty" value={difficulty} onChange={setDifficulty} options={[
-            { label: 'Low/simple', value: 'low simple' },
-            { label: 'Medium', value: 'medium' },
-            { label: 'High/polished', value: 'high polished' },
-          ]} />
+    <div className="niche-workflow">
+      <div className="settings-card niche-form-card">
+        <div>
+          <div className="settings-card-title">Niche Finder workflow</div>
+          <div className="muted-note">Define the creator context, then choose the content and monetization strategy for the analysis.</div>
         </div>
-        <button className="generate-btn idle" type="button" onClick={runAnalysis} disabled={!seedKeyword.trim() || loading}>
-          {loading ? 'Analyzing...' : 'Analyze niche opportunity'}
-        </button>
-        <MetricGrid values={{
-          Country: region,
-          Language: language,
-          'YouTube Data API': providerMap.get('youtube_data_api')?.status || 'unknown',
-          'Google Ads Keyword Planner': providerMap.get('google_ads_keyword_planner')?.status || 'not_configured',
-          'YouTube Analytics': providerMap.get('youtube_analytics')?.status || 'not_configured',
-          'Google Trends RSS': providerMap.get('google_trends_rss')?.status || 'unknown',
-        }} />
+          <div className="niche-form-sections">
+            <div className="niche-form-section">
+              <div className="niche-section-heading">Topic</div>
+            <div className="form-grid two">
+              <TextInput label="Seed keyword/topic" value={seedKeyword} onChange={setSeedKeyword} placeholder="creator tools, UK visa, trading, football transfers" />
+              <Select label="Platform" value={platform} onChange={setPlatform} options={[{ label: 'YouTube', value: 'youtube' }, { label: 'Short-form video', value: 'short_form' }]} />
+              <TextInput label="Audience/culture" value={localAudience} onChange={setLocalAudience} placeholder="UK Pakistani, South Asian students, US creators" />
+            </div>
+          </div>
+          <div className="niche-form-section">
+            <div className="niche-section-heading">Content strategy</div>
+            <div className="form-grid two">
+              <Select label="Content style" value={contentStyle} onChange={setContentStyle} options={[
+                { label: 'Short-form explainers', value: 'short-form explainers' },
+                { label: 'Tutorials', value: 'tutorials' },
+                { label: 'Reviews', value: 'reviews' },
+                { label: 'News breakdowns', value: 'news breakdowns' },
+                { label: 'Case studies', value: 'case studies' },
+              ]} />
+              <Select label="Monetization goal" value={monetizationGoal} onChange={setMonetizationGoal} options={[
+                { label: 'Ads, affiliates, products', value: 'ads, affiliates, and products' },
+                { label: 'Affiliate revenue', value: 'affiliate reviews and buying intent' },
+                { label: 'Course/education sales', value: 'education, courses, and community' },
+                { label: 'Brand deals', value: 'brand deals and sponsorships' },
+              ]} />
+              <Select label="Creator skill level" value={creatorSkillLevel} onChange={setCreatorSkillLevel} options={[
+                { label: 'Beginner', value: 'beginner' },
+                { label: 'Intermediate', value: 'intermediate' },
+                { label: 'Advanced/expert', value: 'advanced expert' },
+              ]} />
+              <Select label="Production difficulty" value={difficulty} onChange={setDifficulty} options={[
+                { label: 'Low/simple', value: 'low simple' },
+                { label: 'Medium', value: 'medium' },
+                { label: 'High/polished', value: 'high polished' },
+              ]} />
+            </div>
+          </div>
+          <div className="niche-form-section niche-readiness-section">
+            <div className="niche-section-heading">Provider readiness</div>
+            <ReadinessPanel rows={[
+              { label: 'Country', value: region, type: 'value' },
+              { label: 'Language', value: language, type: 'value' },
+              { label: 'YouTube Data API', value: providerMap.get('youtube_data_api')?.status || 'unknown', type: 'status' },
+              { label: 'Google Ads Keyword Planner', value: providerMap.get('google_ads_keyword_planner')?.status || 'not_configured', type: 'status' },
+              { label: 'YouTube Analytics', value: providerMap.get('youtube_analytics')?.status || 'not_configured', type: 'status' },
+              { label: 'Google Trends RSS', value: providerMap.get('google_trends_rss')?.status || 'unknown', type: 'status' },
+            ]} />
+          </div>
+        </div>
+        <div className="niche-action-footer">
+          <div className="niche-action-copy">
+            {!seedKeyword.trim() ? 'Enter a seed topic to analyze this opportunity.' : 'Ready to analyze this creator opportunity.'}
+          </div>
+          <button className="generate-btn idle niche-primary-action" type="button" onClick={runAnalysis} disabled={!seedKeyword.trim() || loading}>
+            {loading ? 'Analyzing...' : 'Analyze niche opportunity'}
+          </button>
+        </div>
       </div>
 
       <div className="neutral-callout">
-        Monetization is estimated from public/proxy signals, not exact YouTube RPM. Connect Google Ads Keyword Planner for stronger monetization estimates; exact revenue/RPM requires future authorized YouTube Analytics for owned channels.
+        Revenue potential is directional. Connect Google Ads Keyword Planner for stronger monetization signals; owned-channel revenue still requires YouTube Analytics.
       </div>
 
       {error && <EmptyState icon="ER" title="Niche analysis failed." desc={error} />}
@@ -778,16 +835,16 @@ function NicheOpportunityCard({ opportunity, generated, generationError, generat
   onOpenScriptStudio?: () => void;
 }) {
   return (
-    <article style={{ display: 'grid', gap: 14, padding: '14px 16px', background: 'var(--bg-card)', border: '1px solid var(--border-card)', borderRadius: 8 }}>
+    <article className="result-card niche-opportunity-card">
       <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'flex-start', flexWrap: 'wrap' }}>
         <div style={{ minWidth: 0 }}>
-          <div style={{ fontSize: 16, fontWeight: 800, color: 'var(--text-primary)', overflowWrap: 'anywhere' }}>{opportunity.niche_name}</div>
+          <div className="result-card-title">{opportunity.niche_name}</div>
           <div style={{ marginTop: 4, fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-dim)', textTransform: 'uppercase' }}>
             {opportunity.platform} · {opportunity.country} · {opportunity.language} · {opportunity.estimated_monetization_level} monetization estimate
           </div>
         </div>
         <div style={{ textAlign: 'right', minWidth: 96 }}>
-          <div style={{ fontFamily: 'var(--font-mono)', fontSize: 22, fontWeight: 800, color: 'var(--green)' }}>{Math.round(opportunity.opportunity_score)}</div>
+            <div className="score-value">{Math.round(opportunity.opportunity_score)}</div>
           <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text-dim)', textTransform: 'uppercase' }}>opportunity</div>
         </div>
       </div>
@@ -832,9 +889,9 @@ function TrendCandidateCard({ candidate, audience, generated, generationError, g
   onGenerate: () => void;
   onOpenScriptStudio?: () => void;
 }) {
-  const scoreReason = `Why this scored high: ${candidate.source === 'google_trends_rss' ? 'Google Trends RSS provided current evidence; score reflects provider traffic/recency, evidence quality, and selected audience context.' : 'Score reflects connected public metadata, source confidence, evidence quality, and audience fit.'} Scores are directional, not exact rankings.`;
+  const scoreReason = `Why this scored high: ${candidate.source === 'google_trends_rss' ? 'Google Trends shows current demand; the score weighs traffic, recency, evidence quality, and audience fit.' : 'The score weighs source confidence, evidence quality, visible engagement, and audience fit.'} Treat it as a directional priority, not a ranking guarantee.`;
   return (
-    <article style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) auto', gap: 14, padding: '14px 16px', background: 'var(--bg-card)', border: '1px solid var(--border-card)', borderRadius: 8 }}>
+    <article className="trend-candidate-card">
       <div style={{ minWidth: 0 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
           <span className="filter-chip-dot" style={{ background: PLATFORMS.gt.color }} />
@@ -842,7 +899,7 @@ function TrendCandidateCard({ candidate, audience, generated, generationError, g
             {candidate.source.replaceAll('_', ' ')} · {candidate.region} · {candidate.language}
           </span>
         </div>
-        <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-primary)', overflowWrap: 'anywhere' }}>{candidate.title || candidate.keyword}</div>
+        <div className="result-card-title">{candidate.title || candidate.keyword}</div>
         <TextBlock label="Suggested angle" value={`For ${audience || 'Global'}: explain why "${candidate.keyword}" matters today and make the first three seconds concrete.`} />
         {candidate.evidence && <TextBlock label="Evidence" value={candidate.evidence} />}
         <TextBlock label="Score explanation" value={scoreReason} />
@@ -858,7 +915,7 @@ function TrendCandidateCard({ candidate, audience, generated, generationError, g
         {generated && <GeneratedPackageView pkg={generated} />}
       </div>
       <div style={{ textAlign: 'right', minWidth: 88 }}>
-        <div style={{ fontFamily: 'var(--font-mono)', fontSize: 20, fontWeight: 700, color: 'var(--green)' }}>{Math.round(candidate.score)}</div>
+        <div className="score-value">{Math.round(candidate.score)}</div>
         <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text-dim)', textTransform: 'uppercase' }}>score</div>
       </div>
     </article>
@@ -882,11 +939,13 @@ function AnalyzerShell({ title, description, inputLabel, value, onChange, onAnal
         <div className="settings-card-title">{title}</div>
         <div className="muted-note">{description}</div>
       </div>
-      <label className="form-group">
-        <span className="form-label">{inputLabel}</span>
-        <input className="form-input" value={value} onChange={event => onChange(event.target.value)} placeholder="https://www.youtube.com/..." />
-      </label>
-      <button className="generate-btn idle" type="button" onClick={onAnalyze} disabled={!value.trim() || loading}>{loading ? 'Analyzing...' : buttonLabel}</button>
+      <div className="analyzer-form-row">
+        <label className="form-group analyzer-input-group">
+          <span className="form-label">{inputLabel}</span>
+          <input className="form-input" value={value} onChange={event => onChange(event.target.value)} placeholder="https://www.youtube.com/..." />
+        </label>
+        <button className="generate-btn idle analyzer-primary-action" type="button" onClick={onAnalyze} disabled={!value.trim() || loading}>{loading ? 'Analyzing...' : buttonLabel}</button>
+      </div>
       {children}
     </div>
   );
@@ -896,9 +955,9 @@ function DiscoveryState({ loading, error, response, filteredCount }: { loading: 
   if (loading) return <EmptyState icon="ST" title="Loading trend candidates." desc="Checking available trend sources." />;
   if (error) return <EmptyState icon="ER" title="Trend discovery is unavailable." desc={error} />;
   if (response?.provider_status === 'provider_not_configured') return <EmptyState icon="NC" title="No trend source configured." desc={response.message || 'Configure a trend source in Settings to collect trends.'} />;
-  if (response?.provider_status === 'no_data') return <EmptyState icon="ND" title="No real trend data found." desc={response.message || 'The selected trend source returned no candidates for this request.'} />;
+  if (response?.provider_status === 'no_data') return <EmptyState icon="ND" title="No trends found." desc={response.message || 'The selected trend source returned no candidates for this request.'} />;
   if (response?.provider_status === 'provider_error') return <EmptyState icon="PE" title="Trend source unavailable." desc={response.message || 'The selected trend source could not return results.'} />;
-  if (response?.provider_status === 'ok' && filteredCount === 0) return <EmptyState icon="ST" title="No candidates for this source." desc="The selected source has no real provider data connected or returned for this request." />;
+  if (response?.provider_status === 'ok' && filteredCount === 0) return <EmptyState icon="ST" title="No candidates for this source." desc="Try another source, region, language, or audience." />;
   return null;
 }
 
@@ -976,7 +1035,7 @@ function TextInput({ label, value, onChange, placeholder }: { label: string; val
 
 function MetricGrid({ values }: { values: Record<string, unknown> }) {
   const entries = Object.entries(values).filter(([, value]) => value != null && value !== '');
-  if (!entries.length) return <div className="muted-note">No public metadata returned for this field.</div>;
+  if (!entries.length) return <div className="muted-note">No data returned for this field.</div>;
   return (
     <div className="status-list">
       {entries.map(([label, value]) => (
@@ -985,6 +1044,26 @@ function MetricGrid({ values }: { values: Record<string, unknown> }) {
           <strong>{formatMetric(label, value)}</strong>
         </div>
       ))}
+    </div>
+  );
+}
+
+function ReadinessPanel({ rows }: { rows: { label: string; value: unknown; type: 'value' | 'status' }[] }) {
+  return (
+    <div className="readiness-table">
+      {rows.map(row => {
+        const status = row.type === 'status' ? semanticStatus(row.value) : null;
+        return (
+          <div className="readiness-row" key={row.label}>
+            <span>{row.label}</span>
+            {status ? (
+              <strong className={`readiness-badge ${status.className}`}>{status.label}</strong>
+            ) : (
+              <strong>{formatMetric(row.label, row.value)}</strong>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -1010,12 +1089,12 @@ function SectionList({ label, items }: { label: string; items: string[] }) {
 }
 
 function ChipList({ items }: { items: string[] }) {
-  if (!items.length) return <div className="muted-note">No public metadata returned for this field.</div>;
+  if (!items.length) return <div className="muted-note">No data returned for this field.</div>;
   return <div className="platform-toggles">{items.map(item => <span key={item} className="platform-toggle">{item}</span>)}</div>;
 }
 
 function List({ items }: { items: string[] }) {
-  if (!items.length) return <div className="muted-note">No public metadata returned for this field.</div>;
+  if (!items.length) return <div className="muted-note">No data returned for this field.</div>;
   return <div style={{ display: 'grid', gap: 8 }}>{items.map(item => <div key={item} className="small-capability">{item}</div>)}</div>;
 }
 
@@ -1061,17 +1140,43 @@ function sourceFilterOptions(): { label: string; value: string }[] {
   return PLATFORM_FILTERS.map(filter => ({ label: filter.label, value: filter.id }));
 }
 
-function statusSubtitle(response: TrendDiscoveryResponse | null): string {
-  if (!response) return 'No real trend data found';
-  if (response.provider_status === 'provider_not_configured') return 'No trend source configured';
-  if (response.provider_status === 'provider_error') return 'Trend source unavailable';
-  if (response.provider_status === 'no_data') return 'No real trend data found';
-  if ((response.candidates?.length ?? 0) > 0) return 'Live Google Trends RSS data';
-  return 'No real trend data found';
+function statusLabel(status: string): string {
+  return userStatusLabel(status);
 }
 
-function statusLabel(status: string): string {
-  return status.replaceAll('_', ' ');
+function userStatusLabel(status: unknown): string {
+  const normalized = String(status ?? '').trim().toLowerCase();
+  const labels: Record<string, string> = {
+    active: 'Ready',
+    ready: 'Ready',
+    ok: 'Ready',
+    configured: 'Ready',
+    not_configured: 'Setup needed',
+    not_connected: 'Setup needed',
+    provider_not_configured: 'Setup needed',
+    unknown: 'Status unavailable',
+    provider_error: 'Unavailable',
+    unavailable: 'Unavailable',
+    checking: 'Checking',
+  };
+  return labels[normalized] || normalized.replaceAll('_', ' ') || 'Status unavailable';
+}
+
+function semanticStatus(status: unknown): { label: string; className: string } {
+  const normalized = String(status ?? '').trim().toLowerCase();
+  if (['active', 'ready', 'ok', 'configured'].includes(normalized)) {
+    return { label: 'Ready', className: 'is-ready' };
+  }
+  if (['not_configured', 'not_connected', 'provider_not_configured'].includes(normalized)) {
+    return { label: 'Setup needed', className: 'is-setup' };
+  }
+  if (['checking', 'loading', 'pending'].includes(normalized)) {
+    return { label: 'Checking', className: 'is-checking' };
+  }
+  if (['provider_error', 'error', 'unavailable'].includes(normalized)) {
+    return { label: 'Unavailable', className: 'is-unavailable' };
+  }
+  return { label: 'Status unavailable', className: 'is-unavailable' };
 }
 
 function candidateFromVideo(result: YouTubeVideoAnalysisResponse, region: string, language: string): TrendCandidate {
@@ -1167,7 +1272,7 @@ function researchScriptFromNicheOpportunity(opportunity: NicheOpportunity): Rese
       related_videos: opportunity.related_videos,
       risks: opportunity.risks,
       first_10_video_ideas: opportunity.first_10_video_ideas,
-      monetization_note: 'Estimated from public/proxy signals, not exact YouTube RPM.',
+      monetization_note: 'Directional estimate based on trend and ad-market signals.',
     },
     metadata: {
       source_provider: 'niche_opportunity_engine',
@@ -1192,7 +1297,7 @@ function researchScriptFromVideo(result: YouTubeVideoAnalysisResponse, region: s
     title,
     summary: [
       result.message,
-      `Hook type: ${result.hook_intelligence?.hook_type || result.hook_analysis || 'inferred from public title'}.`,
+      `Hook type: ${result.hook_intelligence?.hook_type || result.hook_analysis || 'read from the title pattern'}.`,
       `Target audience: ${result.niche_analysis?.target_audience || result.niche_analysis?.audience_type || 'general viewers'}.`,
       `Performance context: ${formatEvidenceSummary(result.performance_signals ?? {})}.`,
       `Suggested angle: ${suggestedAngle || result.niche_analysis?.inferred_content_angle || result.inferred_content_angle || ''}.`,
@@ -1248,7 +1353,7 @@ function researchScriptFromChannelIdea(result: YouTubeChannelAnalysisResponse, i
       result.message,
       result.likely_strategy,
       result.opportunities?.join(' '),
-      `Niche: ${result.niche_analysis?.primary_niche || result.channel_niche || 'inferred from public metadata'}.`,
+      `Niche: ${result.niche_analysis?.primary_niche || result.channel_niche || 'based on visible channel patterns'}.`,
       `Audience: ${result.niche_analysis?.audience_type || 'general viewers'}.`,
       `Performance distribution: ${formatEvidenceSummary(result.performance_distribution ?? result.view_distribution ?? {})}.`,
     ].filter(Boolean).join(' '),
@@ -1345,7 +1450,7 @@ function formatEvidenceSummary(values: Record<string, unknown>): string {
     .filter(([, value]) => value != null && value !== '')
     .slice(0, 6)
     .map(([label, value]) => `${formatLabel(label)} ${formatMetric(label, value)}`);
-  return parts.length ? parts.join(', ') : 'public performance signals unavailable or hidden';
+  return parts.length ? parts.join(', ') : 'public performance data unavailable or hidden';
 }
 
 function GeneratedPackageView({ pkg }: { pkg: ReelContentPackage }) {

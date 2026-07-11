@@ -46,7 +46,7 @@ function sourceLabel(source?: string): string {
       return 'YouTube Channel Analysis';
     case 'google_trend':
     case 'google_trends_rss':
-      return 'Trend Finder';
+      return 'Trending Keywords';
     case 'niche_idea':
       return 'Niche Idea';
     default:
@@ -215,7 +215,7 @@ function buildEvidenceViewModel(rawGrounding?: string, safetyNotes: string[] = [
 
   if (!parsed && !rawGrounding && limitations.length === 0) return null;
   return {
-    sourceSummary: sourceSummary.length ? sourceSummary : ['Generated from the selected Trend Finder research context.'],
+    sourceSummary: sourceSummary.length ? sourceSummary : ['Generated from the selected research context.'],
     sources: Array.from(new Set(sources)).filter(Boolean),
     performanceSignals,
     relatedVideos: parsed ? collectRelatedVideos(parsed) : [],
@@ -279,12 +279,12 @@ function EvidencePanel({ evidence }: { evidence: EvidenceViewModel | null }) {
 
       {evidence.performanceSignals.length > 0 && (
         <div className="evidence-block">
-          <h3>Performance signals</h3>
-          <div className="signal-pill-grid">
-            {evidence.performanceSignals.map(signal => (
-              <div className="signal-pill" key={signal.label}>
-                <span>{signal.label}</span>
-                <strong>{signal.value}</strong>
+          <h3>Performance indicators</h3>
+          <div className="evidence-pill-grid">
+            {evidence.performanceSignals.map(indicator => (
+              <div className="evidence-pill" key={indicator.label}>
+                <span>{indicator.label}</span>
+                <strong>{indicator.value}</strong>
               </div>
             ))}
           </div>
@@ -369,9 +369,9 @@ export function ScriptStudioPage({ latestScript, onUseInClipGenerator, onGoToTre
         <div className="script-empty-state">
           <div className="empty-icon">SS</div>
           <div className="empty-title">No script selected yet.</div>
-          <div className="empty-desc">Generate a script from Trend Finder to start.</div>
+          <div className="empty-desc">Generate a script from Research Tools to start.</div>
           {onGoToTrendFinder && (
-            <button className="generate-btn idle" type="button" onClick={onGoToTrendFinder}>Go to Trend Finder</button>
+            <button className="generate-btn idle" type="button" onClick={onGoToTrendFinder}>Go to Research Tools</button>
           )}
         </div>
       </section>

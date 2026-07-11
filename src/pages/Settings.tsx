@@ -71,7 +71,31 @@ export function SettingsPage({ settings: initial, onSave }: Props) {
         </div>
 
         <div className="settings-card">
-          <div className="settings-card-title">Trend Data Providers</div>
+          <div className="settings-card-title">Brand</div>
+          <div className="form-group">
+            <label className="form-label" htmlFor="default-top">Default top text</label>
+            <input id="default-top" className="form-input" value={settings.defaultTopText} onChange={event => setField('defaultTopText', event.target.value)} />
+          </div>
+          <div className="form-group">
+            <label className="form-label" htmlFor="default-bottom">Default bottom text</label>
+            <input id="default-bottom" className="form-input" value={settings.defaultBottomText} onChange={event => setField('defaultBottomText', event.target.value)} />
+          </div>
+          <div className="form-group">
+            <label className="form-label" htmlFor="default-watermark">Default watermark / channel name</label>
+            <input id="default-watermark" className="form-input" value={settings.defaultWatermark} onChange={event => setField('defaultWatermark', event.target.value)} />
+          </div>
+          <div className="form-group">
+            <label className="form-label" htmlFor="default-layout">Default layout mode</label>
+            <select id="default-layout" className="form-input" value={settings.defaultLayoutMode} onChange={event => setField('defaultLayoutMode', event.target.value as Settings['defaultLayoutMode'])}>
+              <option value="blurred_background">Blurred background</option>
+              <option value="fill_crop">Fill crop</option>
+              <option value="fit_with_bars">Fit with bars</option>
+            </select>
+          </div>
+        </div>
+
+        <div className="settings-card">
+          <div className="settings-card-title">Data providers</div>
           <div className="status-list">
             <ProviderStatusRow providers={providers} id="google_trends_rss" fallbackLabel="Google Trends RSS" />
             <ProviderStatusRow providers={providers} id="youtube_data_api" fallbackLabel="YouTube Data API" />
@@ -83,7 +107,7 @@ export function SettingsPage({ settings: initial, onSave }: Props) {
         </div>
 
         <div className="settings-card">
-          <div className="settings-card-title">YouTube Analyzer</div>
+          <div className="settings-card-title">YouTube analysis</div>
           <div className="status-list">
             <ProviderStatusRow providers={providers} id="youtube_data_api" fallbackLabel="YouTube analyzer" />
           </div>
@@ -91,7 +115,7 @@ export function SettingsPage({ settings: initial, onSave }: Props) {
         </div>
 
         <div className="settings-card">
-          <div className="settings-card-title">Monetization Data Providers</div>
+          <div className="settings-card-title">Monetisation providers</div>
           <div className="status-list">
             <ProviderStatusRow providers={providers} id="youtube_analytics" fallbackLabel="YouTube Analytics" />
             <ProviderStatusRow providers={providers} id="google_ads_keyword_planner" fallbackLabel="Google Ads Keyword Planner" />
@@ -102,7 +126,7 @@ export function SettingsPage({ settings: initial, onSave }: Props) {
         </div>
 
         <div className="settings-card">
-          <div className="settings-card-title">AI / Script Provider</div>
+          <div className="settings-card-title">Script provider</div>
           <div className="status-list">
             <StatusRow label="OpenAI" value="Ready when the server-side key is configured" />
           </div>
@@ -110,7 +134,7 @@ export function SettingsPage({ settings: initial, onSave }: Props) {
         </div>
 
         <div className="settings-card">
-          <div className="settings-card-title">Social Publishing Providers</div>
+          <div className="settings-card-title">Publishing</div>
           <div className="status-list">
             <StatusRow label="Account connection setup" value="Ready when platform apps are configured" />
             <StatusRow label="Direct publishing" value="Disabled until real platform APIs are wired" />
@@ -141,30 +165,6 @@ export function SettingsPage({ settings: initial, onSave }: Props) {
                 </button>
               );
             })}
-          </div>
-        </div>
-
-        <div className="settings-card">
-          <div className="settings-card-title">Brand Defaults</div>
-          <div className="form-group">
-            <label className="form-label" htmlFor="default-top">Default top text</label>
-            <input id="default-top" className="form-input" value={settings.defaultTopText} onChange={event => setField('defaultTopText', event.target.value)} />
-          </div>
-          <div className="form-group">
-            <label className="form-label" htmlFor="default-bottom">Default bottom text</label>
-            <input id="default-bottom" className="form-input" value={settings.defaultBottomText} onChange={event => setField('defaultBottomText', event.target.value)} />
-          </div>
-          <div className="form-group">
-            <label className="form-label" htmlFor="default-watermark">Default watermark / channel name</label>
-            <input id="default-watermark" className="form-input" value={settings.defaultWatermark} onChange={event => setField('defaultWatermark', event.target.value)} />
-          </div>
-          <div className="form-group">
-            <label className="form-label" htmlFor="default-layout">Default layout mode</label>
-            <select id="default-layout" className="form-input" value={settings.defaultLayoutMode} onChange={event => setField('defaultLayoutMode', event.target.value as Settings['defaultLayoutMode'])}>
-              <option value="blurred_background">Blurred background</option>
-              <option value="fill_crop">Fill crop</option>
-              <option value="fit_with_bars">Fit with bars</option>
-            </select>
           </div>
         </div>
       </div>

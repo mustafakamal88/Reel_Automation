@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react';
+import type { View } from '../types';
 import { getPlatformConnections } from '../lib/api/client';
 import { storage, type StoredScriptPackage, type ActivityState } from '../lib/storage';
 
 interface Props {
   latestScript: StoredScriptPackage | null;
-  onNavigate: (view: 'trendFinder' | 'scriptStudio' | 'clipStudio' | 'connections') => void;
+  onNavigate: (view: View) => void;
 }
 
 function formatActivityTime(value: string | null): string {
@@ -48,8 +49,8 @@ export function DashboardPage({ latestScript, onNavigate }: Props) {
       <div className="page-hero">
         <div>
           <div className="page-eyebrow">Creator research workspace</div>
-          <h1>Find demand, write scripts, generate clips.</h1>
-          <p>TrendCortex is organized around creator research and local clip packaging. Publishing starts from Clip Generator once real accounts are connected.</p>
+          <h1>Find demand, shape scripts, package clips.</h1>
+          <p>A calm workspace for moving from real trend data to usable short-form clip packages. Publishing stays gated until real accounts are connected.</p>
         </div>
       </div>
 
@@ -75,15 +76,15 @@ export function DashboardPage({ latestScript, onNavigate }: Props) {
         </div>
 
         <div className="settings-card">
-          <div className="settings-card-title">Workflow</div>
+          <div className="settings-card-title">Quick actions</div>
           <div className="quick-actions">
-            <button className="generate-btn idle" type="button" onClick={() => onNavigate('trendFinder')}>Open Trend Finder</button>
-            <button className="generate-btn idle" type="button" onClick={() => onNavigate('scriptStudio')}>Open Script Studio</button>
-            <button className="generate-btn idle" type="button" onClick={() => onNavigate('clipStudio')}>Open Clip Generator</button>
-            <button className="generate-btn idle" type="button" onClick={() => onNavigate('connections')}>Open Connections</button>
+            <button className="generate-btn idle" type="button" onClick={() => onNavigate('trendingKeywords')}>Open Research Tools</button>
+            <button className="generate-btn secondary" type="button" onClick={() => onNavigate('scriptStudio')}>Open Script Studio</button>
+            <button className="generate-btn secondary" type="button" onClick={() => onNavigate('clipStudio')}>Open Clip Generator</button>
+            <button className="generate-btn secondary" type="button" onClick={() => onNavigate('connections')}>Open Connections</button>
           </div>
-          <div className="muted-note">
-            No fake publishing or connected-account data is shown. Download ZIPs manually until account publishing is ready.
+          <div className="neutral-callout" style={{ marginTop: 16 }}>
+            Direct publishing appears after real social accounts are connected. Until then, generated packages can be downloaded as ZIP files.
           </div>
         </div>
       </div>

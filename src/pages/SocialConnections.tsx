@@ -14,13 +14,15 @@ const PLATFORM_META: Record<string, { color: string; bg: string; short: string; 
 const FALLBACK_CONNECTIONS: PlatformStatus[] = PUBLISH_PLATFORMS.map(platform => ({
   platform,
   name: PLATFORM_META[platform].label,
-  status: 'not_connected',
+  status: 'credentials_missing',
   scopes: [],
   can_publish: false,
 }));
 
 function neutralStatus(status: PlatformStatus['status']): string {
   if (status === 'connected') return 'Connected';
+  if (status === 'credentials_missing') return 'Setup needed';
+  if (status === 'expired') return 'Reconnect needed';
   return 'Not connected';
 }
 
@@ -70,7 +72,7 @@ function ConnectionCard({ conn }: { conn: PlatformStatus }) {
       </div>
 
       <button className="generate-btn idle" type="button" onClick={handleConnect} disabled={!canAttemptConnect || conn.status === 'credentials_missing' || connecting}>
-        {connecting ? 'Opening OAuth...' : 'Connect'}
+        {connecting ? 'Opening OAuth...' : conn.status === 'credentials_missing' ? 'Setup required' : 'Connect'}
       </button>
 
       {error && <div className="neutral-callout">{error}</div>}

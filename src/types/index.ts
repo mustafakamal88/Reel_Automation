@@ -6,7 +6,12 @@ export type ApprovalStatus = 'pending' | 'approved' | 'rejected';
 
 export type View =
   | 'dashboard'
-  | 'trendFinder'
+  | 'aiTools'
+  | 'trendingKeywords'
+  | 'platformTrends'
+  | 'youtubeVideoAnalyzer'
+  | 'youtubeChannelAnalyzer'
+  | 'nicheFinder'
   | 'scriptStudio'
   | 'clipStudio'
   | 'connections'
@@ -340,7 +345,7 @@ export interface VideoPipeline {
 export interface AppState {
   view: View;
   openTopicId: string | null;
-  signalFilter: Platform | 'all';
+  trendFilter: Platform | 'all';
   approvals: Record<string, ApprovalStatus>;
   generated: boolean;
   settings: Settings;

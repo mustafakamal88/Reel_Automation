@@ -123,7 +123,7 @@ export function TopicDrawer({ topic, onClose, onApprove }: Props) {
           </div>
 
           {/* Sources */}
-          <div className="drawer-section-label">Why selected · data signals</div>
+          <div className="drawer-section-label">Why selected · trend evidence</div>
           <div className="sources-list">
             {topic.sources.map((src, i) => {
               const meta = PLATFORMS[src.platform];

@@ -98,7 +98,12 @@ export const DEFAULT_APPROVALS: Record<string, ApprovalStatus> = {
 
 const VALID_VIEWS: View[] = [
   'dashboard',
-  'trendFinder',
+  'aiTools',
+  'trendingKeywords',
+  'platformTrends',
+  'youtubeVideoAnalyzer',
+  'youtubeChannelAnalyzer',
+  'nicheFinder',
   'scriptStudio',
   'clipStudio',
   'connections',
@@ -106,14 +111,15 @@ const VALID_VIEWS: View[] = [
 ];
 
 const LEGACY_VIEW_MAP: Record<string, View> = {
-  signals: 'trendFinder',
+  signals: 'trendingKeywords',
+  trendFinder: 'trendingKeywords',
   exports: 'clipStudio',
   batch: 'clipStudio',
   topics: 'clipStudio',
   workflow: 'dashboard',
   pipeline: 'clipStudio',
   realPipeline: 'dashboard',
-  scoring: 'trendFinder',
+  scoring: 'trendingKeywords',
   competitors: 'dashboard',
   approvals: 'dashboard',
   performance: 'dashboard',

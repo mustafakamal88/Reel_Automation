@@ -59,18 +59,19 @@ function inputStyle(): React.CSSProperties {
   return {
     width: '100%',
     border: '1px solid var(--border-strong)',
-    background: 'var(--bg-subtle)',
+    background: 'var(--bg-input)',
     color: 'var(--text-primary)',
-    borderRadius: 6,
-    padding: '10px 11px',
-    fontSize: 12,
+    borderRadius: 8,
+    padding: '10px 12px',
+    fontSize: 14,
+    minHeight: 40,
   };
 }
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <label style={{ display: 'flex', flexDirection: 'column', gap: 5, fontSize: 11, color: 'var(--text-muted)' }}>
-      <span>{label}</span>
+    <label className="form-group clip-field">
+      <span className="form-label">{label}</span>
       {children}
     </label>
   );
@@ -265,66 +266,76 @@ export function ClipStudioPage({ onNavigate }: Props) {
 
   return (
     <section className="page-section">
-      <div className="settings-card" style={{ display: 'flex', flexDirection: 'column', gap: 14, maxWidth: 1040 }}>
-        <div>
-          <div style={{ fontSize: 18, fontWeight: 800, color: 'var(--text-primary)' }}>Clip from Video</div>
-          <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>
-            Upload a source video or provide a direct downloadable video URL. Then generate clips, download the ZIP, or open publishing.
+      <div className="clip-workspace">
+        <div className="clip-workspace-main settings-card">
+          <div className="clip-section-header">
+            <div>
+              <div className="settings-card-title">Source import</div>
+              <p>Upload a source video or provide a direct downloadable video URL. Generation stays disabled until a valid source and rights confirmation are present.</p>
+            </div>
+          </div>
+
+          {error && (
+            <div className="clip-error">
+              {error}
+            </div>
+          )}
+
+          <div className="clip-source-grid">
+            <Field label="Direct video URL or reference URL">
+              <input
+                value={sourceUrl}
+                onChange={event => {
+                  setSourceUrl(event.target.value);
+                  setSource(null);
+                  setResult(null);
+                }}
+                placeholder="https://example.com/source.mp4"
+                style={inputStyle()}
+              />
+            </Field>
+            <Field label="Upload video">
+              <input
+                type="file"
+                accept="video/mp4,video/quicktime,video/webm,.mp4,.mov,.webm"
+                onChange={event => void handleUpload(event.target.files?.[0])}
+                style={inputStyle()}
+              />
+            </Field>
+          </div>
+
+          <div className="clip-action-row compact">
+            <button className="generate-btn idle" onClick={handleImportURL} disabled={!sourceUrl.trim() || urlImportBusy} type="button">
+              {urlImportBusy ? 'Checking URL...' : 'Import URL'}
+            </button>
+          </div>
+
+          <div className="clip-status-grid">
+            <StatusPill label="Source ready" active={Boolean(source && sourceCanGenerate(source))} />
+            <StatusPill label="Clips generated" active={Boolean(result?.success)} />
+            <StatusPill label="Package ready" active={packageReady} />
+            <StatusPill label={connectedAccountPlatforms.length > 0 ? 'Social account connected' : 'Social accounts not connected'} active={connectedAccountPlatforms.length > 0} neutral />
+          </div>
+
+          <div className={`clip-readiness-note ${sourceStatus.tone}`}>
+            <div>{sourceStatus.label}</div>
+            <p>{clipStatusMessage}</p>
           </div>
         </div>
 
-        {error && (
-          <div style={{ fontSize: 12, color: 'var(--red)', lineHeight: 1.6, background: 'rgba(232,115,107,0.08)', border: '1px solid rgba(232,115,107,0.25)', borderRadius: 6, padding: '8px 10px' }}>
-            {error}
+        <div className="clip-workspace-main settings-card">
+          <div className="clip-section-header">
+            <div>
+              <div className="settings-card-title">Clip direction</div>
+              <p>Set the creative prompt, clip count, layout, captions, and brand overlays that will be sent to the existing generator.</p>
+            </div>
           </div>
-        )}
-
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 10, alignItems: 'end' }}>
-          <Field label="Direct video URL or reference URL">
-            <input
-              value={sourceUrl}
-              onChange={event => {
-                setSourceUrl(event.target.value);
-                setSource(null);
-                setResult(null);
-              }}
-              placeholder="https://example.com/source.mp4"
-              style={inputStyle()}
-            />
-          </Field>
-          <Field label="Upload video">
-            <input
-              type="file"
-              accept="video/mp4,video/quicktime,video/webm,.mp4,.mov,.webm"
-              onChange={event => void handleUpload(event.target.files?.[0])}
-              style={inputStyle()}
-            />
-          </Field>
-        </div>
-
-        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-          <button className="generate-btn idle" onClick={handleImportURL} disabled={!sourceUrl.trim() || urlImportBusy} type="button">
-            {urlImportBusy ? 'Checking URL...' : 'Import URL'}
-          </button>
-        </div>
-
-        <div className="clip-status-grid">
-          <StatusPill label="Source ready" active={Boolean(source && sourceCanGenerate(source))} />
-          <StatusPill label="Clips generated" active={Boolean(result?.success)} />
-          <StatusPill label="Package ready" active={packageReady} />
-          <StatusPill label={connectedAccountPlatforms.length > 0 ? 'Social account connected' : 'Social accounts not connected'} active={connectedAccountPlatforms.length > 0} neutral />
-        </div>
-
-        <div style={{ fontSize: 12, color: sourceStatus.tone === 'danger' ? 'var(--red)' : sourceStatus.tone === 'ready' ? 'var(--green)' : 'var(--text-muted)', background: sourceStatus.tone === 'danger' ? 'rgba(232,115,107,0.06)' : sourceStatus.tone === 'ready' ? 'rgba(95,211,154,0.08)' : 'var(--bg-subtle)', border: sourceStatus.tone === 'danger' ? '1px solid rgba(232,115,107,0.18)' : sourceStatus.tone === 'ready' ? '1px solid rgba(95,211,154,0.2)' : '1px solid var(--border-card)', borderRadius: 6, padding: '8px 10px' }}>
-          <div style={{ fontWeight: 800, color: 'inherit', marginBottom: 3 }}>{sourceStatus.label}</div>
-          <div>{clipStatusMessage}</div>
-        </div>
 
         <Field label="Prompt / instruction">
           <textarea value={prompt} onChange={event => setPrompt(event.target.value)} rows={4} placeholder="Describe the clips you want." style={{ ...inputStyle(), resize: 'vertical', minHeight: 112, fontSize: 13 }} />
         </Field>
 
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 10 }}>
+        <div className="form-grid four">
           <Field label="Clip length">
             <select value={clipLength} onChange={event => setClipLength(event.target.value as typeof clipLength)} style={inputStyle()}>
               <option value="auto">Auto</option>
@@ -357,7 +368,7 @@ export function ClipStudioPage({ onNavigate }: Props) {
           </Field>
         </div>
 
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 10 }}>
+        <div className="form-grid three">
           <Field label="Top text"><input value={topText} onChange={event => setTopText(event.target.value)} style={inputStyle()} /></Field>
           <Field label="Bottom text"><input value={bottomText} onChange={event => setBottomText(event.target.value)} style={inputStyle()} /></Field>
           <Field label="Watermark / channel name"><input value={watermark} onChange={event => setWatermark(event.target.value)} style={inputStyle()} /></Field>
@@ -367,16 +378,16 @@ export function ClipStudioPage({ onNavigate }: Props) {
           <textarea value={captionText} onChange={event => setCaptionText(event.target.value)} rows={2} placeholder="Leave blank to hide captions." style={{ ...inputStyle(), resize: 'vertical', minHeight: 70, fontSize: 13 }} />
         </Field>
 
-        <label style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 12, color: 'var(--text-secondary)' }}>
+        <label className="rights-check">
           <input type="checkbox" checked={rightsConfirmed} onChange={event => setRightsConfirmed(event.target.checked)} />
           I confirm I have rights or permission to use this source.
         </label>
 
         <details className="advanced-details">
-          <summary style={{ cursor: 'pointer', fontSize: 12, fontWeight: 700, color: 'var(--text-secondary)' }}>
+          <summary>
             Rights & attribution
           </summary>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 10, marginTop: 12 }}>
+          <div className="form-grid three rights-grid">
             <Field label="Source model">
               <select value={sourceModel} onChange={event => setSourceModel(event.target.value as ClipSourceModel)} style={inputStyle()}>
                 {SOURCE_MODELS.map(item => <option key={item.value} value={item.value}>{item.label}</option>)}
@@ -395,10 +406,10 @@ export function ClipStudioPage({ onNavigate }: Props) {
           <button className="generate-btn idle" onClick={handleGenerate} disabled={!canGenerate} title={generateDisabledReason || undefined} type="button">
             {busy ? 'Generating clips...' : 'Generate Clips'}
           </button>
-          <button className="generate-btn idle" onClick={handleDownload} disabled={downloadBusy || !packageReady} type="button" style={{ opacity: packageReady ? 1 : 0.55 }}>
+          <button className="generate-btn secondary" onClick={handleDownload} disabled={downloadBusy || !packageReady} type="button">
             {downloadBusy ? 'Downloading...' : 'Download ZIP'}
           </button>
-          <button className="generate-btn idle" onClick={() => setPublishOpen(true)} disabled={!packageReady} title={packageReady ? undefined : 'Generate clips first.'} type="button" style={{ opacity: packageReady ? 1 : 0.55 }}>
+          <button className="generate-btn secondary" onClick={() => setPublishOpen(true)} disabled={!packageReady} title={packageReady ? undefined : 'Generate clips first.'} type="button">
             Publish
           </button>
         </div>
@@ -409,6 +420,7 @@ export function ClipStudioPage({ onNavigate }: Props) {
             ZIP includes {result?.included_files.length} file(s), including clip folders, thumbnails, attribution, and manifest when generation completes.
           </div>
         )}
+        </div>
       </div>
       {publishOpen && (
         <PublishModal
