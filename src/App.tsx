@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import type { View } from './types';
 import { storage } from './lib/storage';
 import { MobileNavDrawer, Sidebar } from './components/Sidebar';
@@ -63,6 +63,7 @@ function viewFromLocation(): View {
 export default function App() {
   storage.migrate();
 
+  const scrollAreaRef = useRef<HTMLDivElement | null>(null);
   const [view, setView] = useState<View>(() => viewFromLocation());
   const [settings, setSettings] = useState(() => storage.getSettings());
   const [latestScript, setLatestScript] = useState(() => storage.getScriptPackage());
@@ -77,6 +78,10 @@ export default function App() {
     window.addEventListener('popstate', handlePopState);
     return () => window.removeEventListener('popstate', handlePopState);
   }, []);
+
+  useEffect(() => {
+    scrollAreaRef.current?.scrollTo({ top: 0, left: 0, behavior: 'auto' });
+  }, [view]);
 
   const navigate = useCallback((v: View) => {
     setView(v);
@@ -116,7 +121,7 @@ export default function App() {
           onMenuClick={() => setMobileMenuOpen(true)}
         />
 
-        <div className="scroll-area">
+        <div className="scroll-area" ref={scrollAreaRef}>
           <div key={view} className="workspace-route">
             {view === 'dashboard' && <DashboardPage latestScript={latestScript} onNavigate={navigate} />}
             {['trendingKeywords', 'platformTrends', 'youtubeVideoAnalyzer', 'youtubeChannelAnalyzer', 'nicheFinder'].includes(view) && (

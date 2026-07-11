@@ -329,108 +329,111 @@ export function AIToolPage({ tool, initialFilter = 'all', onFilterChange, onScri
   }
 
   const meta = AI_TOOL_PAGE_META[tool];
+  const analyzerTool = tool === 'youtubeVideoAnalyzer' || tool === 'youtubeChannelAnalyzer';
 
   return (
-    <section className="page-section">
-      <div className="page-hero compact">
-        <div>
-          <div className="page-eyebrow">{meta.eyebrow}</div>
-          <h1>{meta.title}</h1>
-          <p>{meta.description}</p>
+    <section className={`page-section${analyzerTool ? ' analyzer-page' : ''}`}>
+      <div className={analyzerTool ? 'analyzer-workspace' : undefined}>
+        <div className="page-hero compact">
+          <div>
+            <div className="page-eyebrow">{meta.eyebrow}</div>
+            <h1>{meta.title}</h1>
+            <p>{meta.description}</p>
+          </div>
         </div>
+
+        {tool === 'trendingKeywords' && (
+          <TrendingKeywordsTab
+            regionChoice={regionChoice}
+            setRegionChoice={setRegionChoice}
+            customRegion={customRegion}
+            setCustomRegion={setCustomRegion}
+            languageChoice={languageChoice}
+            setLanguageChoice={setLanguageChoice}
+            customLanguage={customLanguage}
+            setCustomLanguage={setCustomLanguage}
+            audience={audience}
+            setAudience={setAudience}
+            customAudience={customAudience}
+            setCustomAudience={setCustomAudience}
+            audienceText={audienceText}
+            platformFilter={platformFilter}
+            setPlatformFilter={setFilter}
+            response={response}
+            loading={loading}
+            error={error}
+            filteredCandidates={filteredCandidates}
+            generated={generated}
+            generationErrors={generationErrors}
+            generatingID={generatingID}
+            onGenerate={handleGenerate}
+            onOpenScriptStudio={onOpenScriptStudio}
+            onManageDataSources={onManageDataSources}
+          />
+        )}
+
+        {tool === 'platformTrends' && (
+          <PlatformTrendsTab
+            providers={providers}
+            response={response}
+            loading={loading}
+            error={error}
+            generated={generated}
+            generationErrors={generationErrors}
+            generatingID={generatingID}
+            onGenerate={handleGenerate}
+            onOpenScriptStudio={onOpenScriptStudio}
+            onManageDataSources={onManageDataSources}
+          />
+        )}
+
+        {tool === 'youtubeVideoAnalyzer' && (
+          <YouTubeVideoTab
+            value={videoURL}
+            onChange={setVideoURL}
+            onAnalyze={analyzeVideo}
+            loading={videoLoading}
+            result={videoResult}
+            onGenerate={generateFromVideo}
+            generationKey={videoResult?.status === 'ok' ? candidateFromVideo(videoResult, region || 'US', language || 'en-US').id : null}
+            generated={generated}
+            generationErrors={generationErrors}
+            generatingID={generatingID}
+            onOpenScriptStudio={onOpenScriptStudio}
+          />
+        )}
+
+        {tool === 'youtubeChannelAnalyzer' && (
+          <YouTubeChannelTab
+            value={channelURL}
+            onChange={setChannelURL}
+            onAnalyze={analyzeChannel}
+            loading={channelLoading}
+            result={channelResult}
+            onGenerateIdea={generateFromChannelIdea}
+            generated={generated}
+            generationErrors={generationErrors}
+            generatingID={generatingID}
+            region={region || 'US'}
+            language={language || 'en-US'}
+            onOpenScriptStudio={onOpenScriptStudio}
+          />
+        )}
+
+        {tool === 'nicheFinder' && (
+          <NicheFinderTab
+            providers={providers}
+            region={region || 'US'}
+            language={language || 'en-US'}
+            audience={audienceText || 'Global'}
+            onGenerate={generateFromNicheOpportunity}
+            generated={generated}
+            generationErrors={generationErrors}
+            generatingID={generatingID}
+            onOpenScriptStudio={onOpenScriptStudio}
+          />
+        )}
       </div>
-
-      {tool === 'trendingKeywords' && (
-        <TrendingKeywordsTab
-          regionChoice={regionChoice}
-          setRegionChoice={setRegionChoice}
-          customRegion={customRegion}
-          setCustomRegion={setCustomRegion}
-          languageChoice={languageChoice}
-          setLanguageChoice={setLanguageChoice}
-          customLanguage={customLanguage}
-          setCustomLanguage={setCustomLanguage}
-          audience={audience}
-          setAudience={setAudience}
-          customAudience={customAudience}
-          setCustomAudience={setCustomAudience}
-          audienceText={audienceText}
-          platformFilter={platformFilter}
-          setPlatformFilter={setFilter}
-          response={response}
-          loading={loading}
-          error={error}
-          filteredCandidates={filteredCandidates}
-          generated={generated}
-          generationErrors={generationErrors}
-          generatingID={generatingID}
-          onGenerate={handleGenerate}
-          onOpenScriptStudio={onOpenScriptStudio}
-          onManageDataSources={onManageDataSources}
-        />
-      )}
-
-      {tool === 'platformTrends' && (
-        <PlatformTrendsTab
-          providers={providers}
-          response={response}
-          loading={loading}
-          error={error}
-          generated={generated}
-          generationErrors={generationErrors}
-          generatingID={generatingID}
-          onGenerate={handleGenerate}
-          onOpenScriptStudio={onOpenScriptStudio}
-          onManageDataSources={onManageDataSources}
-        />
-      )}
-
-      {tool === 'youtubeVideoAnalyzer' && (
-        <YouTubeVideoTab
-          value={videoURL}
-          onChange={setVideoURL}
-          onAnalyze={analyzeVideo}
-          loading={videoLoading}
-          result={videoResult}
-          onGenerate={generateFromVideo}
-          generationKey={videoResult?.status === 'ok' ? candidateFromVideo(videoResult, region || 'US', language || 'en-US').id : null}
-          generated={generated}
-          generationErrors={generationErrors}
-          generatingID={generatingID}
-          onOpenScriptStudio={onOpenScriptStudio}
-        />
-      )}
-
-      {tool === 'youtubeChannelAnalyzer' && (
-        <YouTubeChannelTab
-          value={channelURL}
-          onChange={setChannelURL}
-          onAnalyze={analyzeChannel}
-          loading={channelLoading}
-          result={channelResult}
-          onGenerateIdea={generateFromChannelIdea}
-          generated={generated}
-          generationErrors={generationErrors}
-          generatingID={generatingID}
-          region={region || 'US'}
-          language={language || 'en-US'}
-          onOpenScriptStudio={onOpenScriptStudio}
-        />
-      )}
-
-      {tool === 'nicheFinder' && (
-        <NicheFinderTab
-          providers={providers}
-          region={region || 'US'}
-          language={language || 'en-US'}
-          audience={audienceText || 'Global'}
-          onGenerate={generateFromNicheOpportunity}
-          generated={generated}
-          generationErrors={generationErrors}
-          generatingID={generatingID}
-          onOpenScriptStudio={onOpenScriptStudio}
-        />
-      )}
     </section>
   );
 }
