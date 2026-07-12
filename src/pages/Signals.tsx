@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useMemo, useState, type CSSProperties, type KeyboardEvent, type ReactNode } from 'react';
+import { useCallback, useEffect, useId, useMemo, useState, type KeyboardEvent, type ReactNode } from 'react';
 import type { Platform, View } from '../types';
 import {
   ApiError,
@@ -1194,7 +1194,7 @@ function NicheDashboardHeader({ report, candidate, generating, generated, genera
           <span>{evidenceFreshnessLabel(report.evidence_freshness, candidate.market_evidence?.collected_at)}</span>
         </div>
       </div>
-      <ScoreGauge value={candidate.overall_score ?? candidate.scores.overall.score} label="Overall" accent="cyan" />
+      <ProgressCircle value={candidate.overall_score ?? candidate.scores.overall.score} label="Overall" accent="cyan" size="overall" ariaLabel={`Overall score ${Math.round(candidate.overall_score ?? candidate.scores.overall.score)} out of 100`} />
       <div className="niche-header-action">
         <TextBlock label="Recommended first action" value={candidate.recommended_first_action} />
         <div className="niche-card-actions">
@@ -1332,18 +1332,72 @@ function dimensionRows(candidate: NicheCandidate): DimensionRow[] {
   ];
 }
 
-function ScoreGauge({ value, label, accent, max = 100 }: { value: number; label: string; accent: string; max?: number }) {
-  const score = clampScore(value);
-  const degrees = Math.min(360, Math.max(0, (score / max) * 360));
-  return <div className={`niche-gauge accent-${accent}`} style={{ '--score': `${degrees}deg` } as CSSProperties}><strong>{Math.round(score)}</strong><span>{label}</span></div>;
+type GaugeSize = 'overall' | 'metric' | 'runway' | 'alternative';
+
+function ProgressCircle({ value, label, accent, max = 100, size = 'metric', ariaLabel }: { value: number; label?: string; accent: string; max?: number; size?: GaugeSize; ariaLabel: string }) {
+  const numericValue = Number.isFinite(value) ? value : 0;
+  const boundedValue = Math.max(0, Math.min(max, numericValue));
+  const displayValue = Math.round(numericValue);
+  const radius = 42;
+  const circumference = 2 * Math.PI * radius;
+  const progress = max > 0 ? boundedValue / max : 0;
+  const dashOffset = circumference * (1 - progress);
+  return (
+    <div
+      className={`niche-progress-circle niche-progress-circle-${size} accent-${accent}`}
+      role="progressbar"
+      aria-label={ariaLabel}
+      aria-valuenow={Math.round(boundedValue)}
+      aria-valuemin={0}
+      aria-valuemax={max}
+    >
+      <svg viewBox="0 0 100 100" aria-hidden="true" focusable="false">
+        <circle className="niche-progress-circle-track" cx="50" cy="50" r={radius} />
+        <circle
+          className="niche-progress-circle-fill"
+          cx="50"
+          cy="50"
+          r={radius}
+          strokeDasharray={circumference}
+          strokeDashoffset={dashOffset}
+        />
+      </svg>
+      <span className="niche-progress-circle-label">
+        <strong>{displayValue}</strong>
+        {label ? <span>{label}</span> : null}
+      </span>
+    </div>
+  );
+}
+
+function LinearProgress({ value, color, ariaLabel, className = '', displayValue }: { value: number; color?: string; ariaLabel: string; className?: string; displayValue?: string }) {
+  const boundedValue = clampScore(value);
+  const visibleWidth = boundedValue > 0 ? Math.max(boundedValue, 2) : 0;
+  return (
+    <span
+      className={`niche-linear-progress ${className}`.trim()}
+      role="progressbar"
+      aria-label={ariaLabel}
+      aria-valuenow={boundedValue}
+      aria-valuemin={0}
+      aria-valuemax={100}
+    >
+      <span
+        className="niche-linear-progress-fill"
+        style={{ width: `${visibleWidth}%`, background: color || 'var(--accent)' }}
+        aria-hidden="true"
+      />
+      {displayValue ? <span className="sr-only">{displayValue}</span> : null}
+    </span>
+  );
 }
 
 function DimensionCard({ row }: { row: DimensionRow }) {
   const summary = conciseSummary(row.explanation);
   return (
     <div className={`niche-dimension-card accent-${row.accent}`}>
-      <ScoreGauge value={row.score} label="" accent={row.accent} />
-      <div>
+      <ProgressCircle value={row.score} accent={row.accent} size="metric" ariaLabel={`${row.label} score ${Math.round(row.score)} out of 100`} />
+      <div className="niche-dimension-card-copy">
         <strong>{row.label}</strong>
         <span>{formatRatingBand(row.ratingBand ?? ratingBandForScore(row.score))}</span>
         <p>{summary}</p>
@@ -1390,7 +1444,20 @@ function RadarChart({ rows }: { rows: DimensionRow[] }) {
 }
 
 function ContributionChart({ rows }: { rows: DimensionRow[] }) {
-  return <div className="niche-contribution-chart" aria-label="Deterministic weighted score contribution">{rows.map(row => <div key={row.key} className={`contribution-row accent-${row.accent}`}><span>{row.label}</span><div><b style={{ width: `${clampScore(row.score) * row.weight}%` }} /></div><strong>{(row.score * row.weight).toFixed(1)}</strong></div>)}</div>;
+  return (
+    <div className="niche-contribution-chart" aria-label="Deterministic weighted score contribution">
+      {rows.map(row => {
+        const contribution = row.score * row.weight;
+        return (
+          <div key={row.key} className={`contribution-row accent-${row.accent}`}>
+            <span>{row.label}</span>
+            <LinearProgress value={contribution} color="var(--accent)" ariaLabel={`${row.label} contribution ${contribution.toFixed(1)} points`} />
+            <strong>{contribution.toFixed(1)}</strong>
+          </div>
+        );
+      })}
+    </div>
+  );
 }
 
 function PillarChart({ pillars }: { pillars: ContentPillar[] }) {
@@ -1400,7 +1467,7 @@ function PillarChart({ pillars }: { pillars: ContentPillar[] }) {
 
 function RunwayCard({ candidate, pillars }: { candidate: NicheCandidate; pillars: ContentPillar[] }) {
   const topicCount = candidate.runway?.viable_topic_count ?? candidate.sustainability.viable_topic_count;
-  return <div className="runway-card"><ScoreGauge value={topicCount} max={50} label={`${topicCount} ideas`} accent="cyan" /><MetricGrid values={{ Ideas: topicCount, 'Production weeks': candidate.runway?.estimated_weeks, 'Weekly capacity': candidate.runway?.weekly_capacity, Runway: candidate.runway?.estimated_content_runway ?? candidate.sustainability.estimated_content_runway }} />{candidate.runway?.limitation && <div className="muted-note">{candidate.runway.limitation}</div>}<PillarChart pillars={pillars} /></div>;
+  return <div className="runway-card"><ProgressCircle value={topicCount} max={50} label={`${topicCount} ideas`} accent="cyan" size="runway" ariaLabel={`Content runway ${topicCount} ideas out of 50`} /><MetricGrid values={{ Ideas: topicCount, 'Production weeks': candidate.runway?.estimated_weeks, 'Weekly capacity': candidate.runway?.weekly_capacity, Runway: candidate.runway?.estimated_content_runway ?? candidate.sustainability.estimated_content_runway }} />{candidate.runway?.limitation && <div className="muted-note">{candidate.runway.limitation}</div>}<PillarChart pillars={pillars} /></div>;
 }
 
 function DemandEvidence({ candidate }: { candidate: NicheCandidate }) {
@@ -1421,11 +1488,52 @@ function UnavailableChart({ title, desc }: { title: string; desc: string }) {
 
 function AlternativeCandidates({ candidates, unavailableReason, expandedID, onToggle }: { candidates: NicheCandidate[]; unavailableReason?: string; expandedID: string | null; onToggle: (id: string | null) => void }) {
   if (!candidates.length) return <section className="alternative-candidates"><div className="settings-card-title">Alternative candidates</div><UnavailableChart title="Alternatives unavailable" desc={unavailableReason || 'No validated alternative candidates were returned after structured output validation.'} /></section>;
-  return <section className="alternative-candidates"><div className="settings-card-title">Alternative candidates</div>{candidates.map(candidate => <button key={candidate.id} className="alternative-card" type="button" onClick={() => onToggle(expandedID === candidate.id ? null : candidate.id)}><strong>{candidate.name || candidate.niche_name}</strong><ScoreGauge value={candidate.overall_score ?? candidate.scores.overall.score} label="" accent="cyan" /><span>{candidate.target_audience || candidate.target_viewer}</span><small>{candidate.unique_angle || candidate.creator_advantage}</small><DimensionBars rows={dimensionRows(candidate)} /><em>{evidenceModeLabel(candidate.market_evidence?.status)}</em>{expandedID === candidate.id && <p>{candidate.concise_positioning || candidate.unique_angle}</p>}</button>)}</section>;
+  return (
+    <section className="alternative-candidates">
+      <div className="settings-card-title">Alternative candidates</div>
+      {candidates.map(candidate => {
+        const isExpanded = expandedID === candidate.id;
+        const title = candidate.name || candidate.niche_name;
+        const score = candidate.overall_score ?? candidate.scores.overall.score;
+        return (
+          <button
+            key={candidate.id}
+            className="alternative-card"
+            type="button"
+            onClick={() => onToggle(isExpanded ? null : candidate.id)}
+            aria-expanded={isExpanded}
+          >
+            <span className="alternative-card-copy">
+              <strong>{title}</strong>
+              <small>{candidate.unique_angle || candidate.creator_advantage}</small>
+              {isExpanded && <span className="alternative-card-expanded">{candidate.concise_positioning || candidate.unique_angle}</span>}
+            </span>
+            <span className="alternative-card-score">
+              <ProgressCircle value={score} accent="cyan" size="alternative" ariaLabel={`${title} overall score ${Math.round(score)} out of 100`} />
+            </span>
+            <DimensionBars rows={dimensionRows(candidate)} />
+            <span className="alternative-card-meta">
+              <span>{candidate.target_audience || candidate.target_viewer}</span>
+              <em>{evidenceModeLabel(candidate.market_evidence?.status)}</em>
+            </span>
+          </button>
+        );
+      })}
+    </section>
+  );
 }
 
 function DimensionBars({ rows }: { rows: DimensionRow[] }) {
-  return <div className="dimension-bars">{rows.map(row => <span key={row.key} title={`${row.label}: ${Math.round(row.score)}`}><b style={{ width: `${clampScore(row.score)}%` }} /></span>)}</div>;
+  return (
+    <span className="dimension-bars" aria-label="Strategic dimension scores">
+      {rows.map(row => (
+        <span className={`dimension-bar-row accent-${row.accent}`} key={row.key}>
+          <span className="dimension-bar-label">{row.label}</span>
+          <LinearProgress value={row.score} color="var(--accent)" ariaLabel={`${row.label} score ${Math.round(row.score)} out of 100`} />
+        </span>
+      ))}
+    </span>
+  );
 }
 
 function evidenceModeLabel(mode?: string): string {
