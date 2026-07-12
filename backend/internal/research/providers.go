@@ -27,6 +27,49 @@ const (
 
 var ErrNotConfigured = errors.New("research provider is not configured")
 
+const (
+	ProviderErrorQuota       = "quota"
+	ProviderErrorCredentials = "credentials"
+	ProviderErrorTemporary   = "temporary"
+	ProviderErrorTimeout     = "timeout"
+	ProviderErrorMalformed   = "malformed_response"
+	ProviderErrorHTTP        = "http_error"
+)
+
+type ProviderError struct {
+	Code       string
+	HTTPStatus int
+	Reason     string
+	Message    string
+	Err        error
+}
+
+func (e *ProviderError) Error() string {
+	if e == nil {
+		return ""
+	}
+	parts := []string{e.Code}
+	if e.HTTPStatus > 0 {
+		parts = append(parts, "http_"+strconv.Itoa(e.HTTPStatus))
+	}
+	if e.Reason != "" {
+		parts = append(parts, e.Reason)
+	}
+	if e.Err != nil {
+		parts = append(parts, e.Err.Error())
+	} else if e.Message != "" {
+		parts = append(parts, e.Message)
+	}
+	return strings.Join(parts, ": ")
+}
+
+func (e *ProviderError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.Err
+}
+
 type TrendProvider interface {
 	Status() ProviderStatus
 }
@@ -194,9 +237,12 @@ type ChannelAnalysisResult struct {
 type ChannelVideoSummary struct {
 	VideoID      string  `json:"video_id"`
 	Title        string  `json:"title"`
+	Description  string  `json:"description,omitempty"`
 	ChannelID    string  `json:"channel_id,omitempty"`
 	ChannelTitle string  `json:"channel_title,omitempty"`
 	PublishedAt  string  `json:"published_at"`
+	Duration     string  `json:"duration,omitempty"`
+	ThumbnailURL string  `json:"thumbnail_url,omitempty"`
 	Views        *uint64 `json:"views,omitempty"`
 	Likes        *uint64 `json:"likes,omitempty"`
 	Comments     *uint64 `json:"comments,omitempty"`
@@ -667,6 +713,17 @@ type youtubeVideoItem struct {
 		ChannelTitle string   `json:"channelTitle"`
 		Tags         []string `json:"tags"`
 		CategoryID   string   `json:"categoryId"`
+		Thumbnails   struct {
+			Default struct {
+				URL string `json:"url"`
+			} `json:"default"`
+			Medium struct {
+				URL string `json:"url"`
+			} `json:"medium"`
+			High struct {
+				URL string `json:"url"`
+			} `json:"high"`
+		} `json:"thumbnails"`
 	} `json:"snippet"`
 	Statistics struct {
 		ViewCount    string `json:"viewCount"`
@@ -731,17 +788,76 @@ func (p *YouTubeProvider) getJSON(ctx context.Context, endpoint string, target a
 	req.Header.Set("User-Agent", "TrendCortex/creator-research")
 	res, err := p.client.Do(req)
 	if err != nil {
-		return err
+		if errors.Is(err, context.DeadlineExceeded) || ctx.Err() == context.DeadlineExceeded {
+			return &ProviderError{Code: ProviderErrorTimeout, Err: err}
+		}
+		return &ProviderError{Code: ProviderErrorTemporary, Err: err}
 	}
 	defer res.Body.Close()
 	body, err := io.ReadAll(io.LimitReader(res.Body, 4<<20))
 	if err != nil {
-		return err
+		return &ProviderError{Code: ProviderErrorTemporary, HTTPStatus: res.StatusCode, Err: err}
 	}
 	if res.StatusCode < 200 || res.StatusCode >= 300 {
-		return fmt.Errorf("HTTP %d: %s", res.StatusCode, strings.TrimSpace(string(body)))
+		return classifyProviderHTTPError(res.StatusCode, body)
 	}
-	return json.Unmarshal(body, target)
+	if err := json.Unmarshal(body, target); err != nil {
+		return &ProviderError{Code: ProviderErrorMalformed, HTTPStatus: res.StatusCode, Err: err}
+	}
+	return nil
+}
+
+func classifyProviderHTTPError(status int, body []byte) error {
+	reason, message := extractProviderErrorReason(body)
+	code := ProviderErrorHTTP
+	switch {
+	case reason == "quotaExceeded" || reason == "dailyLimitExceeded" || reason == "rateLimitExceeded":
+		code = ProviderErrorQuota
+	case reason == "keyInvalid" || reason == "badRequest" || reason == "authError" || reason == "forbidden" || reason == "accessNotConfigured" || reason == "ipRefererBlocked" || reason == "apiKeyServiceBlocked" || reason == "API_KEY_INVALID":
+		code = ProviderErrorCredentials
+	case status == http.StatusTooManyRequests:
+		code = ProviderErrorQuota
+	case status == http.StatusUnauthorized || status == http.StatusForbidden:
+		code = ProviderErrorCredentials
+	case status >= 500:
+		code = ProviderErrorTemporary
+	}
+	if message == "" {
+		message = http.StatusText(status)
+	}
+	return &ProviderError{Code: code, HTTPStatus: status, Reason: reason, Message: message}
+}
+
+func extractProviderErrorReason(body []byte) (string, string) {
+	var decoded struct {
+		Error struct {
+			Code    int    `json:"code"`
+			Message string `json:"message"`
+			Status  string `json:"status"`
+			Errors  []struct {
+				Reason  string `json:"reason"`
+				Message string `json:"message"`
+			} `json:"errors"`
+			Details []struct {
+				Reason string `json:"reason"`
+			} `json:"details"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(body, &decoded); err != nil {
+		return "", ""
+	}
+	if len(decoded.Error.Errors) > 0 {
+		reason := strings.TrimSpace(decoded.Error.Errors[0].Reason)
+		message := strings.TrimSpace(decoded.Error.Errors[0].Message)
+		if message == "" {
+			message = strings.TrimSpace(decoded.Error.Message)
+		}
+		return reason, message
+	}
+	if len(decoded.Error.Details) > 0 {
+		return strings.TrimSpace(decoded.Error.Details[0].Reason), strings.TrimSpace(decoded.Error.Message)
+	}
+	return strings.TrimSpace(decoded.Error.Status), strings.TrimSpace(decoded.Error.Message)
 }
 
 func (p *YouTubeProvider) resolveChannelID(ctx context.Context, raw string) (string, error) {
@@ -833,7 +949,7 @@ func (p *YouTubeProvider) fetchChannelVideos(ctx context.Context, channelID, ord
 	if len(ids) == 0 {
 		return []ChannelVideoSummary{}, nil
 	}
-	videosURL := youtubeAPIURL("videos", map[string]string{"part": "snippet,statistics", "id": strings.Join(ids, ","), "key": p.apiKey})
+	videosURL := youtubeAPIURL("videos", map[string]string{"part": "snippet,statistics,contentDetails", "id": strings.Join(ids, ","), "key": p.apiKey})
 	var videos youtubeVideosResponse
 	if err := p.getJSON(ctx, videosURL, &videos); err != nil {
 		return nil, err
@@ -851,9 +967,12 @@ func (p *YouTubeProvider) fetchChannelVideos(ctx context.Context, channelID, ord
 		out = append(out, ChannelVideoSummary{
 			VideoID:      video.ID,
 			Title:        title,
+			Description:  video.Snippet.Description,
 			ChannelID:    video.Snippet.ChannelID,
 			ChannelTitle: firstNonEmpty(video.Snippet.ChannelTitle, channelTitles[video.ID]),
 			PublishedAt:  published[video.ID],
+			Duration:     video.ContentDetails.Duration,
+			ThumbnailURL: bestThumbnail(video),
 			Views:        parseUintPtr(video.Statistics.ViewCount),
 			Likes:        parseUintPtr(video.Statistics.LikeCount),
 			Comments:     parseUintPtr(video.Statistics.CommentCount),
@@ -910,7 +1029,7 @@ func (p *YouTubeProvider) SearchVideos(ctx context.Context, query, region, langu
 	if len(ids) == 0 {
 		return []ChannelVideoSummary{}, nil
 	}
-	videosURL := youtubeAPIURL("videos", map[string]string{"part": "snippet,statistics", "id": strings.Join(ids, ","), "key": p.apiKey})
+	videosURL := youtubeAPIURL("videos", map[string]string{"part": "snippet,statistics,contentDetails", "id": strings.Join(ids, ","), "key": p.apiKey})
 	var videos youtubeVideosResponse
 	if err := p.getJSON(ctx, videosURL, &videos); err != nil {
 		return nil, err
@@ -924,15 +1043,28 @@ func (p *YouTubeProvider) SearchVideos(ctx context.Context, query, region, langu
 		out = append(out, ChannelVideoSummary{
 			VideoID:      video.ID,
 			Title:        title,
+			Description:  video.Snippet.Description,
 			ChannelID:    firstNonEmpty(video.Snippet.ChannelID, channelIDs[video.ID]),
 			ChannelTitle: firstNonEmpty(video.Snippet.ChannelTitle, channelTitles[video.ID]),
 			PublishedAt:  firstNonEmpty(video.Snippet.PublishedAt, published[video.ID]),
+			Duration:     video.ContentDetails.Duration,
+			ThumbnailURL: bestThumbnail(video),
 			Views:        parseUintPtr(video.Statistics.ViewCount),
 			Likes:        parseUintPtr(video.Statistics.LikeCount),
 			Comments:     parseUintPtr(video.Statistics.CommentCount),
 		})
 	}
 	return out, nil
+}
+
+func bestThumbnail(video youtubeVideoItem) string {
+	if video.Snippet.Thumbnails.High.URL != "" {
+		return video.Snippet.Thumbnails.High.URL
+	}
+	if video.Snippet.Thumbnails.Medium.URL != "" {
+		return video.Snippet.Thumbnails.Medium.URL
+	}
+	return video.Snippet.Thumbnails.Default.URL
 }
 
 func mergeChannelVideos(groups ...[]ChannelVideoSummary) []ChannelVideoSummary {

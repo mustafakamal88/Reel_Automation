@@ -2,15 +2,17 @@ import { useCallback, useEffect, useId, useMemo, useState, type KeyboardEvent, t
 import type { Platform, View } from '../types';
 import {
   ApiError,
-  analyzeNicheOpportunities,
+  analyseNicheGaps,
   analyzeYouTubeChannel,
   analyzeYouTubeVideo,
   generateResearchScript,
   getTrendFilters,
   getResearchProviderStatus,
+  researchNiches,
   searchTrendIntelligence,
-  type NicheOpportunity,
-  type NicheOpportunityResponse,
+  type CreatorNicheProfile,
+  type NicheCandidate,
+  type NicheReport,
   type ReelContentPackage,
   type ResearchScriptGenerationRequest,
   type ResearchScriptSourceType,
@@ -309,10 +311,10 @@ export function AIToolPage({ tool, initialFilter = 'all', onFilterChange, onScri
     handleGenerateResearch(candidate.id, candidate, researchScriptFromChannelIdea(channelResult, idea, region || 'US', language || 'en-US'));
   }
 
-  function generateFromNicheOpportunity(opportunity: NicheOpportunity) {
-    const key = nicheOpportunityKey(opportunity);
-    const candidate = candidateFromNicheOpportunity(opportunity);
-    handleGenerateResearch(key, candidate, researchScriptFromNicheOpportunity(opportunity));
+  function generateFromNicheCandidate(candidate: NicheCandidate) {
+    const key = nicheCandidateKey(candidate);
+    const trendCandidate = trendCandidateFromNicheCandidate(candidate, region || 'GB', language || 'en');
+    handleGenerateResearch(key, trendCandidate, researchScriptFromNicheCandidate(candidate, region || 'GB', language || 'en'));
   }
 
   const meta = AI_TOOL_PAGE_META[tool];
@@ -408,7 +410,7 @@ export function AIToolPage({ tool, initialFilter = 'all', onFilterChange, onScri
             region={region || 'US'}
             language={language || 'en-US'}
             audience={audienceText || 'Global'}
-            onGenerate={generateFromNicheOpportunity}
+            onGenerate={generateFromNicheCandidate}
             generated={generated}
             generationErrors={generationErrors}
             generatingID={generatingID}
@@ -932,194 +934,453 @@ function YouTubeChannelTab({ value, onChange, onAnalyze, loading, result, onGene
   );
 }
 
+const NICHE_PROFILE_PREFS_KEY = 'trendcortex_niche_creator_profile';
+
+function defaultNicheProfile(region: string, language: string, audience: string): CreatorNicheProfile {
+  return {
+    professional_skills: '',
+    hobbies: '',
+    lived_experiences: '',
+    teaching_subjects: '',
+    three_years_ago_advice: '',
+    target_audience: audience === 'Global' ? '' : audience,
+    target_country: region || 'GB',
+    target_language: (language || 'en').split('-')[0],
+    creator_presence: 'faceless channel',
+    content_formats: ['long-form'],
+    primary_monetization_goal: 'AdSense',
+    optional_broad_topic: '',
+    weekly_production_capacity: '2 videos per week',
+  };
+}
+
+function getSavedNicheProfile(region: string, language: string, audience: string): CreatorNicheProfile {
+  const fallback = defaultNicheProfile(region, language, audience);
+  try {
+    const raw = localStorage.getItem(NICHE_PROFILE_PREFS_KEY);
+    if (!raw) return fallback;
+    const saved = JSON.parse(raw) as Partial<CreatorNicheProfile>;
+    return { ...fallback, ...saved, content_formats: saved.content_formats?.length ? saved.content_formats : fallback.content_formats };
+  } catch {
+    return fallback;
+  }
+}
+
+function saveNicheProfile(profile: CreatorNicheProfile) {
+  try {
+    localStorage.setItem(NICHE_PROFILE_PREFS_KEY, JSON.stringify(profile));
+  } catch {
+    // Local storage can be unavailable in private browsing; the workflow still works.
+  }
+}
+
 function NicheFinderTab({ providers, region, language, audience, onGenerate, generated, generationErrors, generatingID, onOpenScriptStudio }: {
   providers: ResearchProviderStatus[];
   region: string;
   language: string;
   audience: string;
-  onGenerate: (opportunity: NicheOpportunity) => void;
+  onGenerate: (candidate: NicheCandidate) => void;
   generated: Record<string, ReelContentPackage>;
   generationErrors: Record<string, string>;
   generatingID: string | null;
   onOpenScriptStudio?: () => void;
 }) {
-  const [seedKeyword, setSeedKeyword] = useState('');
-  const [platform, setPlatform] = useState('youtube');
-  const [localAudience, setLocalAudience] = useState(audience);
-  const [contentStyle, setContentStyle] = useState('short-form explainers');
-  const [monetizationGoal, setMonetizationGoal] = useState('ads, affiliates, and products');
-  const [creatorSkillLevel, setCreatorSkillLevel] = useState('intermediate');
-  const [difficulty, setDifficulty] = useState('medium');
+  const [profile, setProfile] = useState<CreatorNicheProfile>(() => getSavedNicheProfile(region, language, audience));
   const [loading, setLoading] = useState(false);
-  const [result, setResult] = useState<NicheOpportunityResponse | null>(null);
+  const [report, setReport] = useState<NicheReport | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [expandedID, setExpandedID] = useState<string | null>(null);
+  const [showTopicsID, setShowTopicsID] = useState<string | null>(null);
+  const [gapLoading, setGapLoading] = useState(false);
   const providerMap = new Map(providers.map(provider => [provider.id, provider]));
+  const meaningfulFields = [
+    profile.professional_skills,
+    profile.hobbies,
+    profile.lived_experiences,
+    profile.teaching_subjects,
+    profile.three_years_ago_advice,
+    profile.target_audience,
+    profile.optional_broad_topic,
+  ].filter(value => value.trim()).length;
+  const ready = meaningfulFields >= 3 && !loading;
+
+  useEffect(() => {
+    saveNicheProfile(profile);
+  }, [profile]);
+
+  function setProfileField(field: keyof CreatorNicheProfile, value: string) {
+    setProfile(current => ({ ...current, [field]: value }));
+  }
+
+  function setFormat(value: string) {
+    setProfile(current => ({ ...current, content_formats: [value] }));
+  }
 
   function runAnalysis() {
-    if (!seedKeyword.trim()) return;
+    if (!ready) return;
     setLoading(true);
     setError(null);
-    setResult(null);
-    analyzeNicheOpportunities({
-      seed_keyword: seedKeyword.trim(),
-      platform,
-      country: region,
-      language,
-      audience: localAudience || audience,
-      content_style: contentStyle,
-      monetization_goal: monetizationGoal,
-      creator_skill_level: creatorSkillLevel,
-      production_difficulty_preference: difficulty,
+    setReport(null);
+    researchNiches({
+      profile: {
+        ...profile,
+        target_country: profile.target_country || region,
+        target_language: profile.target_language || language,
+      },
     })
-      .then(setResult)
+      .then(data => {
+        setReport(data);
+        setExpandedID(data.candidates?.[0]?.id ?? null);
+      })
       .catch(err => setError(err instanceof ApiError ? err.message : 'Niche opportunity analysis failed.'))
       .finally(() => setLoading(false));
+  }
+
+  function runGapAnalysis() {
+    if (!report?.id) return;
+    setGapLoading(true);
+    analyseNicheGaps(report.id)
+      .then(data => {
+        setReport(data);
+        setExpandedID(current => current ?? data.candidates?.[0]?.id ?? null);
+      })
+      .catch(err => setError(err instanceof ApiError ? err.message : 'Content gap analysis failed.'))
+      .finally(() => setGapLoading(false));
   }
 
   return (
     <div className="niche-workflow">
       <div className="settings-card niche-form-card">
         <div>
-          <div className="settings-card-title">Niche Finder workflow</div>
-          <div className="muted-note">Define the creator context, then choose the content and monetization strategy for the analysis.</div>
+          <div className="settings-card-title">Creator profile</div>
+          <div className="muted-note">Find niches where your credibility, audience demand, content runway, and commercial potential overlap.</div>
         </div>
-          <div className="niche-form-sections">
-            <div className="niche-form-section">
-              <div className="niche-section-heading">Topic</div>
+        <div className="niche-form-sections">
+          <div className="niche-form-section">
+            <div className="niche-section-heading">Credibility</div>
             <div className="form-grid two">
-              <TextInput label="Seed keyword/topic" value={seedKeyword} onChange={setSeedKeyword} placeholder="creator tools, UK visa, trading, football transfers" />
-              <Select label="Platform" value={platform} onChange={setPlatform} options={[{ label: 'YouTube', value: 'youtube' }, { label: 'Short-form video', value: 'short_form' }]} />
-              <TextInput label="Audience/culture" value={localAudience} onChange={setLocalAudience} placeholder="UK Pakistani, South Asian students, US creators" />
+              <TextInput label="Professional skills" value={profile.professional_skills} onChange={value => setProfileField('professional_skills', value)} placeholder="software development, accounting, design" />
+              <TextInput label="Hobbies" value={profile.hobbies} onChange={value => setProfileField('hobbies', value)} placeholder="fitness, football, cooking, travel" />
+              <TextInput label="Lived experiences" value={profile.lived_experiences} onChange={value => setProfileField('lived_experiences', value)} placeholder="UK visa process, building a business, career switch" />
+              <TextInput label="Subjects you can teach" value={profile.teaching_subjects} onChange={value => setProfileField('teaching_subjects', value)} placeholder="AI workflows, student finance, interview prep" />
+              <TextInput label="What you wish you knew three years ago" value={profile.three_years_ago_advice} onChange={value => setProfileField('three_years_ago_advice', value)} placeholder="what would have saved you time, money, or mistakes?" />
             </div>
           </div>
           <div className="niche-form-section">
-            <div className="niche-section-heading">Content strategy</div>
+            <div className="niche-section-heading">Audience and format</div>
             <div className="form-grid two">
-              <Select label="Content style" value={contentStyle} onChange={setContentStyle} options={[
-                { label: 'Short-form explainers', value: 'short-form explainers' },
-                { label: 'Tutorials', value: 'tutorials' },
-                { label: 'Reviews', value: 'reviews' },
-                { label: 'News breakdowns', value: 'news breakdowns' },
-                { label: 'Case studies', value: 'case studies' },
+              <TextInput label="Target audience" value={profile.target_audience} onChange={value => setProfileField('target_audience', value)} placeholder="UK small businesses, international students" />
+              <Select label="Target country" value={profile.target_country} onChange={value => setProfileField('target_country', value)} options={[
+                { label: 'United Kingdom', value: 'GB' },
+                { label: 'United States', value: 'US' },
+                { label: 'Pakistan', value: 'PK' },
+                { label: 'India', value: 'IN' },
               ]} />
-              <Select label="Monetization goal" value={monetizationGoal} onChange={setMonetizationGoal} options={[
-                { label: 'Ads, affiliates, products', value: 'ads, affiliates, and products' },
-                { label: 'Affiliate revenue', value: 'affiliate reviews and buying intent' },
-                { label: 'Course/education sales', value: 'education, courses, and community' },
-                { label: 'Brand deals', value: 'brand deals and sponsorships' },
+              <Select label="Target language" value={profile.target_language} onChange={value => setProfileField('target_language', value)} options={[
+                { label: 'English', value: 'en' },
+                { label: 'Urdu', value: 'ur' },
+                { label: 'Hindi', value: 'hi' },
+                { label: 'Arabic', value: 'ar' },
               ]} />
-              <Select label="Creator skill level" value={creatorSkillLevel} onChange={setCreatorSkillLevel} options={[
-                { label: 'Beginner', value: 'beginner' },
-                { label: 'Intermediate', value: 'intermediate' },
-                { label: 'Advanced/expert', value: 'advanced expert' },
+              <Select label="Creator presence" value={profile.creator_presence} onChange={value => setProfileField('creator_presence', value)} options={[
+                { label: 'Faceless channel', value: 'faceless channel' },
+                { label: 'Personal brand', value: 'personal brand' },
               ]} />
-              <Select label="Production difficulty" value={difficulty} onChange={setDifficulty} options={[
-                { label: 'Low/simple', value: 'low simple' },
-                { label: 'Medium', value: 'medium' },
-                { label: 'High/polished', value: 'high polished' },
+              <Select label="Content format" value={profile.content_formats[0] ?? 'long-form'} onChange={setFormat} options={[
+                { label: 'Long-form', value: 'long-form' },
+                { label: 'Shorts', value: 'shorts' },
+                { label: 'Both', value: 'both' },
               ]} />
+              <TextInput label="Weekly production capacity" value={profile.weekly_production_capacity} onChange={value => setProfileField('weekly_production_capacity', value)} placeholder="2 videos per week" />
+            </div>
+          </div>
+          <div className="niche-form-section">
+            <div className="niche-section-heading">Commercial goal</div>
+            <div className="form-grid two">
+              <Select label="Primary monetization goal" value={profile.primary_monetization_goal} onChange={value => setProfileField('primary_monetization_goal', value)} options={[
+                { label: 'AdSense', value: 'AdSense' },
+                { label: 'Affiliate marketing', value: 'affiliate marketing' },
+                { label: 'Sponsorships', value: 'sponsorships' },
+                { label: 'Digital products', value: 'digital products' },
+                { label: 'Services', value: 'services' },
+                { label: 'Leads', value: 'leads' },
+              ]} />
+              <TextInput label="Optional broad topic" value={profile.optional_broad_topic} onChange={value => setProfileField('optional_broad_topic', value)} placeholder="AI automation, UK visa, personal finance" />
             </div>
           </div>
           <div className="niche-form-section niche-readiness-section">
-            <div className="niche-section-heading">Signal readiness</div>
+            <div className="niche-section-heading">Validation readiness</div>
             <ReadinessPanel rows={[
-              { label: 'Country', value: region, type: 'value' },
-              { label: 'Language', value: language, type: 'value' },
+              { label: 'Profile inputs', value: `${meaningfulFields}/3 minimum`, type: 'value' },
               { label: 'Video validation', value: providerMap.get('youtube_data_api')?.status || 'unknown', type: 'status' },
-              { label: 'Current trend discovery', value: providerMap.get('google_trends_rss')?.status || 'unknown', type: 'status' },
+              { label: 'Current trends', value: providerMap.get('google_trends_rss')?.status || 'unknown', type: 'status' },
+              { label: 'Monetization calibration', value: 'not connected', type: 'status' },
             ]} />
           </div>
         </div>
         <div className="niche-action-footer">
           <div className="niche-action-copy">
-            {!seedKeyword.trim() ? 'Enter a seed topic to analyze this opportunity.' : 'Ready to analyze this creator opportunity.'}
+            {ready ? 'Ready to validate niche candidates with public demand evidence.' : 'Add at least three creator-profile inputs to create meaningful niche candidates.'}
           </div>
-          <button className="generate-btn idle niche-primary-action" type="button" onClick={runAnalysis} disabled={!seedKeyword.trim() || loading}>
-            {loading ? 'Analyzing...' : 'Analyze niche opportunity'}
+          <button className="generate-btn idle niche-primary-action" type="button" onClick={runAnalysis} disabled={!ready}>
+            {loading ? 'Researching...' : 'Research Niches'}
           </button>
         </div>
       </div>
 
       <div className="neutral-callout">
-        Revenue potential is directional and based on public content signals plus category heuristics.
+        Public niche research shows commercial potential only unless valid RPM calibration exists. Search-ad bid data is never presented as YouTube earnings.
       </div>
 
+      {loading && <EmptyState tone="loading" title="Researching niche evidence." desc="Checking public market signals for this creator profile." />}
       {error && <EmptyState tone="error" title="Niche analysis failed." desc={error} />}
-      {result && result.status !== 'ok' && <HonestResultState result={result} />}
-      {result?.status === 'ok' && (
-        <div style={{ display: 'grid', gap: 10 }}>
-          {(result.opportunities ?? []).map(opportunity => {
-            const key = nicheOpportunityKey(opportunity);
+      {report && report.status !== 'ok' && <NicheResearchState report={report} />}
+      {report?.status === 'ok' && (
+        <div className="niche-results">
+          <div className="niche-report-summary">
+            <div>
+              <div className="settings-card-title">Ranked niche candidates</div>
+              <div className="muted-note">{report.message} Evidence: {report.cache?.freshness === 'stale' ? 'cached/stale' : report.cache?.hit ? 'cached' : 'fresh'}.</div>
+            </div>
+            <button className="generate-btn secondary" type="button" onClick={runGapAnalysis} disabled={gapLoading}>
+              {gapLoading ? 'Analysing...' : 'Analyse Content Gaps'}
+            </button>
+          </div>
+          {report.cache?.freshness === 'stale' && (
+            <div className="neutral-callout niche-stale-notice">
+              Showing the most recent verified evidence from {formatCacheTime(report.cache.evidence_fetched_at || report.cache.stored_at)}. Fresh validation is temporarily unavailable.
+            </div>
+          )}
+          {report.candidates.map(candidate => {
+            const key = nicheCandidateKey(candidate);
             return (
-              <NicheOpportunityCard
-                key={key}
-                opportunity={opportunity}
+              <NicheCandidateCard
+                key={candidate.id}
+                candidate={candidate}
+                expanded={expandedID === candidate.id}
+                showTopics={showTopicsID === candidate.id}
                 generated={generated[key]}
                 generationError={generationErrors[key]}
                 generating={generatingID === key}
-                onGenerate={() => onGenerate(opportunity)}
+                onToggle={() => setExpandedID(current => current === candidate.id ? null : candidate.id)}
+                onToggleTopics={() => setShowTopicsID(current => current === candidate.id ? null : candidate.id)}
+                onBuildStrategy={() => onGenerate(candidate)}
                 onOpenScriptStudio={onOpenScriptStudio}
               />
             );
           })}
-          <Limitations items={result.limitations ?? []} />
+          <Limitations items={report.limitations ?? []} />
         </div>
       )}
     </div>
   );
 }
 
-function NicheOpportunityCard({ opportunity, generated, generationError, generating, onGenerate, onOpenScriptStudio }: {
-  opportunity: NicheOpportunity;
+function NicheCandidateCard({ candidate, expanded, showTopics, generated, generationError, generating, onToggle, onToggleTopics, onBuildStrategy, onOpenScriptStudio }: {
+  candidate: NicheCandidate;
+  expanded: boolean;
+  showTopics: boolean;
   generated?: ReelContentPackage;
   generationError?: string;
   generating: boolean;
-  onGenerate: () => void;
+  onToggle: () => void;
+  onToggleTopics: () => void;
+  onBuildStrategy: () => void;
   onOpenScriptStudio?: () => void;
 }) {
+  const monetization = candidate.monetization;
   return (
-    <article className="result-card niche-opportunity-card">
-      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'flex-start', flexWrap: 'wrap' }}>
-        <div style={{ minWidth: 0 }}>
-          <div className="result-card-title">{opportunity.niche_name}</div>
-          <div style={{ marginTop: 4, fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-dim)', textTransform: 'uppercase' }}>
-            {opportunity.platform} · {opportunity.country} · {opportunity.language} · {opportunity.estimated_monetization_level} monetization estimate
-          </div>
+    <article className={`niche-candidate-card${expanded ? ' expanded' : ''}`}>
+      <button className="niche-card-trigger" type="button" onClick={onToggle} aria-expanded={expanded}>
+        <div className="niche-card-main">
+          <div className="niche-path">{candidate.level_1} <span>→</span> {candidate.level_2} <span>→</span> {candidate.level_3}</div>
+          <div className="niche-card-title">{candidate.niche_name}</div>
+          <div className="niche-card-subtitle">{candidate.target_viewer} · {candidate.recommended_content_format}</div>
         </div>
-        <div style={{ textAlign: 'right', minWidth: 96 }}>
-            <div className="score-value">{Math.round(opportunity.opportunity_score)}</div>
-          <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text-dim)', textTransform: 'uppercase' }}>opportunity</div>
+        <div className="niche-score-lockup">
+          <div className="score-value">{Math.round(candidate.scores.overall.score)}</div>
+          <div className="niche-score-label">score</div>
         </div>
+      </button>
+      <div className="niche-card-metrics">
+        <MetricPill label="Demand" value={Math.round(candidate.scores.demand.score)} />
+        <MetricPill label="Competition" value={candidate.validation.competition_level} />
+        <MetricPill label="Monetization" value={monetization.commercial_potential} />
+        <MetricPill label="Sustainability" value={Math.round(candidate.sustainability.score)} />
+        <MetricPill label="Confidence" value={candidate.scores.confidence.label} />
       </div>
-      <MetricGrid values={{
-        'Success probability': opportunity.success_probability,
-        'Demand score': Math.round(opportunity.demand_score),
-        'Monetization score': Math.round(opportunity.monetization_score),
-        'Competition level': opportunity.competition_level,
-        Confidence: `${Math.round((opportunity.confidence || 0) * 100)}%`,
-      }} />
-      <TextBlock label="Why this niche" value={opportunity.success_reason} />
-      <TextBlock label="Demand" value={opportunity.demand_reason} />
-      <TextBlock label="Monetization" value={`${opportunity.monetization_reason} Confidence: ${opportunity.monetization_confidence || 'low'}.`} />
-      <TextBlock label="Competition" value={opportunity.competition_reason} />
-      <LabelledChips label="Evidence" items={opportunity.evidence_sources ?? []} />
-      <LabelledChips label="Supporting keywords" items={opportunity.supporting_keywords ?? []} />
-      <LabelledChips label="Related channels" items={opportunity.related_channels ?? []} />
-      <SectionList label="First 10 video ideas" items={opportunity.first_10_video_ideas ?? []} />
-      <SectionList label="Suggested titles" items={opportunity.suggested_titles ?? []} />
-      <SectionList label="Suggested clip angles" items={opportunity.suggested_clip_angles ?? []} />
-      <SectionList label="Risks" items={opportunity.risks ?? []} />
-      <ScriptAction
-        label="Generate Script"
-        generating={generating}
-        generated={Boolean(generated)}
-        error={generationError}
-        onGenerate={onGenerate}
-        onOpenScriptStudio={onOpenScriptStudio}
-      />
-      {generated && <GeneratedPackageView pkg={generated} />}
-      <Limitations items={opportunity.limitations ?? []} />
+      {expanded && (
+        <div className="niche-card-body">
+          <div className="niche-detail-grid">
+            <NichePanel title="Audience fit">
+              <TextBlock label="Target viewer" value={candidate.target_viewer} />
+              <TextBlock label="Viewer problem" value={candidate.viewer_problem} />
+              <TextBlock label="Creator advantage" value={candidate.creator_advantage} />
+              <LabelledChips label="Monetization routes" items={candidate.monetization_routes ?? []} />
+            </NichePanel>
+            <NichePanel title="Market evidence">
+              <MetricGrid values={{
+                'Videos sampled': candidate.validation.sampled_video_count,
+                'Recent volume': candidate.validation.recent_publication_volume,
+                'Median views': formatCount(candidate.validation.median_sampled_views),
+                Engagement: `${candidate.validation.engagement_rate}%`,
+                'Newest activity': candidate.validation.newest_activity || 'Unavailable',
+              }} />
+              <TextBlock label="Evidence summary" value={candidate.validation.market_evidence_summary} />
+              <LabelledChips label="Search phrases" items={candidate.validation.search_phrases ?? []} />
+            </NichePanel>
+          </div>
+          <MonetizationPanel estimate={monetization} />
+          <div className="niche-detail-grid">
+            <NichePanel title="Outlier examples">
+              {candidate.outliers?.length ? (
+                <div className="niche-outlier-list">
+                  {candidate.outliers.map(outlier => (
+                    <a className="niche-outlier" href={outlier.canonical_url} target="_blank" rel="noreferrer" key={outlier.canonical_url}>
+                      {outlier.thumbnail_url && <img src={outlier.thumbnail_url} alt="" />}
+                      <span>
+                        <strong>{outlier.title}</strong>
+                        <small>{outlier.channel_name} · {formatCount(outlier.public_views)} views · strength {Math.round(outlier.outlier_strength)}</small>
+                        <em>{outlier.outlier_reason}</em>
+                      </span>
+                    </a>
+                  ))}
+                </div>
+              ) : (
+                <div className="muted-note">No safe small or mid-sized channel outliers found in the controlled sample.</div>
+              )}
+            </NichePanel>
+            <NichePanel title="Supply gaps">
+              <SectionList label="Supported gaps" items={(candidate.supply_gaps ?? []).map(gap => `${gap.statement} (${gap.confidence})`)} />
+            </NichePanel>
+          </div>
+          <NichePanel title="50-video sustainability test">
+            <div className="muted-note">Topic ideas are labelled separately from measured demand evidence. Generated titles are not treated as verified demand unless evidence-backed.</div>
+            <MetricGrid values={{
+              'Viable topics': candidate.sustainability.viable_topic_count,
+              Pillars: candidate.sustainability.content_pillar_count,
+              'Repetition risk': candidate.sustainability.topic_repetition_risk,
+              Runway: candidate.sustainability.estimated_content_runway,
+            }} />
+            {candidate.sustainability.warning && <div className="neutral-callout warning">{candidate.sustainability.warning}</div>}
+            <LabelledChips label="Content pillars" items={(candidate.topic_pillars ?? []).map(pillar => `${pillar.name} (${pillar.topic_count})`)} />
+            <SectionList label="First 10 recommended titles" items={candidate.first_10_titles ?? []} />
+            {showTopics && <SectionList label="Full topic list" items={(candidate.video_topics ?? []).map(topic => `${topic.title} · ${topic.pillar} · ${topic.evidence_status || 'unvalidated idea'}`)} />}
+          </NichePanel>
+          <NichePanel title="Score explanations">
+            <TextBlock label="Overall" value={`${candidate.scores.overall.explanation} Score: ${Math.round(candidate.scores.overall.score)}.`} />
+            <TextBlock label="Personal fit" value={candidate.scores.personal_fit.explanation} />
+            <TextBlock label="Demand" value={candidate.scores.demand.explanation} />
+            <TextBlock label="Opportunity gap" value={candidate.scores.opportunity_gap.explanation} />
+            <TextBlock label="Monetization" value={candidate.scores.monetization.explanation} />
+            <TextBlock label="Sustainability" value={candidate.scores.sustainability.explanation} />
+          </NichePanel>
+          <SectionList label="Risks" items={candidate.risks ?? []} />
+          <TextBlock label="Recommended first action" value={candidate.recommended_first_action} />
+          <div className="niche-card-actions">
+            <ScriptAction
+              label="Build Channel Strategy"
+              generating={generating}
+              generated={Boolean(generated)}
+              error={generationError}
+              onGenerate={onBuildStrategy}
+              onOpenScriptStudio={onOpenScriptStudio}
+            />
+            <button className="generate-btn secondary" type="button" onClick={onToggleTopics}>View 50 Video Ideas</button>
+            <button className="generate-btn secondary" type="button">Inspect Outliers</button>
+            <button className="generate-btn secondary" type="button" disabled>Save Niche</button>
+          </div>
+          {generated && <GeneratedPackageView pkg={generated} />}
+        </div>
+      )}
     </article>
+  );
+}
+
+function NicheResearchState({ report }: { report: NicheReport }) {
+  const state = nicheStateCopy(report.status, report.message);
+  if (report.status === 'credentials_invalid' && !import.meta.env.DEV) {
+    return <EmptyState tone="unavailable" title="Research temporarily unavailable." desc="Niche evidence is temporarily unavailable. Try again later." />;
+  }
+  return <EmptyState tone={state.tone} title={state.title} desc={state.desc} />;
+}
+
+function nicheStateCopy(status: string, message: string): { tone: StateTone; title: string; desc: string } {
+  switch (status) {
+    case 'no_matching_content':
+      return { tone: 'empty', title: 'No reliable evidence matched this profile.', desc: message || 'No reliable market evidence matched this profile.' };
+    case 'insufficient_evidence':
+      return { tone: 'empty', title: 'More evidence required.', desc: message || 'More public evidence is required before ranking this niche.' };
+    case 'quota_temporarily_unavailable':
+      return { tone: 'unavailable', title: 'Research limits reached temporarily.', desc: message || 'Research limits have been reached temporarily.' };
+    case 'provider_temporarily_unavailable':
+    case 'validation_timeout':
+    case 'research_failed':
+      return { tone: 'unavailable', title: 'Research temporarily unavailable.', desc: message || 'Niche evidence is temporarily unavailable. Try again later.' };
+    case 'credentials_invalid':
+      return { tone: 'warning', title: 'Invalid local research configuration.', desc: 'Developer mode: local research configuration is invalid.' };
+    case 'not_configured':
+      return { tone: 'warning', title: 'Research setup needed.', desc: message || 'Local research configuration is incomplete.' };
+    default:
+      return { tone: 'empty', title: 'Niche research unavailable.', desc: message || 'Niche evidence is temporarily unavailable. Try again later.' };
+  }
+}
+
+function formatCacheTime(value?: string): string {
+  if (!value) return 'the last successful run';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return 'the last successful run';
+  return date.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+}
+
+function MetricPill({ label, value }: { label: string; value: string | number }) {
+  return (
+    <div className="niche-metric-pill">
+      <span>{label}</span>
+      <strong>{value}</strong>
+    </div>
+  );
+}
+
+function NichePanel({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <section className="niche-detail-panel">
+      <div className="niche-detail-title">{title}</div>
+      {children}
+    </section>
+  );
+}
+
+function MonetizationPanel({ estimate }: { estimate: NicheCandidate['monetization'] }) {
+  if (estimate.rpm_estimate_available && estimate.rpm_low != null && estimate.rpm_high != null) {
+    return (
+      <NichePanel title="Estimated monetization">
+        <div className="niche-rpm-range">Estimated RPM {estimate.currency} {estimate.rpm_low.toFixed(2)}-{estimate.rpm_high.toFixed(2)}</div>
+        <MetricGrid values={{
+          Format: estimate.format,
+          Market: estimate.target_market,
+          Confidence: estimate.confidence,
+          Calibration: estimate.calibration_type,
+          'Last calibrated': estimate.calibration_age || 'Unavailable',
+        }} />
+        <SectionList label="Estimated creator earnings" items={(estimate.estimated_earnings ?? []).map(item => `${formatCount(item.views)} views: ${estimate.currency} ${item.low.toFixed(2)}-${item.high.toFixed(2)}`)} />
+        <TextBlock label="Assumptions" value={(estimate.calculation_assumptions ?? []).join(' ')} />
+        <TextBlock label="Disclaimer" value={estimate.estimate_disclaimer} />
+      </NichePanel>
+    );
+  }
+  return (
+    <NichePanel title="Commercial potential">
+      <div className="niche-commercial-potential">{estimate.commercial_potential}</div>
+      <TextBlock label="Currency estimate" value={estimate.unavailable_reason || 'Currency estimate unavailable until sufficient monetization evidence is connected.'} />
+      <MetricGrid values={{
+        Format: estimate.format,
+        Market: estimate.target_market,
+        Confidence: estimate.confidence,
+      }} />
+      <LabelledChips label="Advertiser-demand signals" items={estimate.advertiser_demand_signals ?? []} />
+      <TextBlock label="Disclaimer" value={estimate.estimate_disclaimer} />
+    </NichePanel>
   );
 }
 
@@ -1617,77 +1878,82 @@ function candidateFromChannel(result: YouTubeChannelAnalysisResponse, idea: stri
   };
 }
 
-function nicheOpportunityKey(opportunity: NicheOpportunity): string {
-  return `niche-${stableKey(`${opportunity.niche_name}-${opportunity.country}-${opportunity.language}`)}`;
+function nicheCandidateKey(candidate: NicheCandidate): string {
+  return `niche-${stableKey(`${candidate.niche_name}-${candidate.validation.competition_level}-${candidate.monetization.format}`)}`;
 }
 
-function candidateFromNicheOpportunity(opportunity: NicheOpportunity): TrendCandidate {
+function trendCandidateFromNicheCandidate(candidate: NicheCandidate, region: string, language: string): TrendCandidate {
   return {
-    id: nicheOpportunityKey(opportunity),
+    id: nicheCandidateKey(candidate),
     source: 'niche_idea',
-    region: opportunity.country || 'US',
-    language: opportunity.language || 'en-US',
-    keyword: opportunity.niche_name,
-    title: opportunity.niche_name,
-    score: opportunity.opportunity_score,
+    region,
+    language,
+    keyword: candidate.core_phrase,
+    title: candidate.niche_name,
+    score: candidate.scores.overall.score,
     discovered_at: new Date().toISOString(),
-    evidence: opportunity.success_reason || opportunity.demand_reason,
+    evidence: candidate.validation.market_evidence_summary,
     status: 'discovered',
   };
 }
 
-function researchScriptFromNicheOpportunity(opportunity: NicheOpportunity): ResearchScriptGenerationRequest {
+function researchScriptFromNicheCandidate(candidate: NicheCandidate, region: string, language: string): ResearchScriptGenerationRequest {
   return {
     source_type: 'niche_idea',
-    source_id: nicheOpportunityKey(opportunity),
-    topic: opportunity.niche_name,
-    title: opportunity.suggested_titles?.[0] || opportunity.niche_name,
+    source_id: nicheCandidateKey(candidate),
+    topic: candidate.niche_name,
+    title: candidate.first_10_titles?.[0] || candidate.niche_name,
     summary: [
-      `Opportunity score: ${Math.round(opportunity.opportunity_score)}.`,
-      `Success probability: ${opportunity.success_probability}.`,
-      opportunity.success_reason,
-      opportunity.demand_reason,
-      opportunity.monetization_reason,
-      opportunity.competition_reason,
-      (opportunity.first_10_video_ideas ?? []).slice(0, 5).join(' '),
+      `Niche score: ${Math.round(candidate.scores.overall.score)}.`,
+      `Three-level path: ${candidate.level_1} > ${candidate.level_2} > ${candidate.level_3}.`,
+      candidate.viewer_problem,
+      candidate.creator_advantage,
+      candidate.validation.market_evidence_summary,
+      `Commercial potential: ${candidate.monetization.commercial_potential}.`,
+      `Sustainability: ${candidate.sustainability.viable_topic_count} viable topics across ${candidate.sustainability.content_pillar_count} pillars.`,
+      (candidate.first_10_titles ?? []).slice(0, 5).join(' '),
     ].filter(Boolean).join(' '),
     keywords: [
-      opportunity.niche_name,
-      ...(opportunity.supporting_keywords ?? []),
-      ...(opportunity.suggested_keywords ?? []),
+      candidate.niche_name,
+      candidate.core_phrase,
+      ...(candidate.validation.search_phrases ?? []),
     ],
-    inferred_niche: opportunity.niche_name,
-    inferred_angle: opportunity.suggested_clip_angles?.[0] || opportunity.success_reason,
+    inferred_niche: candidate.niche_name,
+    inferred_angle: candidate.recommended_first_action,
     performance_signals: {
-      demand_score: opportunity.demand_score,
-      monetization_score: opportunity.monetization_score,
-      competition_score: opportunity.competition_score,
-      success_probability_score: opportunity.success_probability_score,
-      opportunity_score: opportunity.opportunity_score,
-      competition_level: opportunity.competition_level,
-      estimated_monetization_level: opportunity.estimated_monetization_level,
+      demand_score: candidate.scores.demand.score,
+      monetization_score: candidate.scores.monetization.score,
+      opportunity_gap_score: candidate.scores.opportunity_gap.score,
+      sustainability_score: candidate.scores.sustainability.score,
+      opportunity_score: candidate.scores.overall.score,
+      competition_level: candidate.validation.competition_level,
+      monetization_available: candidate.monetization.rpm_estimate_available,
     },
-    suggested_angle: opportunity.suggested_clip_angles?.[0],
+    suggested_angle: candidate.recommended_first_action,
     target_platforms: ['instagram', 'tiktok', 'youtube', 'facebook', 'x'],
-    content_style: opportunity.content_style || 'Short-form creator script',
-    duration_seconds: 30,
+    content_style: candidate.recommended_content_format,
+    duration_seconds: 60,
     evidence: {
-      evidence_sources: opportunity.evidence_sources,
-      related_channels: opportunity.related_channels,
-      related_videos: opportunity.related_videos,
-      risks: opportunity.risks,
-      first_10_video_ideas: opportunity.first_10_video_ideas,
-      monetization_note: 'Directional estimate based on trend and ad-market research data.',
+      path: [candidate.level_1, candidate.level_2, candidate.level_3],
+      validation: candidate.validation,
+      outliers: candidate.outliers,
+      supply_gaps: candidate.supply_gaps,
+      risks: candidate.risks,
+      first_10_video_ideas: candidate.first_10_titles,
+      monetization_note: candidate.monetization.rpm_estimate_available ? 'Estimated RPM uses a valid calibration source.' : 'Currency estimate unavailable; commercial potential only.',
     },
     metadata: {
-      source_provider: 'niche_opportunity_engine',
-      score: opportunity.opportunity_score,
-      confidence: opportunity.confidence,
-      platform: opportunity.platform,
+      source_provider: 'niche_research_engine',
+      score: candidate.scores.overall.score,
+      confidence: candidate.scores.confidence.score / 100,
+      platform: 'youtube',
     },
-    limitations: opportunity.limitations,
-    language: opportunity.language || 'en-US',
-    region: opportunity.country || 'US',
+    limitations: [
+      'Public niche research does not include private analytics, exact revenue, guaranteed earnings, retention, or traffic sources.',
+      candidate.monetization.estimate_disclaimer,
+    ],
+    language,
+    region,
   };
 }
 
@@ -1816,6 +2082,11 @@ function formatCompactNumber(value?: number): string {
   if (abs >= 1_000_000_000) return format(1_000_000_000, 'B');
   if (abs >= 1_000_000) return format(1_000_000, 'M');
   if (abs >= 1_000) return format(1_000, 'K');
+  return Math.round(value).toLocaleString();
+}
+
+function formatCount(value?: number): string {
+  if (value == null || !Number.isFinite(value)) return 'Unavailable';
   return Math.round(value).toLocaleString();
 }
 

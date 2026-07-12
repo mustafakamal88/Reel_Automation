@@ -356,6 +356,165 @@ export interface NicheOpportunityResponse {
   limitations?: string[];
 }
 
+export interface CreatorNicheProfile {
+  professional_skills: string;
+  hobbies: string;
+  lived_experiences: string;
+  teaching_subjects: string;
+  three_years_ago_advice: string;
+  target_audience: string;
+  target_country: string;
+  target_language: string;
+  creator_presence: string;
+  content_formats: string[];
+  primary_monetization_goal: string;
+  optional_broad_topic: string;
+  weekly_production_capacity: string;
+}
+
+export interface NicheResearchRequest {
+  profile: CreatorNicheProfile;
+  refresh?: boolean;
+}
+
+export interface NicheReport {
+  id: string;
+  status: 'ok' | 'not_configured' | 'invalid_input' | 'insufficient_evidence' | 'no_matching_content' | 'quota_temporarily_unavailable' | 'credentials_invalid' | 'provider_temporarily_unavailable' | 'validation_timeout' | 'research_failed' | string;
+  message: string;
+  profile: CreatorNicheProfile;
+  candidates: NicheCandidate[];
+  cache: { hit: boolean; cache_hit?: boolean; key?: string; stored_at?: string; ttl: string; evidence_fetched_at?: string; evidence_age?: string; freshness?: string };
+  limitations?: string[];
+  created_at: string;
+}
+
+export interface NicheCandidate {
+  id: string;
+  level_1: string;
+  level_2: string;
+  level_3: string;
+  niche_name: string;
+  core_phrase: string;
+  target_viewer: string;
+  viewer_problem: string;
+  creator_advantage: string;
+  recommended_content_format: string;
+  monetization_routes?: string[];
+  validation: NicheValidation;
+  outliers?: OutlierEvidence[];
+  supply_gaps?: SupplyGap[];
+  monetization: MonetizationEstimate;
+  video_topics?: VideoTopic[];
+  topic_pillars?: ContentPillar[];
+  first_10_titles?: string[];
+  sustainability: SustainabilityEvidence;
+  scores: NicheScores;
+  risks?: string[];
+  recommended_first_action: string;
+}
+
+export interface NicheValidation {
+  search_phrases?: string[];
+  recent_publication_volume: number;
+  sampled_video_count: number;
+  total_sampled_views: number;
+  median_sampled_views: number;
+  engagement_rate: number;
+  newest_activity?: string;
+  rising_topic_overlap: boolean;
+  market_evidence_summary: string;
+  competition_level: string;
+  validation_budget_used: number;
+  evidence_confidence: string;
+}
+
+export interface OutlierEvidence {
+  title: string;
+  thumbnail_url?: string;
+  canonical_url: string;
+  channel_name: string;
+  publication_age: string;
+  public_views: number;
+  outlier_reason: string;
+  outlier_strength: number;
+}
+
+export interface SupplyGap {
+  statement: string;
+  evidence?: string[];
+  confidence: string;
+}
+
+export interface MonetizationEstimate {
+  mode: string;
+  commercial_potential: string;
+  score: number;
+  rpm_estimate_available: boolean;
+  currency?: string;
+  rpm_low?: number;
+  rpm_midpoint?: number;
+  rpm_high?: number;
+  estimated_earnings?: EarningsProjection[];
+  confidence: string;
+  calibration_type: string;
+  calibration_age?: string;
+  calculation_assumptions?: string[];
+  unavailable_reason?: string;
+  format: string;
+  target_market: string;
+  advertiser_demand_signals?: string[];
+  estimate_disclaimer: string;
+}
+
+export interface EarningsProjection {
+  views: number;
+  low: number;
+  midpoint: number;
+  high: number;
+  formula: string;
+}
+
+export interface VideoTopic {
+  title: string;
+  pillar: string;
+  intent: string;
+  difficulty: string;
+  source: string;
+  evidence_status?: 'evidence-backed' | 'related opportunity' | 'unvalidated idea' | string;
+}
+
+export interface ContentPillar {
+  name: string;
+  topic_count: number;
+}
+
+export interface SustainabilityEvidence {
+  viable_topic_count: number;
+  content_pillar_count: number;
+  topic_repetition_risk: string;
+  estimated_content_runway: string;
+  score: number;
+  warning?: string;
+  deduped_removed: number;
+}
+
+export interface NicheScores {
+  personal_fit: ScoreExplanation;
+  demand: ScoreExplanation;
+  opportunity_gap: ScoreExplanation;
+  monetization: ScoreExplanation;
+  sustainability: ScoreExplanation;
+  overall: ScoreExplanation;
+  confidence: ScoreExplanation;
+}
+
+export interface ScoreExplanation {
+  score: number;
+  label: string;
+  explanation: string;
+  factors?: string[];
+}
+
 export interface TopicScore {
   id: string;
   workspace_id: string;
@@ -692,6 +851,20 @@ export async function analyzeNicheOpportunities(body: NicheOpportunityRequest): 
   return apiFetch('/api/research/niche/opportunities', {
     method: 'POST',
     body: JSON.stringify(body),
+  });
+}
+
+export async function researchNiches(body: NicheResearchRequest): Promise<NicheReport> {
+  return apiFetch('/api/niches/research', {
+    method: 'POST',
+    body: JSON.stringify(body),
+  });
+}
+
+export async function analyseNicheGaps(id: string): Promise<NicheReport> {
+  return apiFetch(`/api/niches/${encodeURIComponent(id)}/analyse-gaps`, {
+    method: 'POST',
+    body: JSON.stringify({}),
   });
 }
 

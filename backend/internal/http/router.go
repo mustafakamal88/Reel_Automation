@@ -29,11 +29,13 @@ type Server struct {
 	dailyRenderJobs map[string]dailyPackageRenderJob
 	aiSceneMu       sync.Mutex
 	aiSceneJobs     map[string]*aiSceneGenerationJob
+	nicheMu         sync.Mutex
+	nicheReports    map[string]nicheReportCacheItem
 }
 
 // NewServer constructs the Server with all dependencies.
 func NewServer(cfg *config.Config, db *database.DB, reg oauth.Registry, al *audit.Logger) *Server {
-	return &Server{cfg: cfg, db: db, registry: reg, audit: al, dailyRenderJobs: map[string]dailyPackageRenderJob{}, aiSceneJobs: map[string]*aiSceneGenerationJob{}}
+	return &Server{cfg: cfg, db: db, registry: reg, audit: al, dailyRenderJobs: map[string]dailyPackageRenderJob{}, aiSceneJobs: map[string]*aiSceneGenerationJob{}, nicheReports: map[string]nicheReportCacheItem{}}
 }
 
 // Routes returns the root http.Handler with all routes registered.
@@ -91,6 +93,10 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /api/research/youtube/video", s.handleAnalyzeYouTubeVideo)
 	mux.HandleFunc("POST /api/research/youtube/channel", s.handleAnalyzeYouTubeChannel)
 	mux.HandleFunc("POST /api/research/niche/opportunities", s.handleAnalyzeNicheOpportunities)
+	mux.HandleFunc("POST /api/niches/research", s.handleCreateNicheResearch)
+	mux.HandleFunc("GET /api/niches/research/{id}", s.handleGetNicheResearch)
+	mux.HandleFunc("POST /api/niches/{id}/analyse-gaps", s.handleAnalyseNicheGaps)
+	mux.HandleFunc("GET /api/niches/filters", s.handleNicheFilters)
 	mux.HandleFunc("POST /api/research/script", s.handleGenerateResearchScript)
 
 	mux.HandleFunc("POST /api/topics/score", s.handleScoreTopics)
