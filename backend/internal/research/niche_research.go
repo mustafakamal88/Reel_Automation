@@ -258,7 +258,7 @@ type NicheScores struct {
 	PersonalFit    ScoreExplanation `json:"personal_fit"`
 	Demand         ScoreExplanation `json:"demand"`
 	OpportunityGap ScoreExplanation `json:"opportunity_gap"`
-	Monetization   ScoreExplanation `json:"monetization"`
+	Monetization   ScoreExplanation `json:"-"`
 	Sustainability ScoreExplanation `json:"sustainability"`
 	Overall        ScoreExplanation `json:"overall"`
 	Confidence     ScoreExplanation `json:"confidence"`
@@ -267,6 +267,7 @@ type NicheScores struct {
 type ScoreExplanation struct {
 	Score       float64  `json:"score"`
 	Label       string   `json:"label"`
+	RatingBand  string   `json:"rating_band,omitempty"`
 	Explanation string   `json:"explanation"`
 	Factors     []string `json:"factors,omitempty"`
 }
@@ -357,6 +358,10 @@ type NicheStrategist interface {
 	GenerateCandidates(ctx context.Context, input NicheStrategyInput) (NicheStrategyResult, error)
 }
 
+type NicheStrategyRepairer interface {
+	RepairCandidates(ctx context.Context, input NicheStrategyInput, previous NicheStrategyResult, issues []string) (NicheStrategyResult, error)
+}
+
 type NicheStrategyInput struct {
 	Profile          CreatorNicheProfile      `json:"profile"`
 	RisingSignals    []string                 `json:"rising_signals"`
@@ -390,6 +395,7 @@ type NicheDraft struct {
 	CreatorAdvantages      []string                     `json:"creator_advantages"`
 	UniqueAngle            string                       `json:"unique_angle"`
 	DimensionScores        NicheDraftDimensionScores    `json:"dimension_scores"`
+	DimensionRatings       NicheDraftDimensionRatings   `json:"dimension_ratings"`
 	DimensionReasoning     NicheDraftDimensionReasoning `json:"dimension_reasoning"`
 	ContentPillars         []ContentPillar              `json:"content_pillars"`
 	TopicClusters          []TopicCluster               `json:"topic_clusters"`
@@ -408,6 +414,14 @@ type NicheDraftDimensionScores struct {
 	CompetitionOpportunity float64 `json:"competition_opportunity"`
 	Sustainability         float64 `json:"sustainability"`
 	Differentiation        float64 `json:"differentiation"`
+}
+
+type NicheDraftDimensionRatings struct {
+	CreatorFit             string `json:"creator_fit"`
+	AudienceDemand         string `json:"audience_demand"`
+	CompetitionOpportunity string `json:"competition_opportunity"`
+	Sustainability         string `json:"sustainability"`
+	Differentiation        string `json:"differentiation"`
 }
 
 type NicheDraftDimensionReasoning struct {
@@ -457,6 +471,7 @@ func (heuristicNicheStrategist) GenerateCandidates(ctx context.Context, input Ni
 			CreatorAdvantages:      []string{bp.Advantage},
 			UniqueAngle:            bp.Advantage,
 			DimensionScores:        NicheDraftDimensionScores{CreatorFit: 72, AudienceDemand: 68, CompetitionOpportunity: 64, Sustainability: 76, Differentiation: 66},
+			DimensionRatings:       NicheDraftDimensionRatings{CreatorFit: "high", AudienceDemand: "high", CompetitionOpportunity: "high", Sustainability: "high", Differentiation: "high"},
 			DimensionReasoning:     NicheDraftDimensionReasoning{CreatorFit: "Matches supplied profile inputs.", AudienceDemand: "Demand requires public validation.", CompetitionOpportunity: "Opportunity depends on specific positioning.", Sustainability: "Has enough distinct pillars for a pilot runway.", Differentiation: "Uses creator-specific lived experience and format fit."},
 			ContentPillars:         pillars,
 			RecommendedTitles:      titles,
@@ -478,6 +493,32 @@ func (heuristicNicheStrategist) GenerateCandidates(ctx context.Context, input Ni
 }
 
 func (s OpenAINicheStrategist) GenerateCandidates(ctx context.Context, input NicheStrategyInput) (NicheStrategyResult, error) {
+	return s.openAIRequest(ctx, []map[string]string{
+		{"role": "system", "content": nicheStrategySystemPrompt()},
+		{"role": "user", "content": mustJSON(input)},
+	})
+}
+
+func (s OpenAINicheStrategist) RepairCandidates(ctx context.Context, input NicheStrategyInput, previous NicheStrategyResult, issues []string) (NicheStrategyResult, error) {
+	repairPayload := map[string]any{
+		"input":             input,
+		"previous_output":   previous,
+		"validation_issues": topN(issues, 20),
+		"instructions": []string{
+			"Repair only the structured strategy output.",
+			"Do not request or invent new YouTube evidence.",
+			"Return one primary candidate and at least two alternatives.",
+			"Use integer 0-100 dimension scores that agree with dimension_ratings.",
+			"Return exactly 50 primary recommended_titles when possible.",
+		},
+	}
+	return s.openAIRequest(ctx, []map[string]string{
+		{"role": "system", "content": nicheStrategySystemPrompt()},
+		{"role": "user", "content": mustJSON(repairPayload)},
+	})
+}
+
+func (s OpenAINicheStrategist) openAIRequest(ctx context.Context, messages []map[string]string) (NicheStrategyResult, error) {
 	if strings.TrimSpace(s.APIKey) == "" {
 		return NicheStrategyResult{}, ErrNotConfigured
 	}
@@ -486,11 +527,8 @@ func (s OpenAINicheStrategist) GenerateCandidates(ctx context.Context, input Nic
 		model = "gpt-4o-mini"
 	}
 	payload := map[string]any{
-		"model": model,
-		"messages": []map[string]string{
-			{"role": "system", "content": nicheStrategySystemPrompt()},
-			{"role": "user", "content": mustJSON(input)},
-		},
+		"model":           model,
+		"messages":        messages,
 		"temperature":     0.35,
 		"response_format": nicheStrategyResponseFormat(),
 	}
@@ -544,9 +582,16 @@ func nicheStrategySystemPrompt() string {
 	return strings.Join([]string{
 		"You are TrendCortex's niche intelligence strategist.",
 		"Use only the supplied creator profile and trend/evidence context.",
-		"Generate coherent creator niches, target audiences, content pillars, opportunity gaps, risks, and a 50-title runway.",
+		"Generate one primary candidate plus at least two compact alternative candidates.",
+		"The primary candidate must include exactly 50 concise, unique video ideas. Alternative candidates should stay compact and do not need a 50-title runway.",
+		"Every primary idea must map to one returned content pillar. Pillar topic counts must total the returned idea count.",
+		"Generate coherent creator niches, target audiences, content pillars, opportunity gaps, risks, and the primary content runway.",
+		"All dimension scores must be integer 0-100 values, never 0-10 values.",
+		"Use these rating anchors for every dimension: very_low=0-19, low=20-39, moderate=40-59, high=60-79, very_high=80-100.",
+		"The rating in dimension_ratings must agree with the numeric score. A score of 9 with high, very_high, strong, or positive reasoning is invalid.",
 		"Do not invent live YouTube views, revenue, RPM, advertiser demand, legal certainty, private analytics, or current facts not supplied.",
-		"Titles must sound natural, avoid repeatedly inserting the full niche/audience phrase, and cover tutorials, comparisons, mistakes, case studies, opinion, breakdowns, beginner guides, experiments, and workflows.",
+		"Do not return monetisation, RPM, revenue, or earnings content.",
+		"Titles must sound natural, avoid repeatedly inserting the full niche/audience phrase, and cover tutorials, comparisons, mistakes, experiments, case studies, practical workflows, beginner guides, tool breakdowns, and analysis.",
 		"Return strict JSON matching the schema.",
 	}, " ")
 }
@@ -556,11 +601,19 @@ func nicheStrategyResponseFormat() map[string]any {
 	numberSchema := map[string]any{"type": "number"}
 	stringArray := map[string]any{"type": "array", "items": stringSchema}
 	scoreProps := map[string]any{
-		"creator_fit":             numberSchema,
-		"audience_demand":         numberSchema,
-		"competition_opportunity": numberSchema,
-		"sustainability":          numberSchema,
-		"differentiation":         numberSchema,
+		"creator_fit":             map[string]any{"type": "integer", "minimum": 0, "maximum": 100},
+		"audience_demand":         map[string]any{"type": "integer", "minimum": 0, "maximum": 100},
+		"competition_opportunity": map[string]any{"type": "integer", "minimum": 0, "maximum": 100},
+		"sustainability":          map[string]any{"type": "integer", "minimum": 0, "maximum": 100},
+		"differentiation":         map[string]any{"type": "integer", "minimum": 0, "maximum": 100},
+	}
+	ratingSchema := map[string]any{"type": "string", "enum": []string{"very_low", "low", "moderate", "high", "very_high"}}
+	ratingProps := map[string]any{
+		"creator_fit":             ratingSchema,
+		"audience_demand":         ratingSchema,
+		"competition_opportunity": ratingSchema,
+		"sustainability":          ratingSchema,
+		"differentiation":         ratingSchema,
 	}
 	reasonProps := map[string]any{
 		"creator_fit":             stringSchema,
@@ -614,6 +667,7 @@ func nicheStrategyResponseFormat() map[string]any {
 			"creator_advantages":       stringArray,
 			"unique_angle":             stringSchema,
 			"dimension_scores":         map[string]any{"type": "object", "additionalProperties": false, "properties": scoreProps, "required": []string{"creator_fit", "audience_demand", "competition_opportunity", "sustainability", "differentiation"}},
+			"dimension_ratings":        map[string]any{"type": "object", "additionalProperties": false, "properties": ratingProps, "required": []string{"creator_fit", "audience_demand", "competition_opportunity", "sustainability", "differentiation"}},
 			"dimension_reasoning":      map[string]any{"type": "object", "additionalProperties": false, "properties": reasonProps, "required": []string{"creator_fit", "audience_demand", "competition_opportunity", "sustainability", "differentiation"}},
 			"content_pillars":          map[string]any{"type": "array", "items": pillarSchema},
 			"topic_clusters":           map[string]any{"type": "array", "items": clusterSchema},
@@ -625,7 +679,7 @@ func nicheStrategyResponseFormat() map[string]any {
 			"runway":                   stringSchema,
 			"reasoning":                stringSchema,
 		},
-		"required": []string{"id", "name", "concise_positioning", "category", "subcategory", "target_audience", "audience_problems", "creator_advantages", "unique_angle", "dimension_scores", "dimension_reasoning", "content_pillars", "topic_clusters", "recommended_titles", "opportunity_gaps", "risks", "recommended_first_action", "search_query", "runway", "reasoning"},
+		"required": []string{"id", "name", "concise_positioning", "category", "subcategory", "target_audience", "audience_problems", "creator_advantages", "unique_angle", "dimension_scores", "dimension_ratings", "dimension_reasoning", "content_pillars", "topic_clusters", "recommended_titles", "opportunity_gaps", "risks", "recommended_first_action", "search_query", "runway", "reasoning"},
 	}
 	return map[string]any{
 		"type": "json_schema",
@@ -717,7 +771,8 @@ func ResearchNiches(ctx context.Context, req NicheResearchRequest, cfg NicheRese
 		strategist = heuristicNicheStrategist{}
 	}
 
-	strategy, err := strategist.GenerateCandidates(ctx, NicheStrategyInput{Profile: profile, RisingSignals: rising, GeneratedAt: generatedAt})
+	strategyInput := NicheStrategyInput{Profile: profile, RisingSignals: rising, GeneratedAt: generatedAt}
+	strategy, err := strategist.GenerateCandidates(ctx, strategyInput)
 	if err != nil {
 		report.Status = "openai_unavailable"
 		report.Message = "AI niche strategy is temporarily unavailable."
@@ -728,7 +783,25 @@ func ResearchNiches(ctx context.Context, req NicheResearchRequest, cfg NicheRese
 	report.Methodology = appendStringGroups(report.Methodology, strategy.Methodology)
 	report.Limitations = appendStringGroups(report.Limitations, strategy.Limitations)
 
-	drafts := validateNicheDrafts(strategy.Candidates, profile)
+	drafts, validationIssues := validateNicheDrafts(strategy.Candidates, profile)
+	if len(validationIssues) > 0 {
+		report.Limitations = appendStringGroups(report.Limitations, []string{"Some model output was normalized or removed before scoring: " + strings.Join(topN(validationIssues, 4), "; ")})
+	}
+	if len(drafts) == 0 {
+		if repairer, ok := strategist.(NicheStrategyRepairer); ok {
+			repaired, repairErr := repairer.RepairCandidates(ctx, strategyInput, strategy, validationIssues)
+			if repairErr == nil {
+				strategy = repaired
+				report.CreatorProfileSummary = firstNonEmpty(strings.TrimSpace(strategy.CreatorProfileSummary), report.CreatorProfileSummary)
+				report.Methodology = appendStringGroups(report.Methodology, strategy.Methodology)
+				report.Limitations = appendStringGroups(report.Limitations, strategy.Limitations)
+				drafts, validationIssues = validateNicheDrafts(strategy.Candidates, profile)
+				if len(validationIssues) > 0 {
+					report.Limitations = appendStringGroups(report.Limitations, []string{"Repaired model output still required validation: " + strings.Join(topN(validationIssues, 4), "; ")})
+				}
+			}
+		}
+	}
 	if len(drafts) == 0 {
 		report.Status = "invalid_model_output"
 		report.Message = "AI niche strategy returned no usable candidates."
@@ -782,6 +855,9 @@ func ResearchNiches(ctx context.Context, req NicheResearchRequest, cfg NicheRese
 	report.PrimaryRecommendation = &report.Candidates[0]
 	if len(report.Candidates) > 1 {
 		report.AlternativeCandidates = append([]NicheCandidate{}, report.Candidates[1:]...)
+	}
+	if len(report.AlternativeCandidates) < 2 {
+		report.Limitations = append(report.Limitations, "Fewer than two validated alternative candidates were available after structured output validation.")
 	}
 	report.Internal.Provenance = []string{"openai_structured_strategy", "backend_score_normalization", "optional_budgeted_youtube_validation", "current_trend_overlap"}
 	return report, nil
@@ -1211,34 +1287,50 @@ func buildNicheCandidate(bp nicheBlueprint, profile CreatorNicheProfile, evidenc
 	}
 }
 
-func validateNicheDrafts(drafts []NicheDraft, profile CreatorNicheProfile) []NicheDraft {
+func validateNicheDrafts(drafts []NicheDraft, profile CreatorNicheProfile) ([]NicheDraft, []string) {
 	out := []NicheDraft{}
+	issues := []string{}
 	seen := map[string]bool{}
 	for _, draft := range drafts {
 		draft.Name = strings.TrimSpace(draft.Name)
 		if draft.Name == "" {
+			issues = append(issues, "candidate missing name")
 			continue
 		}
 		key := strings.ToLower(draft.Name)
 		if seen[key] {
+			issues = append(issues, "duplicate candidate skipped: "+draft.Name)
 			continue
 		}
 		seen[key] = true
+		normalizedScores, scoreIssues, ok := normalizeDraftDimensionScores(draft)
+		if len(scoreIssues) > 0 {
+			issues = append(issues, scoreIssues...)
+		}
+		if !ok {
+			continue
+		}
+		draft.DimensionScores = normalizedScores
+		draft.DimensionRatings = normalizeDraftDimensionRatings(draft)
 		if draft.TargetAudience == "" {
 			draft.TargetAudience = firstNonEmpty(profile.TargetAudience, countryAudience(profile.TargetCountry))
 		}
 		draft.RecommendedTitles = validateVideoTitles(draft.RecommendedTitles, draft.ContentPillars, draft.Name, draft.TargetAudience)
 		draft.ContentPillars = normalizeContentPillars(draft.ContentPillars, draft.RecommendedTitles)
-		if len(draft.RecommendedTitles) < 10 {
-			draft.RecommendedTitles = append(draft.RecommendedTitles, fallbackTitles(draft, 10-len(draft.RecommendedTitles))...)
+		if len(draft.RecommendedTitles) < 50 {
+			draft.RecommendedTitles = append(draft.RecommendedTitles, fallbackTitles(draft, 50-len(draft.RecommendedTitles))...)
 			draft.ContentPillars = normalizeContentPillars(draft.ContentPillars, draft.RecommendedTitles)
 		}
 		if len(draft.RecommendedTitles) > 50 {
 			draft.RecommendedTitles = draft.RecommendedTitles[:50]
+			draft.ContentPillars = normalizeContentPillars(draft.ContentPillars, draft.RecommendedTitles)
+		}
+		if len(draft.RecommendedTitles) < 50 {
+			issues = append(issues, fmt.Sprintf("%s returned %d usable unique titles", draft.Name, len(draft.RecommendedTitles)))
 		}
 		out = append(out, draft)
 	}
-	return out
+	return out, issues
 }
 
 func buildAICandidate(draft NicheDraft, profile CreatorNicheProfile, rising []string, now time.Time) NicheCandidate {
@@ -1338,8 +1430,10 @@ func applyEvidenceToCandidate(candidate *NicheCandidate, evidence nicheEvidence,
 	candidate.SearchQueriesUsed = unique(append(candidate.SearchQueriesUsed, evidence.query))
 	candidate.MarketEvidence = marketEvidenceFromValidation(validation, evidence)
 	candidate.EvidenceSummary = validation.MarketEvidenceSummary
-	candidate.Scores.Demand = ScoreExplanation{Score: scoreDemandValidation(validation), Label: scoreLabel(scoreDemandValidation(validation)), Explanation: validation.MarketEvidenceSummary}
-	candidate.Scores.OpportunityGap = ScoreExplanation{Score: scoreOpportunityGap(validation, outliers, candidate.SupplyGaps), Label: scoreLabel(scoreOpportunityGap(validation, outliers, candidate.SupplyGaps)), Explanation: "Uses capped public evidence, outliers, and gap statements when validation is available."}
+	demandScore := scoreDemandValidation(validation)
+	gapScore := scoreOpportunityGap(validation, outliers, candidate.SupplyGaps)
+	candidate.Scores.Demand = ScoreExplanation{Score: demandScore, Label: scoreLabel(demandScore), RatingBand: inferRatingFromScore(demandScore), Explanation: validation.MarketEvidenceSummary}
+	candidate.Scores.OpportunityGap = ScoreExplanation{Score: gapScore, Label: scoreLabel(gapScore), RatingBand: inferRatingFromScore(gapScore), Explanation: "Uses capped public evidence, outliers, and gap statements when validation is available. A perfect opportunity score requires strong recent evidence, not only a gap statement."}
 	candidate.Dimensions.AudienceDemand = candidate.Scores.Demand
 	candidate.Dimensions.CompetitionOpportunity = candidate.Scores.OpportunityGap
 	candidate.OverallScore = calculateNicheOverallScore(candidate.Dimensions)
@@ -1699,8 +1793,8 @@ func scoreNiche(bp nicheBlueprint, profile CreatorNicheProfile, validation Niche
 	conf := scoreConfidence(validation, monetization, sustainability)
 	return NicheScores{
 		PersonalFit:    ScoreExplanation{Score: personalFit, Label: scoreLabel(personalFit), Explanation: "Considers expertise, lived experience, audience understanding, and preferred creator format."},
-		Demand:         ScoreExplanation{Score: demand, Label: scoreLabel(demand), Explanation: validation.MarketEvidenceSummary},
-		OpportunityGap: ScoreExplanation{Score: gapScore, Label: scoreLabel(gapScore), Explanation: "Rewards real demand, manageable supply, outlier evidence, and supported gap statements."},
+		Demand:         ScoreExplanation{Score: demand, Label: scoreLabel(demand), RatingBand: inferRatingFromScore(demand), Explanation: validation.MarketEvidenceSummary},
+		OpportunityGap: ScoreExplanation{Score: gapScore, Label: scoreLabel(gapScore), RatingBand: inferRatingFromScore(gapScore), Explanation: "Rewards real demand, manageable supply, outlier evidence, and supported gap statements. Perfect scores require strong recent evidence."},
 		Monetization:   ScoreExplanation{Score: 0, Label: "Not scored", Explanation: "Monetisation is not part of the Niche Finder score."},
 		Sustainability: ScoreExplanation{Score: sustainabilityScore, Label: scoreLabel(sustainabilityScore), Explanation: "Based on distinct topic count, pillar depth, creator interest, and production practicality."},
 		Overall:        ScoreExplanation{Score: overall, Label: scoreLabel(overall), Explanation: "Formula: 0.25 creator fit + 0.25 audience demand + 0.20 competition opportunity + 0.20 sustainability + 0.10 differentiation."},
@@ -1709,31 +1803,154 @@ func scoreNiche(bp nicheBlueprint, profile CreatorNicheProfile, validation Niche
 }
 
 func normalizeDimensions(draft NicheDraft) NicheScoreDimensions {
+	ratings := normalizeDraftDimensionRatings(draft)
 	return NicheScoreDimensions{
-		CreatorFit:             scoreFromDraft(draft.DimensionScores.CreatorFit, draft.DimensionReasoning.CreatorFit),
-		AudienceDemand:         scoreFromDraft(draft.DimensionScores.AudienceDemand, draft.DimensionReasoning.AudienceDemand),
-		CompetitionOpportunity: scoreFromDraft(draft.DimensionScores.CompetitionOpportunity, draft.DimensionReasoning.CompetitionOpportunity),
-		Sustainability:         scoreFromDraft(draft.DimensionScores.Sustainability, draft.DimensionReasoning.Sustainability),
-		Differentiation:        scoreFromDraft(draft.DimensionScores.Differentiation, draft.DimensionReasoning.Differentiation),
+		CreatorFit:             scoreFromDraft(draft.DimensionScores.CreatorFit, ratings.CreatorFit, draft.DimensionReasoning.CreatorFit),
+		AudienceDemand:         scoreFromDraft(draft.DimensionScores.AudienceDemand, ratings.AudienceDemand, draft.DimensionReasoning.AudienceDemand),
+		CompetitionOpportunity: scoreFromDraft(draft.DimensionScores.CompetitionOpportunity, ratings.CompetitionOpportunity, draft.DimensionReasoning.CompetitionOpportunity),
+		Sustainability:         scoreFromDraft(draft.DimensionScores.Sustainability, ratings.Sustainability, draft.DimensionReasoning.Sustainability),
+		Differentiation:        scoreFromDraft(draft.DimensionScores.Differentiation, ratings.Differentiation, draft.DimensionReasoning.Differentiation),
 	}
 }
 
-func scoreFromDraft(score float64, explanation string) ScoreExplanation {
-	score = round1(clampScore(score))
-	if score == 0 {
-		score = 50
+func normalizeDraftDimensionRatings(draft NicheDraft) NicheDraftDimensionRatings {
+	return NicheDraftDimensionRatings{
+		CreatorFit:             normalizeRatingBand(firstNonEmpty(draft.DimensionRatings.CreatorFit, inferRatingFromScore(draft.DimensionScores.CreatorFit))),
+		AudienceDemand:         normalizeRatingBand(firstNonEmpty(draft.DimensionRatings.AudienceDemand, inferRatingFromScore(draft.DimensionScores.AudienceDemand))),
+		CompetitionOpportunity: normalizeRatingBand(firstNonEmpty(draft.DimensionRatings.CompetitionOpportunity, inferRatingFromScore(draft.DimensionScores.CompetitionOpportunity))),
+		Sustainability:         normalizeRatingBand(firstNonEmpty(draft.DimensionRatings.Sustainability, inferRatingFromScore(draft.DimensionScores.Sustainability))),
+		Differentiation:        normalizeRatingBand(firstNonEmpty(draft.DimensionRatings.Differentiation, inferRatingFromScore(draft.DimensionScores.Differentiation))),
 	}
-	return ScoreExplanation{Score: score, Label: scoreLabel(score), Explanation: firstNonEmpty(strings.TrimSpace(explanation), "Model-provided dimension reasoning was unavailable.")}
+}
+
+func normalizeDraftDimensionScores(draft NicheDraft) (NicheDraftDimensionScores, []string, bool) {
+	out := draft.DimensionScores
+	issues := []string{}
+	var ok bool
+	out.CreatorFit, ok = normalizeDimensionScoreValue("creator_fit", draft.Name, out.CreatorFit, normalizeRatingBand(draft.DimensionRatings.CreatorFit), draft.DimensionReasoning.CreatorFit, &issues)
+	if !ok {
+		return out, issues, false
+	}
+	out.AudienceDemand, ok = normalizeDimensionScoreValue("audience_demand", draft.Name, out.AudienceDemand, normalizeRatingBand(draft.DimensionRatings.AudienceDemand), draft.DimensionReasoning.AudienceDemand, &issues)
+	if !ok {
+		return out, issues, false
+	}
+	out.CompetitionOpportunity, ok = normalizeDimensionScoreValue("competition_opportunity", draft.Name, out.CompetitionOpportunity, normalizeRatingBand(draft.DimensionRatings.CompetitionOpportunity), draft.DimensionReasoning.CompetitionOpportunity, &issues)
+	if !ok {
+		return out, issues, false
+	}
+	out.Sustainability, ok = normalizeDimensionScoreValue("sustainability", draft.Name, out.Sustainability, normalizeRatingBand(draft.DimensionRatings.Sustainability), draft.DimensionReasoning.Sustainability, &issues)
+	if !ok {
+		return out, issues, false
+	}
+	out.Differentiation, ok = normalizeDimensionScoreValue("differentiation", draft.Name, out.Differentiation, normalizeRatingBand(draft.DimensionRatings.Differentiation), draft.DimensionReasoning.Differentiation, &issues)
+	if !ok {
+		return out, issues, false
+	}
+	return out, issues, true
+}
+
+func normalizeDimensionScoreValue(field, candidate string, score float64, rating, reasoning string, issues *[]string) (float64, bool) {
+	if math.IsNaN(score) || math.IsInf(score, 0) {
+		*issues = append(*issues, fmt.Sprintf("%s %s score is not numeric", candidate, field))
+		return 0, false
+	}
+	rounded := math.Round(score)
+	if rating == "" {
+		if rounded <= 10 && positiveRatingLanguage("", reasoning) {
+			*issues = append(*issues, fmt.Sprintf("%s %s rejected: single-digit score %.0f conflicts with positive reasoning and no explicit very_low rating", candidate, field, rounded))
+			return 0, false
+		}
+		rating = inferRatingFromScore(rounded)
+	}
+	if scoreRatingConsistent(rounded, rating) {
+		return clampScore(rounded), true
+	}
+	if rounded > 0 && rounded <= 10 && rating != "very_low" {
+		normalized := math.Round(rounded * 10)
+		if scoreRatingConsistent(normalized, rating) {
+			*issues = append(*issues, fmt.Sprintf("%s %s normalized from %.0f/10 to %.0f/100 based on %s rating", candidate, field, rounded, normalized, rating))
+			return normalized, true
+		}
+	}
+	if rounded <= 10 && positiveRatingLanguage(rating, reasoning) {
+		*issues = append(*issues, fmt.Sprintf("%s %s rejected: single-digit score %.0f conflicts with %s rating/reasoning", candidate, field, rounded, rating))
+		return 0, false
+	}
+	*issues = append(*issues, fmt.Sprintf("%s %s rejected: score %.0f conflicts with %s rating", candidate, field, rounded, rating))
+	return 0, false
+}
+
+func scoreFromDraft(score float64, ratingBand, explanation string) ScoreExplanation {
+	score = math.Round(clampScore(score))
+	ratingBand = normalizeRatingBand(firstNonEmpty(ratingBand, inferRatingFromScore(score)))
+	return ScoreExplanation{Score: score, Label: scoreLabel(score), RatingBand: ratingBand, Explanation: firstNonEmpty(strings.TrimSpace(explanation), "Model-provided dimension reasoning was unavailable.")}
 }
 
 func calculateNicheOverallScore(d NicheScoreDimensions) float64 {
-	return round1(clampScore(
+	return math.Round(clampScore(
 		0.25*d.CreatorFit.Score +
 			0.25*d.AudienceDemand.Score +
 			0.20*d.CompetitionOpportunity.Score +
 			0.20*d.Sustainability.Score +
 			0.10*d.Differentiation.Score,
 	))
+}
+
+func normalizeRatingBand(value string) string {
+	value = strings.ToLower(strings.TrimSpace(strings.ReplaceAll(value, "-", "_")))
+	switch value {
+	case "very low", "verylow", "very_low", "weak":
+		return "very_low"
+	case "low":
+		return "low"
+	case "moderate", "medium", "mixed":
+		return "moderate"
+	case "high", "strong", "promising":
+		return "high"
+	case "very high", "veryhigh", "very_high", "excellent":
+		return "very_high"
+	default:
+		return ""
+	}
+}
+
+func inferRatingFromScore(score float64) string {
+	score = math.Round(clampScore(score))
+	switch {
+	case score <= 19:
+		return "very_low"
+	case score <= 39:
+		return "low"
+	case score <= 59:
+		return "moderate"
+	case score <= 79:
+		return "high"
+	default:
+		return "very_high"
+	}
+}
+
+func scoreRatingConsistent(score float64, rating string) bool {
+	rating = normalizeRatingBand(rating)
+	if rating == "" {
+		return true
+	}
+	return inferRatingFromScore(score) == rating
+}
+
+func positiveRatingLanguage(rating, reasoning string) bool {
+	rating = normalizeRatingBand(rating)
+	if rating == "high" || rating == "very_high" {
+		return true
+	}
+	lower := strings.ToLower(reasoning)
+	for _, term := range []string{"strong", "high", "very high", "excellent", "positive", "clear demand", "well aligned"} {
+		if strings.Contains(lower, term) {
+			return true
+		}
+	}
+	return false
 }
 
 func validateVideoTitles(titles []VideoTopic, pillars []ContentPillar, niche, audience string) []VideoTopic {
@@ -1745,13 +1962,18 @@ func validateVideoTitles(titles []VideoTopic, pillars []ContentPillar, niche, au
 	}
 	out := []VideoTopic{}
 	seen := map[string]bool{}
+	nearSeen := map[string]bool{}
 	for _, topic := range titles {
 		title := strings.Join(strings.Fields(strings.TrimSpace(topic.Title)), " ")
 		key := strings.ToLower(title)
-		if title == "" || seen[key] || len([]rune(title)) > 95 || excessiveTitleRepetition(title, niche, audience) || malformedTitle(title) || unsupportedCurrentClaim(title) {
+		nearKey := nearDuplicateTitleKey(title)
+		if title == "" || seen[key] || nearSeen[nearKey] || len([]rune(title)) > 95 || excessiveTitleRepetition(title, niche, audience) || malformedTitle(title) || unsupportedCurrentClaim(title) {
 			continue
 		}
 		seen[key] = true
+		if nearKey != "" {
+			nearSeen[nearKey] = true
+		}
 		topic.Title = title
 		if strings.TrimSpace(topic.Pillar) == "" || (len(validPillars) > 0 && !validPillars[strings.ToLower(strings.TrimSpace(topic.Pillar))]) {
 			if len(pillars) > 0 {
@@ -1808,8 +2030,8 @@ func malformedTitle(title string) bool {
 
 func unsupportedCurrentClaim(title string) bool {
 	lower := strings.ToLower(title)
-	currentMarkers := []string{"new law", "visa rule", "tax rule", "guaranteed", "will happen", "confirmed", "breaking"}
-	claimDomains := []string{"visa", "legal", "law", "tax", "financial", "investment", "mortgage", "immigration"}
+	currentMarkers := []string{"new law", "visa rule", "tax rule", "guaranteed", "will happen", "confirmed", "breaking", "earnings", "revenue", "rpm", "monetize", "monetization"}
+	claimDomains := []string{"visa", "legal", "law", "tax", "financial", "investment", "mortgage", "immigration", "youtube", "creator"}
 	for _, marker := range currentMarkers {
 		if !strings.Contains(lower, marker) {
 			continue
@@ -1823,20 +2045,54 @@ func unsupportedCurrentClaim(title string) bool {
 	return false
 }
 
+func nearDuplicateTitleKey(title string) string {
+	lower := strings.ToLower(title)
+	replacer := strings.NewReplacer("?", "", "!", "", ":", "", ",", "", ".", "", "-", " ")
+	lower = replacer.Replace(lower)
+	stop := map[string]bool{"a": true, "an": true, "the": true, "to": true, "for": true, "from": true, "with": true, "and": true, "or": true, "of": true, "in": true, "on": true, "your": true, "you": true, "i": true, "my": true, "this": true, "that": true, "simple": true, "practical": true}
+	words := []string{}
+	for _, word := range strings.Fields(lower) {
+		if stop[word] || len(word) < 3 {
+			continue
+		}
+		words = append(words, word)
+	}
+	if len(words) == 0 {
+		return ""
+	}
+	sort.Strings(words)
+	if len(words) > 5 {
+		words = words[:5]
+	}
+	return strings.Join(words, "|")
+}
+
 func normalizeContentPillars(pillars []ContentPillar, topics []VideoTopic) []ContentPillar {
 	if len(pillars) == 0 {
 		pillars = []ContentPillar{{Name: "Foundations"}, {Name: "Workflows"}, {Name: "Case studies"}, {Name: "Mistakes"}, {Name: "Comparisons"}}
 	}
 	counts := map[string]int{}
 	examples := map[string][]string{}
+	displayName := map[string]string{}
+	for _, pillar := range pillars {
+		name := strings.TrimSpace(pillar.Name)
+		if name == "" {
+			continue
+		}
+		displayName[strings.ToLower(name)] = name
+	}
 	for _, topic := range topics {
 		pillar := strings.TrimSpace(topic.Pillar)
 		if pillar == "" {
 			continue
 		}
-		counts[pillar]++
-		if len(examples[pillar]) < 3 {
-			examples[pillar] = append(examples[pillar], topic.Title)
+		key := strings.ToLower(pillar)
+		counts[key]++
+		if _, ok := displayName[key]; !ok {
+			displayName[key] = pillar
+		}
+		if len(examples[key]) < 3 {
+			examples[key] = append(examples[key], topic.Title)
 		}
 	}
 	out := []ContentPillar{}
@@ -1847,21 +2103,15 @@ func normalizeContentPillars(pillars []ContentPillar, topics []VideoTopic) []Con
 			continue
 		}
 		key := strings.ToLower(name)
-		count := counts[name]
-		if count == 0 && pillar.TopicCount > 0 {
-			count = pillar.TopicCount
-		}
+		count := counts[key]
 		if count == 0 {
-			count = 1
-			if len(topics)/len(pillars) > count {
-				count = len(topics) / len(pillars)
-			}
+			continue
 		}
-		pct := pillar.Percentage
-		if pct <= 0 && len(topics) > 0 {
+		pct := 0.0
+		if len(topics) > 0 {
 			pct = round1(float64(count) / float64(len(topics)) * 100)
 		}
-		normalized := ContentPillar{Name: name, Description: pillar.Description, Percentage: pct, TopicCount: count, ExampleTitles: appendStringGroups(pillar.ExampleTitles, examples[name])}
+		normalized := ContentPillar{Name: name, Description: pillar.Description, Percentage: pct, TopicCount: count, ExampleTitles: appendStringGroups(pillar.ExampleTitles, examples[key])}
 		if existing, ok := indexByName[key]; ok {
 			out[existing].TopicCount += normalized.TopicCount
 			out[existing].Percentage += normalized.Percentage
@@ -1873,6 +2123,21 @@ func normalizeContentPillars(pillars []ContentPillar, topics []VideoTopic) []Con
 		}
 		indexByName[key] = len(out)
 		out = append(out, normalized)
+	}
+	for key, count := range counts {
+		if count == 0 {
+			continue
+		}
+		if _, ok := indexByName[key]; ok {
+			continue
+		}
+		name := displayName[key]
+		pct := 0.0
+		if len(topics) > 0 {
+			pct = round1(float64(count) / float64(len(topics)) * 100)
+		}
+		indexByName[key] = len(out)
+		out = append(out, ContentPillar{Name: name, Percentage: pct, TopicCount: count, ExampleTitles: examples[key]})
 	}
 	totalPct := 0.0
 	for _, pillar := range out {
@@ -1892,38 +2157,55 @@ func fallbackTitles(draft NicheDraft, count int) []VideoTopic {
 	if len(pillars) == 0 {
 		pillars = []ContentPillar{{Name: "Foundations"}, {Name: "Workflows"}, {Name: "Case studies"}, {Name: "Mistakes"}, {Name: "Comparisons"}}
 	}
-	intents := []string{"tutorial", "comparison", "mistake", "case study", "opinion", "breakdown", "beginner guide", "experiment", "workflow", "checklist"}
+	intents := []string{"tutorial", "comparison", "mistake", "experiment", "case study", "practical workflow", "beginner guide", "tool breakdown", "analysis", "checklist"}
 	out := []VideoTopic{}
-	for i := 0; i < count && i < len(intents); i++ {
-		title := naturalTitle(intents[i], draft)
-		out = append(out, VideoTopic{Title: title, Pillar: pillars[i%len(pillars)].Name, Intent: intents[i], Difficulty: "medium", Source: "backend_title_validation", EvidenceStatus: "ai_strategic_analysis"})
+	seen := map[string]bool{}
+	for i := 0; len(out) < count && i < count*3; i++ {
+		intent := intents[i%len(intents)]
+		title := naturalTitleVariant(intent, draft, len(out))
+		key := strings.ToLower(title)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, VideoTopic{Title: title, Pillar: pillars[len(out)%len(pillars)].Name, Intent: intent, Difficulty: "medium", Source: "backend_title_validation", EvidenceStatus: "ai_strategic_analysis"})
 	}
 	return out
 }
 
 func naturalTitle(intent string, draft NicheDraft) string {
+	return naturalTitleVariant(intent, draft, 0)
+}
+
+func naturalTitleVariant(intent string, draft NicheDraft, index int) string {
 	topic := firstNonEmpty(draft.Subcategory, draft.Name, "this workflow")
+	objects := []string{"first project", "login flow", "data screen", "settings page", "student app", "portfolio app", "booking flow", "dashboard", "notes app", "habit tracker"}
+	object := objects[index%len(objects)]
 	switch intent {
 	case "tutorial":
-		return "Build a simple " + topic + " workflow from scratch"
+		return "Build a " + object + " with " + topic
 	case "comparison":
-		return "The fastest path versus the safest path"
+		return "Fastest path versus safest path for a " + object
 	case "mistake":
-		return "Five mistakes beginners make before they see results"
+		return "Five mistakes beginners make building a " + object
 	case "case study":
-		return "I tested the workflow on a realistic example"
-	case "opinion":
-		return "What most advice gets wrong about this niche"
+		return "Case study: turning a rough idea into a " + object
+	case "practical workflow":
+		return "A repeatable workflow for shipping a " + object
+	case "tool breakdown":
+		return "Tool breakdown for building a " + object
+	case "analysis":
+		return "Why most " + object + " ideas stall before launch"
 	case "breakdown":
-		return "A practical breakdown of the first week"
+		return "A practical breakdown of the first " + object + " build"
 	case "beginner guide":
-		return "Start here if you are completely new"
+		return "Start here before your first " + object
 	case "experiment":
-		return "I tried three approaches and tracked what changed"
+		return "I tried three approaches to the same " + object
 	case "workflow":
-		return "A repeatable weekly workflow you can copy"
+		return "A repeatable weekly workflow for a " + object
 	default:
-		return "A practical checklist before you start"
+		return "A practical checklist before building a " + object
 	}
 }
 
@@ -2086,14 +2368,20 @@ func scorePersonalFit(bp nicheBlueprint, profile CreatorNicheProfile) float64 {
 }
 
 func scoreDemandValidation(v NicheValidation) float64 {
-	score := float64(v.SampledVideoCount)*1.1 + float64(v.RecentPublicationVolume)*2.2 + math.Log10(float64(v.MedianSampledViews)+10)*10
+	viewComponent := math.Log10(float64(v.MedianSampledViews)+10) * 8
+	if v.RecentPublicationVolume == 0 {
+		viewComponent *= 0.55
+	} else if v.RecentPublicationVolume < 4 {
+		viewComponent *= 0.75
+	}
+	score := float64(v.SampledVideoCount)*1.1 + float64(v.RecentPublicationVolume)*2.2 + viewComponent
 	if v.RisingTopicOverlap {
 		score += 10
 	}
 	if v.EngagementRate >= 1.5 {
 		score += 8
 	}
-	return round1(clampScore(score))
+	return math.Round(clampScore(score))
 }
 
 func scoreOpportunityGap(v NicheValidation, outliers []OutlierEvidence, gaps []SupplyGap) float64 {
@@ -2109,7 +2397,13 @@ func scoreOpportunityGap(v NicheValidation, outliers []OutlierEvidence, gaps []S
 	}
 	score += minFloat(18, float64(len(outliers))*6)
 	score += minFloat(15, float64(len(gaps))*4)
-	return round1(clampScore(score))
+	if v.SampledVideoCount < 20 || v.RecentPublicationVolume < 6 || len(outliers) < 2 {
+		score = minFloat(score, 84)
+	}
+	if v.SampledVideoCount < 12 || v.RecentPublicationVolume == 0 {
+		score = minFloat(score, 74)
+	}
+	return math.Round(clampScore(score))
 }
 
 func scoreConfidence(v NicheValidation, m MonetizationEstimate, s SustainabilityEvidence) float64 {
@@ -2120,6 +2414,11 @@ func scoreConfidence(v NicheValidation, m MonetizationEstimate, s Sustainability
 	if v.MedianSampledViews > 0 {
 		score += 10
 	}
+	if v.RecentPublicationVolume >= 6 {
+		score += 12
+	} else if v.RecentPublicationVolume == 0 {
+		score -= 18
+	}
 	if s.ViableTopicCount >= 30 {
 		score += 15
 	}
@@ -2128,7 +2427,10 @@ func scoreConfidence(v NicheValidation, m MonetizationEstimate, s Sustainability
 	} else if m.Confidence == "medium" {
 		score += 5
 	}
-	return round1(clampScore(score))
+	if v.SampledVideoCount < 15 || v.RecentPublicationVolume == 0 {
+		score = minFloat(score, 54)
+	}
+	return math.Round(clampScore(score))
 }
 
 func normalizeCreatorNicheProfile(p CreatorNicheProfile) CreatorNicheProfile {
@@ -2315,6 +2617,11 @@ func marketEvidenceSummary(count, recent int, median uint64, overlap bool) strin
 	}
 	if overlap {
 		parts = append(parts, "overlaps current rising topics")
+	}
+	if count > 0 && recent == 0 {
+		parts = append(parts, "demand signal is based on older sampled videos, not recent upload activity")
+	} else if count > 0 && count < 15 {
+		parts = append(parts, "sample is sparse, so confidence remains limited")
 	}
 	return strings.Join(parts, "; ") + "."
 }

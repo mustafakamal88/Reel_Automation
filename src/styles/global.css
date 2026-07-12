@@ -6735,10 +6735,12 @@ body,
   display: grid;
   grid-template-columns: repeat(12, minmax(0, 1fr));
   gap: 14px;
+  align-items: start;
 }
 
 .niche-dashboard-grid > .niche-detail-panel {
   grid-column: span 6;
+  align-self: start;
 }
 
 .niche-dashboard-grid > .niche-detail-panel:nth-last-child(-n + 3) {
@@ -6748,15 +6750,16 @@ body,
 .niche-score-card-grid {
   grid-column: 1 / -1;
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(310px, 1fr));
   gap: 12px;
+  align-items: start;
 }
 
 .niche-dimension-card {
   display: grid;
   grid-template-columns: 74px minmax(0, 1fr);
   gap: 10px;
-  align-items: center;
+  align-items: start;
   border: 1px solid var(--border);
   border-radius: 8px;
   padding: 12px;
@@ -6766,6 +6769,27 @@ body,
 .niche-dimension-card strong {
   display: block;
   margin-bottom: 4px;
+}
+
+.niche-dimension-card span {
+  display: inline-block;
+  margin-bottom: 6px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.niche-dimension-card details {
+  margin-top: 8px;
+}
+
+.niche-dimension-card summary {
+  cursor: pointer;
+  color: var(--text);
+  font-size: 12px;
+}
+
+.niche-dimension-card details p {
+  margin-top: 6px;
 }
 
 .niche-gauge {
@@ -6842,6 +6866,7 @@ body,
 .runway-card {
   display: grid;
   gap: 10px;
+  align-content: start;
 }
 
 .contribution-row,
@@ -6957,7 +6982,7 @@ body,
   }
 
   .niche-score-card-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
   }
 
   .niche-dashboard-grid > .niche-detail-panel,

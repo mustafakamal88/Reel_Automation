@@ -569,6 +569,7 @@ export interface NicheScores {
 export interface ScoreExplanation {
   score: number;
   label: string;
+  rating_band?: string;
   explanation: string;
   factors?: string[];
 }

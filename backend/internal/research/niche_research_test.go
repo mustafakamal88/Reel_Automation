@@ -2,6 +2,7 @@ package research
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"math"
@@ -66,6 +67,30 @@ func (f fakeNicheStrategist) GenerateCandidates(ctx context.Context, input Niche
 	_ = ctx
 	_ = input
 	return f.result, f.err
+}
+
+type fakeRepairStrategist struct {
+	result       NicheStrategyResult
+	repaired     NicheStrategyResult
+	repairCalls  int
+	generateErr  error
+	repairErr    error
+	repairIssues []string
+}
+
+func (f *fakeRepairStrategist) GenerateCandidates(ctx context.Context, input NicheStrategyInput) (NicheStrategyResult, error) {
+	_ = ctx
+	_ = input
+	return f.result, f.generateErr
+}
+
+func (f *fakeRepairStrategist) RepairCandidates(ctx context.Context, input NicheStrategyInput, previous NicheStrategyResult, issues []string) (NicheStrategyResult, error) {
+	_ = ctx
+	_ = input
+	_ = previous
+	f.repairCalls++
+	f.repairIssues = append([]string{}, issues...)
+	return f.repaired, f.repairErr
 }
 
 func TestNicheResearchValidatesCandidatesWithMeasuredEvidence(t *testing.T) {
@@ -452,6 +477,91 @@ func TestAIScoreNormalizationOverridesModelTotalsAndBoundsDimensions(t *testing.
 	}
 }
 
+func TestAIScoreNormalizationRepairsMixedTenPointScaleWithRatings(t *testing.T) {
+	draft := baseNicheDraft("draft-mixed", "Cross-platform app tutorials", "cross-platform apps")
+	draft.DimensionScores = NicheDraftDimensionScores{CreatorFit: 9, AudienceDemand: 80, CompetitionOpportunity: 100, Sustainability: 8, Differentiation: 7}
+	draft.DimensionRatings = NicheDraftDimensionRatings{CreatorFit: "very_high", AudienceDemand: "very_high", CompetitionOpportunity: "very_high", Sustainability: "very_high", Differentiation: "high"}
+	drafts, issues := validateNicheDrafts([]NicheDraft{draft}, sampleTitleQualityProfile())
+	if len(drafts) != 1 {
+		t.Fatalf("draft rejected, issues=%v", issues)
+	}
+	candidate := buildAICandidate(drafts[0], sampleTitleQualityProfile(), nil, time.Date(2026, 7, 12, 12, 0, 0, 0, time.UTC))
+	if candidate.Dimensions.CreatorFit.Score != 90 || candidate.Dimensions.Sustainability.Score != 80 || candidate.Dimensions.Differentiation.Score != 70 {
+		t.Fatalf("mixed scale not normalized safely: %#v", candidate.Dimensions)
+	}
+	if candidate.OverallScore != 86 {
+		t.Fatalf("overall = %.1f, want rounded weighted score 86", candidate.OverallScore)
+	}
+}
+
+func TestAIScoreValidationRejectsHighRatingWithSingleDigitWhenUnsafe(t *testing.T) {
+	draft := baseNicheDraft("draft-bad", "Unsafe score candidate", "cross-platform apps")
+	draft.DimensionScores.CreatorFit = 9
+	draft.DimensionRatings.CreatorFit = "high"
+	draft.DimensionReasoning.CreatorFit = "Strong alignment with the creator profile."
+	drafts, issues := validateNicheDrafts([]NicheDraft{draft}, sampleTitleQualityProfile())
+	if len(drafts) != 0 {
+		t.Fatalf("unsafe single-digit high score should be rejected: %#v", drafts[0].DimensionScores)
+	}
+	if !strings.Contains(strings.Join(issues, " "), "single-digit") && !strings.Contains(strings.Join(issues, " "), "conflicts") {
+		t.Fatalf("issues should explain score/rating conflict: %v", issues)
+	}
+}
+
+func TestAIScoreValidationRejectsSingleDigitPositiveReasoningWithoutRating(t *testing.T) {
+	draft := baseNicheDraft("draft-no-rating", "Missing rating candidate", "cross-platform apps")
+	draft.DimensionScores.CreatorFit = 9
+	draft.DimensionRatings.CreatorFit = ""
+	draft.DimensionReasoning.CreatorFit = "Strong alignment with the creator profile."
+	drafts, issues := validateNicheDrafts([]NicheDraft{draft}, sampleTitleQualityProfile())
+	if len(drafts) != 0 {
+		t.Fatalf("single-digit positive reasoning without rating should be rejected")
+	}
+	if !strings.Contains(strings.Join(issues, " "), "positive reasoning") {
+		t.Fatalf("issues should explain positive reasoning conflict: %v", issues)
+	}
+}
+
+func TestAIScoreValidationKeepsGenuineVeryLowSingleDigit(t *testing.T) {
+	draft := baseNicheDraft("draft-low", "Genuine low score candidate", "cross-platform apps")
+	draft.DimensionScores.CreatorFit = 8
+	draft.DimensionRatings.CreatorFit = "very_low"
+	draft.DimensionReasoning.CreatorFit = "Very low fit for the supplied creator background."
+	drafts, issues := validateNicheDrafts([]NicheDraft{draft}, sampleTitleQualityProfile())
+	if len(drafts) != 1 {
+		t.Fatalf("genuine very-low score rejected, issues=%v", issues)
+	}
+	if drafts[0].DimensionScores.CreatorFit != 8 {
+		t.Fatalf("very-low score changed to %.1f", drafts[0].DimensionScores.CreatorFit)
+	}
+}
+
+func TestAIScoreValidationRejectsRatingBandMismatch(t *testing.T) {
+	draft := baseNicheDraft("draft-mismatch", "Mismatched score candidate", "cross-platform apps")
+	draft.DimensionScores.AudienceDemand = 82
+	draft.DimensionRatings.AudienceDemand = "moderate"
+	drafts, issues := validateNicheDrafts([]NicheDraft{draft}, sampleTitleQualityProfile())
+	if len(drafts) != 0 {
+		t.Fatalf("rating-band mismatch should be rejected")
+	}
+	if !strings.Contains(strings.Join(issues, " "), "conflicts") {
+		t.Fatalf("issues should mention conflict: %v", issues)
+	}
+}
+
+func TestWeightedScoreUsesNormalIntegerRoundingAndIgnoresModelOverall(t *testing.T) {
+	dimensions := NicheScoreDimensions{
+		CreatorFit:             ScoreExplanation{Score: 9},
+		AudienceDemand:         ScoreExplanation{Score: 80},
+		CompetitionOpportunity: ScoreExplanation{Score: 100},
+		Sustainability:         ScoreExplanation{Score: 8},
+		Differentiation:        ScoreExplanation{Score: 7},
+	}
+	if got := calculateNicheOverallScore(dimensions); got != 45 {
+		t.Fatalf("weighted 44.55 rounded to %.1f, want 45", got)
+	}
+}
+
 func TestTitleQualityAndPillarNormalization(t *testing.T) {
 	pillars := []ContentPillar{
 		{Name: "Tutorials", Percentage: 40, TopicCount: 3},
@@ -483,6 +593,178 @@ func TestTitleQualityAndPillarNormalization(t *testing.T) {
 	}
 	if math.Abs(total-100) > 0.2 {
 		t.Fatalf("pillar percentages total %.1f, want approximately 100", total)
+	}
+}
+
+func TestRunwayValidationBuildsExactlyFiftyIdeasAndMatchingPillars(t *testing.T) {
+	draft := baseNicheDraft("draft-50", "Cross-platform app tutorials", "cross-platform apps")
+	drafts, issues := validateNicheDrafts([]NicheDraft{draft}, sampleTitleQualityProfile())
+	if len(drafts) != 1 {
+		t.Fatalf("draft rejected: %v", issues)
+	}
+	candidate := buildAICandidate(drafts[0], sampleTitleQualityProfile(), nil, time.Date(2026, 7, 12, 12, 0, 0, 0, time.UTC))
+	if len(candidate.RecommendedTitles) != 50 || candidate.Runway.ViableTopicCount != 50 {
+		t.Fatalf("ideas=%d runway=%d, want 50", len(candidate.RecommendedTitles), candidate.Runway.ViableTopicCount)
+	}
+	if candidate.Runway.WeeklyCapacity != 2 || candidate.Runway.EstimatedWeeks != 25 {
+		t.Fatalf("runway = %#v, want 25 weeks at 2/week", candidate.Runway)
+	}
+	total := 0
+	for _, pillar := range candidate.ContentPillars {
+		total += pillar.TopicCount
+	}
+	if total != len(candidate.RecommendedTitles) {
+		t.Fatalf("pillar topic total = %d, ideas = %d", total, len(candidate.RecommendedTitles))
+	}
+}
+
+func TestDuplicateAndNearDuplicateTitlesRejected(t *testing.T) {
+	pillars := []ContentPillar{{Name: "Tutorials"}}
+	titles := validateVideoTitles([]VideoTopic{
+		{Title: "Build a login screen from scratch", Pillar: "Tutorials"},
+		{Title: "Build login screen from scratch!", Pillar: "Tutorials"},
+		{Title: "Compare Flutter and React Native for students", Pillar: "Tutorials"},
+	}, pillars, "cross-platform apps", "students")
+	if len(titles) != 2 {
+		t.Fatalf("titles = %#v, want exact/near duplicate removed", titles)
+	}
+}
+
+func TestResearchReturnsPrimaryPlusTwoAlternativesWithoutExtraYouTubeSearches(t *testing.T) {
+	now := time.Date(2026, 7, 12, 12, 0, 0, 0, time.UTC)
+	provider := &fakeNicheProvider{videos: sampleNicheVideos(now), channels: sampleNicheChannels()}
+	report, err := ResearchNiches(context.Background(), NicheResearchRequest{Profile: sampleAIProfile()}, NicheResearchConfig{
+		YouTube:                      provider,
+		Strategist:                   fakeNicheStrategist{result: strategyWithCandidates(3)},
+		MaxYouTubeSearchesPerRequest: 3,
+		DailyYouTubeSearchLimit:      80,
+		Now:                          func() time.Time { return now },
+	})
+	if err != nil {
+		t.Fatalf("ResearchNiches error: %v", err)
+	}
+	if report.PrimaryRecommendation == nil || len(report.AlternativeCandidates) < 2 {
+		t.Fatalf("primary/alternatives missing: primary=%v alternatives=%d", report.PrimaryRecommendation != nil, len(report.AlternativeCandidates))
+	}
+	if provider.searchCalls > 3 {
+		t.Fatalf("search calls = %d, want capped at 3", provider.searchCalls)
+	}
+}
+
+func TestRepairAttemptDoesNotConsumeYouTubeBudgetBeforeValidCandidates(t *testing.T) {
+	now := time.Date(2026, 7, 12, 12, 0, 0, 0, time.UTC)
+	bad := baseNicheDraft("bad", "Bad scale", "cross-platform apps")
+	bad.DimensionScores.CreatorFit = 9
+	bad.DimensionRatings.CreatorFit = "high"
+	repaired := strategyWithCandidates(3)
+	strategist := &fakeRepairStrategist{
+		result:   NicheStrategyResult{CreatorProfileSummary: "bad", Candidates: []NicheDraft{bad}},
+		repaired: repaired,
+	}
+	provider := &fakeNicheProvider{videos: sampleNicheVideos(now), channels: sampleNicheChannels()}
+	report, err := ResearchNiches(context.Background(), NicheResearchRequest{Profile: sampleAIProfile()}, NicheResearchConfig{
+		YouTube:                      provider,
+		Strategist:                   strategist,
+		MaxYouTubeSearchesPerRequest: 3,
+		DailyYouTubeSearchLimit:      80,
+		Now:                          func() time.Time { return now },
+	})
+	if err != nil {
+		t.Fatalf("ResearchNiches error: %v", err)
+	}
+	if strategist.repairCalls != 1 {
+		t.Fatalf("repair calls = %d, want 1", strategist.repairCalls)
+	}
+	if report.Status != StatusOK || provider.searchCalls > 3 {
+		t.Fatalf("status=%s searchCalls=%d", report.Status, provider.searchCalls)
+	}
+}
+
+func TestEmptyAlternativeStateIsHonestLimitation(t *testing.T) {
+	report, err := ResearchNiches(context.Background(), NicheResearchRequest{Profile: sampleAIProfile()}, NicheResearchConfig{
+		Strategist: fakeNicheStrategist{result: strategyWithCandidates(1)},
+		Now:        func() time.Time { return time.Date(2026, 7, 12, 12, 0, 0, 0, time.UTC) },
+	})
+	if err != nil {
+		t.Fatalf("ResearchNiches error: %v", err)
+	}
+	if len(report.AlternativeCandidates) != 0 {
+		t.Fatalf("alternatives = %d, want none", len(report.AlternativeCandidates))
+	}
+	if !strings.Contains(strings.ToLower(strings.Join(report.Limitations, " ")), "alternative") {
+		t.Fatalf("missing honest alternative limitation: %v", report.Limitations)
+	}
+}
+
+func TestOldSparseEvidenceLimitsConfidenceAndOpportunity(t *testing.T) {
+	now := time.Date(2026, 7, 12, 12, 0, 0, 0, time.UTC)
+	old := now.Add(-240 * 24 * time.Hour).Format(time.RFC3339)
+	views := uint64(669110)
+	videos := make([]ChannelVideoSummary, 12)
+	for i := range videos {
+		videos[i] = ChannelVideoSummary{VideoID: intString(i + 1), Title: "Old app tutorial " + intString(i+1), ChannelID: "ch1", PublishedAt: old, Views: &views}
+	}
+	validation := buildNicheValidation(nicheBlueprint{CorePhrase: "cross-platform apps", QueryPhrases: []string{"cross-platform apps"}}, videos, nil, now)
+	if validation.RecentPublicationVolume != 0 {
+		t.Fatalf("recent volume = %d, want 0", validation.RecentPublicationVolume)
+	}
+	if !strings.Contains(validation.MarketEvidenceSummary, "older sampled videos") {
+		t.Fatalf("summary should acknowledge old evidence: %q", validation.MarketEvidenceSummary)
+	}
+	gapScore := scoreOpportunityGap(validation, nil, []SupplyGap{{Statement: "gap", Confidence: "medium"}})
+	conf := scoreConfidence(validation, MonetizationEstimate{}, SustainabilityEvidence{ViableTopicCount: 50})
+	if gapScore >= 100 || conf > 54 {
+		t.Fatalf("gapScore=%.1f confidence=%.1f, want capped by old sparse evidence", gapScore, conf)
+	}
+}
+
+func TestProductionProfileFixtureLocalNicheResult(t *testing.T) {
+	now := time.Date(2026, 7, 12, 12, 0, 0, 0, time.UTC)
+	provider := &fakeNicheProvider{videos: sampleNicheVideos(now), channels: sampleNicheChannels()}
+	report, err := ResearchNiches(context.Background(), NicheResearchRequest{Profile: sampleTitleQualityProfile()}, NicheResearchConfig{
+		YouTube:                      provider,
+		Strategist:                   fakeNicheStrategist{result: strategyWithCandidates(3)},
+		MaxYouTubeSearchesPerRequest: 3,
+		DailyYouTubeSearchLimit:      80,
+		Now:                          func() time.Time { return now },
+	})
+	if err != nil {
+		t.Fatalf("ResearchNiches error: %v", err)
+	}
+	primary := report.PrimaryRecommendation
+	if primary == nil {
+		t.Fatalf("missing primary recommendation")
+	}
+	if len(primary.RecommendedTitles) != 50 || primary.Runway.EstimatedWeeks != 25 {
+		t.Fatalf("ideas=%d weeks=%d, want 50 ideas and 25 weeks", len(primary.RecommendedTitles), primary.Runway.EstimatedWeeks)
+	}
+	if len(report.AlternativeCandidates) < 2 {
+		t.Fatalf("alternatives=%d, want at least two", len(report.AlternativeCandidates))
+	}
+	for _, dim := range []ScoreExplanation{primary.Dimensions.CreatorFit, primary.Dimensions.AudienceDemand, primary.Dimensions.CompetitionOpportunity, primary.Dimensions.Sustainability, primary.Dimensions.Differentiation} {
+		if dim.Score < 0 || dim.Score > 100 || dim.Score != math.Round(dim.Score) {
+			t.Fatalf("invalid dimension score: %#v", dim)
+		}
+		if dim.Score <= 10 && (dim.RatingBand == "high" || dim.RatingBand == "very_high") {
+			t.Fatalf("single-digit score has positive rating: %#v", dim)
+		}
+	}
+	want := calculateNicheOverallScore(primary.Dimensions)
+	if primary.OverallScore != want {
+		t.Fatalf("overall=%.1f, want %.1f", primary.OverallScore, want)
+	}
+	body, err := json.Marshal(report)
+	if err != nil {
+		t.Fatalf("marshal report: %v", err)
+	}
+	lower := strings.ToLower(string(body))
+	for _, forbidden := range []string{"rpm", "revenue", "earnings", "monetization", "monetisation"} {
+		if strings.Contains(lower, forbidden) {
+			t.Fatalf("niche response contains forbidden monetization term %q: %s", forbidden, lower)
+		}
+	}
+	if provider.searchCalls > 3 {
+		t.Fatalf("search calls=%d, want at most 3", provider.searchCalls)
 	}
 }
 
@@ -574,6 +856,7 @@ func baseNicheDraft(id, name, query string) NicheDraft {
 		CreatorAdvantages:      []string{"Can teach coding through real app builds."},
 		UniqueAngle:            "Practical app builds with clear tradeoffs.",
 		DimensionScores:        NicheDraftDimensionScores{CreatorFit: 80, AudienceDemand: 70, CompetitionOpportunity: 65, Sustainability: 85, Differentiation: 72},
+		DimensionRatings:       NicheDraftDimensionRatings{CreatorFit: "very_high", AudienceDemand: "high", CompetitionOpportunity: "high", Sustainability: "very_high", Differentiation: "high"},
 		DimensionReasoning:     NicheDraftDimensionReasoning{CreatorFit: "Matches coding background.", AudienceDemand: "Audience has practical learning demand.", CompetitionOpportunity: "Specific positioning avoids broad tutorials.", Sustainability: "Enough workflows and case studies.", Differentiation: "Creator can show practical builds."},
 		ContentPillars:         pillars,
 		RecommendedTitles:      titles,
