@@ -12,12 +12,12 @@ import (
 
 // VideoMetadata holds the per-video data written into each zip slot.
 type VideoMetadata struct {
-	Rank        int      `json:"rank"`
-	Title       string   `json:"title"`
-	Description string   `json:"description"`
-	Hashtags    []string `json:"hashtags"`
-	Platforms   []string `json:"platforms"`
-	AIDisclosure bool    `json:"ai_disclosure"`
+	Rank         int      `json:"rank"`
+	Title        string   `json:"title"`
+	Description  string   `json:"description"`
+	Hashtags     []string `json:"hashtags"`
+	Platforms    []string `json:"platforms"`
+	AIDisclosure bool     `json:"ai_disclosure"`
 }
 
 // BatchSummary is written as batch-summary.json at the zip root.

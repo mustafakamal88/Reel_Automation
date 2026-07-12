@@ -81,7 +81,12 @@ func (s *Server) Routes() http.Handler {
 
 	mux.HandleFunc("GET /api/trends/discover", s.handleDiscoverTrendCandidates)
 	mux.HandleFunc("POST /api/trends/discover", s.handleDiscoverTrends)
-	mux.HandleFunc("GET /api/trends", s.handleListTrends)
+	mux.HandleFunc("GET /api/trends", s.handleTrendIntelligenceSearch)
+	mux.HandleFunc("GET /api/trends/search", s.handleTrendIntelligenceSearch)
+	mux.HandleFunc("GET /api/trends/filters", s.handleTrendIntelligenceFilters)
+	mux.HandleFunc("GET /api/trends/{id}", s.handleTrendIntelligenceDetail)
+	mux.HandleFunc("GET /api/trend-items", s.handleListTrends)
+	mux.HandleFunc("POST /api/location/resolve", s.handleResolveLocation)
 	mux.HandleFunc("GET /api/research/providers/status", s.handleResearchProviderStatus)
 	mux.HandleFunc("POST /api/research/youtube/video", s.handleAnalyzeYouTubeVideo)
 	mux.HandleFunc("POST /api/research/youtube/channel", s.handleAnalyzeYouTubeChannel)

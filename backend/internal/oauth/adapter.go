@@ -50,12 +50,12 @@ type PublishResult struct {
 
 // AnalyticsResult contains a snapshot of video performance metrics.
 type AnalyticsResult struct {
-	Views         int64
-	Likes         int64
-	Shares        int64
-	Comments      int64
-	WatchTimeSec  int64
-	SnapshotAt    time.Time
+	Views        int64
+	Likes        int64
+	Shares       int64
+	Comments     int64
+	WatchTimeSec int64
+	SnapshotAt   time.Time
 }
 
 // Adapter defines the interface every platform must implement.

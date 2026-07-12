@@ -40,7 +40,7 @@ func (a *XAdapter) RequiredScopes() []string {
 
 func (a *XAdapter) RateLimitConfig() oauth.RateLimitConfig {
 	return oauth.RateLimitConfig{
-		DailyUploadLimit: 17,    // Free tier: 17 posts/day via API
+		DailyUploadLimit: 17, // Free tier: 17 posts/day via API
 		MinSecsBetween:   0,
 		MaxDurationSec:   140,
 		MaxFileSizeMB:    512,

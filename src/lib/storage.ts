@@ -109,7 +109,6 @@ export const DEFAULT_APPROVALS: Record<string, ApprovalStatus> = {
 const VALID_VIEWS: View[] = [
   'dashboard',
   'trendingKeywords',
-  'platformTrends',
   'youtubeVideoAnalyzer',
   'youtubeChannelAnalyzer',
   'nicheFinder',
@@ -127,6 +126,7 @@ const VALID_VIEWS: View[] = [
 
 const LEGACY_VIEW_MAP: Record<string, View> = {
   signals: 'trendingKeywords',
+  platformTrends: 'trendingKeywords',
   trendFinder: 'trendingKeywords',
   exports: 'clipStudio',
   batch: 'clipStudio',

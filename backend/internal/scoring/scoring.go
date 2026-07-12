@@ -33,11 +33,11 @@ type Result struct {
 
 // weights sum to 1.0 — safety carries the heaviest weight on purpose.
 const (
-	weightVelocity   = 0.25
-	weightConfidence = 0.15
-	weightPlatform   = 0.15
-	weightSafety     = 0.20
-	weightWatchTime  = 0.15
+	weightVelocity    = 0.25
+	weightConfidence  = 0.15
+	weightPlatform    = 0.15
+	weightSafety      = 0.20
+	weightWatchTime   = 0.15
 	weightCompetition = 0.10
 )
 
@@ -86,15 +86,15 @@ func Score(in Input) Result {
 	reason := buildReason(velocityScore, confidenceScore, platformScore, safetyScore, watchTimeScore, competitionScore, flagged, flaggedTerms)
 
 	return Result{
-		TotalScore:             round3(total),
-		VelocityScore:          round3(velocityScore),
-		SourceConfidenceScore:  round3(confidenceScore),
-		PlatformFitScore:       round3(platformScore),
-		SafetyScore:            round3(safetyScore),
-		WatchTimeScore:         round3(watchTimeScore),
-		CompetitionScore:       round3(competitionScore),
-		Reason:                 reason,
-		Flagged:                flagged,
+		TotalScore:            round3(total),
+		VelocityScore:         round3(velocityScore),
+		SourceConfidenceScore: round3(confidenceScore),
+		PlatformFitScore:      round3(platformScore),
+		SafetyScore:           round3(safetyScore),
+		WatchTimeScore:        round3(watchTimeScore),
+		CompetitionScore:      round3(competitionScore),
+		Reason:                reason,
+		Flagged:               flagged,
 	}
 }
 

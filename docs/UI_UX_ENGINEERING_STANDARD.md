@@ -125,7 +125,7 @@ UI changes must preserve this CTA flow. A user should always understand where th
 The main sidebar information architecture is:
 
 - Dashboard
-- Research: Trending Keywords, Platform Trends, Video Analyzer, Channel Analyzer, Niche Finder
+- Research: Trend Intelligence, Video Analyzer, Channel Analyzer, Niche Finder
 - Content: Script Studio, Clip Generator, Voice Studio, Thumbnail Studio, Assets
 - Publishing: Connections, Calendar, Analytics
 - Settings

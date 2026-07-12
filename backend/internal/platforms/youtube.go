@@ -9,8 +9,8 @@ import (
 )
 
 const (
-	youtubeAuthURL  = "https://accounts.google.com/o/oauth2/v2/auth"
-	youtubeTokenURL = "https://oauth2.googleapis.com/token"
+	youtubeAuthURL   = "https://accounts.google.com/o/oauth2/v2/auth"
+	youtubeTokenURL  = "https://oauth2.googleapis.com/token"
 	youtubeRevokeURL = "https://oauth2.googleapis.com/revoke"
 )
 

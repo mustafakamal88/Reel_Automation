@@ -94,12 +94,6 @@ func (s *Server) handleResearchProviderStatus(w http.ResponseWriter, r *http.Req
 	statuses := []research.ProviderStatus{
 		googleStatus,
 		youtube.Status(),
-		research.YouTubeAnalyticsStatus(),
-		s.googleAdsKeywordPlannerStatus(),
-		research.TikTokResearchStatus(s.cfg.TikTokResearchClientID, s.cfg.TikTokResearchSecret, s.cfg.TikTokResearchToken),
-		research.MetaInstagramStatus(s.cfg.MetaAppID, s.cfg.MetaAppSecret),
-		research.XStatus(s.cfg.XClientID, s.cfg.XClientSecret),
-		research.FacebookStatus(s.cfg.MetaAppID, s.cfg.MetaAppSecret),
 	}
 	jsonOK(w, map[string]any{"providers": statuses})
 }

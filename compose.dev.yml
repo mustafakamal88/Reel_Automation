@@ -1,0 +1,20 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: trendcortex-postgres-dev
+    environment:
+      POSTGRES_DB: trendcortex
+      POSTGRES_USER: trendcortex
+      POSTGRES_PASSWORD: trendcortex_dev
+    ports:
+      - "55432:5432"
+    volumes:
+      - trendcortex_postgres_dev:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U trendcortex -d trendcortex"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  trendcortex_postgres_dev:

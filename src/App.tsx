@@ -16,7 +16,6 @@ import type { ReelContentPackage, TrendCandidate } from './lib/api/client';
 const VIEW_ROUTES: Record<View, string> = {
   dashboard: '/',
   trendingKeywords: '/ai-tools/trending-keywords',
-  platformTrends: '/ai-tools/platform-trends',
   youtubeVideoAnalyzer: '/ai-tools/youtube-video-analyzer',
   youtubeChannelAnalyzer: '/ai-tools/youtube-channel-analyzer',
   nicheFinder: '/ai-tools/niche-finder',
@@ -39,7 +38,6 @@ const ROUTE_VIEWS: Record<string, View> = {
   '/signals': 'trendingKeywords',
   '/ai-tools': 'trendingKeywords',
   '/ai-tools/trending-keywords': 'trendingKeywords',
-  '/ai-tools/platform-trends': 'platformTrends',
   '/ai-tools/youtube-video-analyzer': 'youtubeVideoAnalyzer',
   '/ai-tools/youtube-channel-analyzer': 'youtubeChannelAnalyzer',
   '/ai-tools/niche-finder': 'nicheFinder',
@@ -57,6 +55,10 @@ const ROUTE_VIEWS: Record<string, View> = {
 
 function viewFromLocation(): View {
   const path = window.location.pathname.replace(/\/+$/, '') || '/';
+  if (path === '/ai-tools/platform-trends') {
+    window.history.replaceState(null, '', '/ai-tools/trending-keywords');
+    return 'trendingKeywords';
+  }
   return ROUTE_VIEWS[path] ?? storage.getView();
 }
 
@@ -124,9 +126,9 @@ export default function App() {
         <div className="scroll-area" ref={scrollAreaRef}>
           <div key={view} className="workspace-route">
             {view === 'dashboard' && <DashboardPage latestScript={latestScript} onNavigate={navigate} />}
-            {['trendingKeywords', 'platformTrends', 'youtubeVideoAnalyzer', 'youtubeChannelAnalyzer', 'nicheFinder'].includes(view) && (
+            {['trendingKeywords', 'youtubeVideoAnalyzer', 'youtubeChannelAnalyzer', 'nicheFinder'].includes(view) && (
               <AIToolPage
-                tool={view as 'trendingKeywords' | 'platformTrends' | 'youtubeVideoAnalyzer' | 'youtubeChannelAnalyzer' | 'nicheFinder'}
+                tool={view as 'trendingKeywords' | 'youtubeVideoAnalyzer' | 'youtubeChannelAnalyzer' | 'nicheFinder'}
                 onScriptGenerated={handleScriptGenerated}
                 onOpenScriptStudio={() => navigate('scriptStudio')}
                 onManageDataSources={() => navigate('connections')}

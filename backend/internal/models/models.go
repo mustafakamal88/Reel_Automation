@@ -78,13 +78,13 @@ type PlatformAccount struct {
 
 // OAuthConnection tracks the OAuth state during the redirect flow.
 type OAuthConnection struct {
-	ID          string      `json:"id" db:"id"`
-	WorkspaceID string      `json:"workspace_id" db:"workspace_id"`
-	Platform    PlatformKey `json:"platform" db:"platform"`
-	State       string      `json:"-" db:"state"`
-	CodeVerifier *string    `json:"-" db:"code_verifier"`
-	CreatedAt   time.Time   `json:"created_at" db:"created_at"`
-	ExpiresAt   time.Time   `json:"expires_at" db:"expires_at"`
+	ID           string      `json:"id" db:"id"`
+	WorkspaceID  string      `json:"workspace_id" db:"workspace_id"`
+	Platform     PlatformKey `json:"platform" db:"platform"`
+	State        string      `json:"-" db:"state"`
+	CodeVerifier *string     `json:"-" db:"code_verifier"`
+	CreatedAt    time.Time   `json:"created_at" db:"created_at"`
+	ExpiresAt    time.Time   `json:"expires_at" db:"expires_at"`
 }
 
 // TokenVaultRef is a pointer to an encrypted token stored in the vault.
@@ -142,10 +142,10 @@ type VideoAsset struct {
 	CaptionsPath  *string `json:"captions_path" db:"captions_path"`
 
 	// Metadata
-	Description    string `json:"description" db:"description"`
-	Hashtags       string `json:"hashtags" db:"hashtags"`
-	AIDisclosure   bool   `json:"ai_disclosure" db:"ai_disclosure"`
-	HumanApproved  bool   `json:"human_approved" db:"human_approved"`
+	Description   string `json:"description" db:"description"`
+	Hashtags      string `json:"hashtags" db:"hashtags"`
+	AIDisclosure  bool   `json:"ai_disclosure" db:"ai_disclosure"`
+	HumanApproved bool   `json:"human_approved" db:"human_approved"`
 
 	CreatedAt time.Time `json:"created_at" db:"created_at"`
 	UpdatedAt time.Time `json:"updated_at" db:"updated_at"`
@@ -156,39 +156,39 @@ type VideoAsset struct {
 type PublishJobStatus string
 
 const (
-	PublishJobQueued     PublishJobStatus = "queued"
-	PublishJobRunning    PublishJobStatus = "running"
-	PublishJobDone       PublishJobStatus = "done"
-	PublishJobFailed     PublishJobStatus = "failed"
-	PublishJobSkipped    PublishJobStatus = "skipped"
+	PublishJobQueued  PublishJobStatus = "queued"
+	PublishJobRunning PublishJobStatus = "running"
+	PublishJobDone    PublishJobStatus = "done"
+	PublishJobFailed  PublishJobStatus = "failed"
+	PublishJobSkipped PublishJobStatus = "skipped"
 )
 
 type PublishJob struct {
-	ID            string           `json:"id" db:"id"`
-	WorkspaceID   string           `json:"workspace_id" db:"workspace_id"`
-	VideoAssetID  *string          `json:"video_asset_id,omitempty" db:"video_asset_id"`
-	ReelPlanID    *string          `json:"reel_plan_id,omitempty" db:"reel_plan_id"`
-	Platform      PlatformKey      `json:"platform" db:"platform"`
-	Status        PublishJobStatus `json:"status" db:"status"`
-	RetryCount    int              `json:"retry_count" db:"retry_count"`
-	ErrorMessage  *string          `json:"error_message" db:"error_message"`
-	PlatformPostID *string         `json:"platform_post_id" db:"platform_post_id"`
-	ScheduledFor  *time.Time       `json:"scheduled_for" db:"scheduled_for"`
-	StartedAt     *time.Time       `json:"started_at" db:"started_at"`
-	CompletedAt   *time.Time       `json:"completed_at" db:"completed_at"`
-	CreatedAt     time.Time        `json:"created_at" db:"created_at"`
+	ID             string           `json:"id" db:"id"`
+	WorkspaceID    string           `json:"workspace_id" db:"workspace_id"`
+	VideoAssetID   *string          `json:"video_asset_id,omitempty" db:"video_asset_id"`
+	ReelPlanID     *string          `json:"reel_plan_id,omitempty" db:"reel_plan_id"`
+	Platform       PlatformKey      `json:"platform" db:"platform"`
+	Status         PublishJobStatus `json:"status" db:"status"`
+	RetryCount     int              `json:"retry_count" db:"retry_count"`
+	ErrorMessage   *string          `json:"error_message" db:"error_message"`
+	PlatformPostID *string          `json:"platform_post_id" db:"platform_post_id"`
+	ScheduledFor   *time.Time       `json:"scheduled_for" db:"scheduled_for"`
+	StartedAt      *time.Time       `json:"started_at" db:"started_at"`
+	CompletedAt    *time.Time       `json:"completed_at" db:"completed_at"`
+	CreatedAt      time.Time        `json:"created_at" db:"created_at"`
 }
 
 type DownloadZipJob struct {
-	ID          string           `json:"id" db:"id"`
-	WorkspaceID string           `json:"workspace_id" db:"workspace_id"`
-	BatchID     string           `json:"batch_id" db:"batch_id"`
-	Status      PublishJobStatus `json:"status" db:"status"`
-	ZipPath     *string          `json:"zip_path" db:"zip_path"`
-	ZipSizeBytes *int64          `json:"zip_size_bytes" db:"zip_size_bytes"`
-	ErrorMessage *string         `json:"error_message" db:"error_message"`
-	CreatedAt   time.Time        `json:"created_at" db:"created_at"`
-	CompletedAt *time.Time       `json:"completed_at" db:"completed_at"`
+	ID           string           `json:"id" db:"id"`
+	WorkspaceID  string           `json:"workspace_id" db:"workspace_id"`
+	BatchID      string           `json:"batch_id" db:"batch_id"`
+	Status       PublishJobStatus `json:"status" db:"status"`
+	ZipPath      *string          `json:"zip_path" db:"zip_path"`
+	ZipSizeBytes *int64           `json:"zip_size_bytes" db:"zip_size_bytes"`
+	ErrorMessage *string          `json:"error_message" db:"error_message"`
+	CreatedAt    time.Time        `json:"created_at" db:"created_at"`
+	CompletedAt  *time.Time       `json:"completed_at" db:"completed_at"`
 }
 
 // ─── Analytics & Limits ───────────────────────────────────────
@@ -207,13 +207,13 @@ type AnalyticsSnapshot struct {
 }
 
 type PlatformRateLimit struct {
-	ID                string      `json:"id" db:"id"`
-	Platform          PlatformKey `json:"platform" db:"platform"`
-	DailyUploadLimit  int         `json:"daily_upload_limit" db:"daily_upload_limit"`
-	MinSecsBetween    int         `json:"min_secs_between" db:"min_secs_between"`
-	MaxDurationSec    int         `json:"max_duration_sec" db:"max_duration_sec"`
-	MaxFileSizeMB     int         `json:"max_file_size_mb" db:"max_file_size_mb"`
-	UpdatedAt         time.Time   `json:"updated_at" db:"updated_at"`
+	ID               string      `json:"id" db:"id"`
+	Platform         PlatformKey `json:"platform" db:"platform"`
+	DailyUploadLimit int         `json:"daily_upload_limit" db:"daily_upload_limit"`
+	MinSecsBetween   int         `json:"min_secs_between" db:"min_secs_between"`
+	MaxDurationSec   int         `json:"max_duration_sec" db:"max_duration_sec"`
+	MaxFileSizeMB    int         `json:"max_file_size_mb" db:"max_file_size_mb"`
+	UpdatedAt        time.Time   `json:"updated_at" db:"updated_at"`
 }
 
 // ─── Audit & Policy ───────────────────────────────────────────
@@ -232,11 +232,11 @@ type AuditLog struct {
 }
 
 type PolicyChangeLog struct {
-	ID          string    `json:"id" db:"id"`
+	ID          string      `json:"id" db:"id"`
 	Platform    PlatformKey `json:"platform" db:"platform"`
-	ChangeType  string    `json:"change_type" db:"change_type"`
-	Description string    `json:"description" db:"description"`
-	EffectiveAt time.Time `json:"effective_at" db:"effective_at"`
-	Source      string    `json:"source" db:"source"`
-	CreatedAt   time.Time `json:"created_at" db:"created_at"`
+	ChangeType  string      `json:"change_type" db:"change_type"`
+	Description string      `json:"description" db:"description"`
+	EffectiveAt time.Time   `json:"effective_at" db:"effective_at"`
+	Source      string      `json:"source" db:"source"`
+	CreatedAt   time.Time   `json:"created_at" db:"created_at"`
 }

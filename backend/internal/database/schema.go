@@ -307,6 +307,14 @@ CREATE TABLE IF NOT EXISTS export_jobs (
 -- is a safe, non-destructive extension rather than a new table.
 ALTER TABLE publish_jobs ALTER COLUMN video_asset_id DROP NOT NULL;
 ALTER TABLE publish_jobs ADD COLUMN IF NOT EXISTS reel_plan_id UUID REFERENCES reel_plans(id) ON DELETE CASCADE;
+
+CREATE TABLE IF NOT EXISTS trend_intelligence_cache (
+    cache_key TEXT PRIMARY KEY,
+    payload   JSONB NOT NULL,
+    stored_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    expires_at TIMESTAMPTZ NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_trend_intelligence_cache_expires_at ON trend_intelligence_cache(expires_at);
 `
 
 // SchemaPhase4B adds per-reel video/thumbnail artifact tracking columns to

@@ -1,14 +1,14 @@
-import { useEffect, useId, useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useId, useMemo, useState, type KeyboardEvent, type ReactNode } from 'react';
 import type { Platform, View } from '../types';
-import { PLATFORMS } from '../data/platforms';
 import {
   ApiError,
   analyzeNicheOpportunities,
   analyzeYouTubeChannel,
   analyzeYouTubeVideo,
-  discoverTrendCandidates,
   generateResearchScript,
+  getTrendFilters,
   getResearchProviderStatus,
+  searchTrendIntelligence,
   type NicheOpportunity,
   type NicheOpportunityResponse,
   type ReelContentPackage,
@@ -17,26 +17,23 @@ import {
   type ResearchProviderStatus,
   type TrendCandidate,
   type TrendDiscoveryResponse,
+  type TrendFilterMetadata,
+  type TrendIntelligenceResult,
+  type TrendIntelligenceResponse,
   type YouTubeChannelAnalysisResponse,
   type YouTubeVideoAnalysisResponse,
 } from '../lib/api/client';
+import { formatLabel, formatMetric } from '../lib/metricFormat';
 import { storage } from '../lib/storage';
-import { TargetPlatformSelector } from '../components/TargetPlatformSelector';
 
-type AIToolView = 'trendingKeywords' | 'platformTrends' | 'youtubeVideoAnalyzer' | 'youtubeChannelAnalyzer' | 'nicheFinder';
+type AIToolView = 'trendingKeywords' | 'youtubeVideoAnalyzer' | 'youtubeChannelAnalyzer' | 'nicheFinder';
 
 const AI_TOOL_PAGE_META: Record<AIToolView, { title: string; eyebrow: string; description: string; action: string }> = {
   trendingKeywords: {
-    eyebrow: 'Trend research',
-    title: 'Trending Keywords',
-    description: 'Filter live trend data by region, language, audience, and source, then turn the strongest result into a script.',
+    eyebrow: 'Keyword Research',
+    title: 'Keyword Discovery',
+    description: 'Discover, search, filter, and rank current content opportunities by market, language, niche, and recency.',
     action: 'Generate Script',
-  },
-  platformTrends: {
-    eyebrow: 'Platform research',
-    title: 'Platform Trends',
-    description: 'Explore trend data from connected social platforms.',
-    action: 'Open Connections',
   },
   youtubeVideoAnalyzer: {
     eyebrow: 'YouTube research',
@@ -77,24 +74,6 @@ const LANGUAGE_OPTIONS = [
 ];
 
 const AUDIENCE_OPTIONS = ['Global', 'South Asian', 'UK Pakistani', 'US Gen Z', 'Muslim audience', 'Tech creators', 'Finance creators', 'Entertainment creators', 'custom text'];
-
-const PLATFORM_FILTERS: { id: Platform | 'all'; label: string; providerID?: string }[] = [
-  { id: 'all', label: 'All available' },
-  { id: 'gt', label: 'Google Trends', providerID: 'google_trends_rss' },
-  { id: 'yt', label: 'YouTube', providerID: 'youtube_data_api' },
-  { id: 'tt', label: 'TikTok', providerID: 'tiktok_research_api' },
-  { id: 'ig', label: 'Instagram', providerID: 'instagram_graph_api' },
-  { id: 'x', label: 'X', providerID: 'x_api' },
-  { id: 'fb', label: 'Facebook', providerID: 'facebook_graph_api' },
-];
-
-const SOCIAL_PLATFORM_FILTERS: { id: Platform; providerID: string }[] = [
-  { id: 'yt', providerID: 'youtube_data_api' },
-  { id: 'tt', providerID: 'tiktok_research_api' },
-  { id: 'ig', providerID: 'instagram_graph_api' },
-  { id: 'fb', providerID: 'facebook_graph_api' },
-  { id: 'x', providerID: 'x_api' },
-];
 
 interface Props {
   initialFilter?: Platform | 'all';
@@ -138,10 +117,10 @@ export function AIToolPage({ tool, initialFilter = 'all', onFilterChange, onScri
   const [customLanguage, setCustomLanguage] = useState('');
   const [audience, setAudience] = useState('Global');
   const [customAudience, setCustomAudience] = useState('');
-  const [response, setResponse] = useState<TrendDiscoveryResponse | null>(null);
+  const response: TrendDiscoveryResponse | null = null;
   const [providers, setProviders] = useState<ResearchProviderStatus[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const loading = false;
+  const error: string | null = null;
   const [generatingID, setGeneratingID] = useState<string | null>(null);
   const [generated, setGenerated] = useState<Record<string, ReelContentPackage>>({});
   const [generationErrors, setGenerationErrors] = useState<Record<string, string>>({});
@@ -170,40 +149,10 @@ export function AIToolPage({ tool, initialFilter = 'all', onFilterChange, onScri
     };
   }, []);
 
-  useEffect(() => {
-    let cancelled = false;
-    setLoading(true);
-    setError(null);
-    discoverTrendCandidates({ region: region || 'US', language: language || 'en-US', limit: 20 })
-      .then(data => {
-        if (cancelled) return;
-        setResponse(data);
-        if (data.provider_status === 'ok') {
-          storage.updateActivity(current => ({
-            ...current,
-            trendsFoundToday: data.candidates.length,
-            latestTrendPulled: new Date().toISOString(),
-          }));
-        }
-      })
-      .catch(err => {
-        if (cancelled) return;
-        setError(err instanceof ApiError ? 'Trend discovery is temporarily unavailable.' : 'Trend discovery request failed.');
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [region, language]);
-
   const filteredCandidates = useMemo(() => {
-    const candidates = response?.candidates ?? [];
-    if (platformFilter === 'all') return candidates;
-    if (platformFilter === 'gt') return candidates.filter(c => c.source === 'google_trends_rss');
-    return [];
-  }, [platformFilter, response]);
+    void platformFilter;
+    return [] as TrendCandidate[];
+  }, [platformFilter]);
 
   function setFilter(next: Platform | 'all') {
     setPlatformFilter(next);
@@ -372,21 +321,6 @@ export function AIToolPage({ tool, initialFilter = 'all', onFilterChange, onScri
           />
         )}
 
-        {tool === 'platformTrends' && (
-          <PlatformTrendsTab
-            providers={providers}
-            response={response}
-            loading={loading}
-            error={error}
-            generated={generated}
-            generationErrors={generationErrors}
-            generatingID={generatingID}
-            onGenerate={handleGenerate}
-            onOpenScriptStudio={onOpenScriptStudio}
-            onManageDataSources={onManageDataSources}
-          />
-        )}
-
         {tool === 'youtubeVideoAnalyzer' && (
           <YouTubeVideoTab
             value={videoURL}
@@ -465,155 +399,162 @@ function TrendingKeywordsTab(props: {
   onOpenScriptStudio?: () => void;
   onManageDataSources?: () => void;
 }) {
-  const sourceOptions = sourceFilterOptions();
+  const [filters, setFilters] = useState<TrendFilterMetadata | null>(null);
+  const [query, setQuery] = useState('');
+  const [country, setCountry] = useState('GB');
+  const [language, setLanguage] = useState('en');
+  const [windowValue, setWindowValue] = useState('24h');
+  const [category, setCategory] = useState('all');
+  const [postcode, setPostcode] = useState('');
+  const [includeWords, setIncludeWords] = useState('');
+  const [excludeWords, setExcludeWords] = useState('');
+  const [exactPhrase, setExactPhrase] = useState('');
+  const [customNiche, setCustomNiche] = useState('');
+  const [localOnly, setLocalOnly] = useState(false);
+  const [radius, setRadius] = useState(25);
+  const [videoDuration, setVideoDuration] = useState('any');
+  const [minViews, setMinViews] = useState('');
+  const [maxCompetition, setMaxCompetition] = useState('');
+  const [minOpportunity, setMinOpportunity] = useState('');
+  const [sort, setSort] = useState('opportunity');
+  const [showMore, setShowMore] = useState(false);
+  const [trendResponse, setTrendResponse] = useState<TrendIntelligenceResponse | null>(null);
+  const [trendLoading, setTrendLoading] = useState(false);
+  const [trendError, setTrendError] = useState<string | null>(null);
+  const [expandedResultId, setExpandedResultId] = useState<string | null>(null);
+  const resultIdsKey = useMemo(() => trendResponse?.results.map(result => result.id).join('|') ?? '', [trendResponse]);
+
+  useEffect(() => {
+    let cancelled = false;
+    getTrendFilters()
+      .then(data => {
+        if (cancelled) return;
+        setFilters(data);
+        setCountry(data.default_country || 'GB');
+        setLanguage(data.default_language || 'en');
+      })
+      .catch(() => {
+        if (!cancelled) setFilters(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  function runSearch(discover = false, refresh = false) {
+    setTrendLoading(true);
+    setTrendError(null);
+    searchTrendIntelligence({
+      q: discover ? undefined : query.trim(),
+      country,
+      language,
+      window: windowValue,
+      category,
+      niche: customNiche,
+      postcode,
+      local_videos_only: localOnly,
+      radius_km: radius,
+      include_words: includeWords,
+      exclude_words: excludeWords,
+      exact_phrase: exactPhrase,
+      video_duration: videoDuration,
+      min_views: minViews,
+      max_competition: maxCompetition,
+      min_opportunity: minOpportunity,
+      sort,
+      refresh,
+      limit: 20,
+    })
+      .then(data => {
+        setTrendResponse(data);
+        storage.updateActivity(current => ({
+          ...current,
+          trendsFoundToday: data.results.length,
+          latestTrendPulled: new Date().toISOString(),
+        }));
+      })
+      .catch(() => setTrendError('Trend intelligence is temporarily unavailable.'))
+      .finally(() => setTrendLoading(false));
+  }
+
+  useEffect(() => {
+    if (!trendResponse) return;
+    setExpandedResultId(trendResponse.results[0]?.id ?? null);
+  }, [resultIdsKey, trendResponse]);
+
+  const countryOptions = filters?.countries ?? REGION_OPTIONS.filter(option => option.value !== 'custom').map(option => ({ label: option.label === 'UK' ? 'United Kingdom' : option.label, value: option.value }));
+  const languageOptions = filters?.languages ?? LANGUAGE_OPTIONS.filter(option => option.value !== 'custom').map(option => ({ label: option.label, value: option.value.split('-')[0] }));
+  const timeOptions = filters?.time_windows ?? [{ label: 'Last 24 hours', value: '24h' }];
+  const categoryOptions = filters?.categories ?? [{ label: 'All', value: 'all' }];
+  const durationOptions = filters?.video_durations ?? [{ label: 'Any duration', value: 'any' }];
+  const sortOptions = filters?.sort_orders ?? [{ label: 'Best opportunity', value: 'opportunity' }];
 
   return (
     <>
       <div className="settings-card research-filter-card">
-        <div className="settings-card-title">Research filters</div>
+        <div className="settings-card-title">Search & Filters</div>
         <div className="form-grid four">
-          <Select label="Region" value={props.regionChoice} onChange={props.setRegionChoice} options={REGION_OPTIONS} />
-          {props.regionChoice === 'custom' && <TextInput label="Custom region code" value={props.customRegion} onChange={props.setCustomRegion} placeholder="e.g. CA, AE" />}
-          <Select label="Language" value={props.languageChoice} onChange={props.setLanguageChoice} options={LANGUAGE_OPTIONS} />
-          {props.languageChoice === 'custom' && <TextInput label="Custom language" value={props.customLanguage} onChange={props.setCustomLanguage} placeholder="e.g. en-GB" />}
-          <Select label="Culture / audience" value={props.audience} onChange={props.setAudience} options={AUDIENCE_OPTIONS.map(value => ({ label: value, value }))} />
-          {props.audience === 'custom text' && <TextInput label="Custom audience" value={props.customAudience} onChange={props.setCustomAudience} placeholder="Audience or subculture" />}
-          <Select label="Platform/source filter" value={props.platformFilter} onChange={value => props.setPlatformFilter(value as Platform | 'all')} options={sourceOptions} />
+          <TextInput label="Search keyword" value={query} onChange={setQuery} placeholder="artificial intelligence, football highlights" />
+          <Select label="Country" value={country} onChange={setCountry} options={countryOptions} />
+          <Select label="Language" value={language} onChange={setLanguage} options={languageOptions} />
+          <TextInput label="Postcode or location" value={postcode} onChange={setPostcode} placeholder="Optional" />
+          <Select label="Time window" value={windowValue} onChange={setWindowValue} options={timeOptions} />
+          <Select label="Category" value={category} onChange={setCategory} options={categoryOptions} />
+          <Select label="Sort" value={sort} onChange={setSort} options={sortOptions} />
+          <TextInput label="Exclude words" value={excludeWords} onChange={setExcludeWords} placeholder="comma separated" />
         </div>
+        {showMore && (
+          <div className="form-grid four" style={{ marginTop: 12 }}>
+            <TextInput label="Include words" value={includeWords} onChange={setIncludeWords} placeholder="comma separated" />
+            <TextInput label="Exact phrase" value={exactPhrase} onChange={setExactPhrase} placeholder="Optional" />
+            <TextInput label="Custom niche" value={customNiche} onChange={setCustomNiche} placeholder="Optional" />
+            <Select label="Video duration" value={videoDuration} onChange={setVideoDuration} options={durationOptions} />
+            <TextInput label="Minimum views" value={minViews} onChange={setMinViews} placeholder="Optional" />
+            <TextInput label="Max competition" value={maxCompetition} onChange={setMaxCompetition} placeholder="0-100" />
+            <TextInput label="Minimum opportunity" value={minOpportunity} onChange={setMinOpportunity} placeholder="0-100" />
+            <Select label="Local radius" value={String(radius)} onChange={value => setRadius(Number(value))} options={(filters?.local_radii_km ?? [10, 25, 50, 100]).map(value => ({ label: `${value} km`, value: String(value) }))} />
+            <label className="checkbox-row">
+              <input type="checkbox" checked={localOnly} onChange={event => setLocalOnly(event.target.checked)} />
+              <span>Local videos only</span>
+            </label>
+          </div>
+        )}
         <div className="trend-filter-footer">
-          <span>Showing trends from connected sources. Audience fit is used for script and niche context.</span>
-          <button type="button" className="link-button" onClick={props.onManageDataSources}>Open Connections</button>
+          <span>{trendResponse?.resolved_location?.status === 'resolved' ? `Resolved locality: ${trendResponse.resolved_location.city || trendResponse.resolved_location.region || trendResponse.resolved_location.input}` : 'Enter a keyword or discover current trends.'}</span>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <button type="button" className="link-button" onClick={() => setShowMore(value => !value)}>More Filters</button>
+            <button type="button" className="generate-btn idle" onClick={() => runSearch(true)}>Discover Trends</button>
+            <button type="button" className="generate-btn idle" onClick={() => runSearch(false)} disabled={!query.trim() && !exactPhrase.trim()}>Search</button>
+          </div>
         </div>
+        {localOnly && <div className="neutral-callout">Local videos only matches supporting videos with available geographic metadata. Country-level trend geography is still used.</div>}
       </div>
 
-      <DiscoveryState loading={props.loading} error={props.error} response={props.response} filteredCount={props.filteredCandidates.length} />
+      {trendLoading && <EmptyState tone="loading" title="Loading trend intelligence." desc="Checking current demand, recency, and public engagement signals." />}
+      {!trendLoading && trendError && <EmptyState tone="error" title="Trend intelligence is temporarily unavailable." desc={trendError} />}
+      {!trendLoading && !trendError && !trendResponse && <EmptyState tone="empty" title="Enter a keyword or discover current trends." desc="Choose country, language, time window, and niche filters to rank opportunities." />}
+      {!trendLoading && !trendError && trendResponse?.message && trendResponse.results.length === 0 && (
+        <EmptyState tone="empty" title={trendResponse.message} desc="Try a broader country, language, or time window." />
+      )}
 
-      {!props.loading && !props.error && props.response?.provider_status === 'ok' && props.filteredCandidates.length > 0 && (
-        <div style={{ display: 'grid', gap: 10 }}>
-          {props.filteredCandidates.map(candidate => (
-            <TrendCandidateCard
-              key={candidate.id}
-              candidate={candidate}
-              audience={props.audienceText}
-              generated={props.generated[candidate.id]}
-              generationError={props.generationErrors[candidate.id]}
-              generating={props.generatingID === candidate.id}
-              onGenerate={() => props.onGenerate(candidate)}
+      {!trendLoading && !trendError && trendResponse && trendResponse.results.length > 0 && (
+        <div className="trend-opportunity-list">
+          {trendResponse.results.map(result => (
+            <TrendOpportunityCard
+              key={result.id}
+              result={result}
+              expanded={expandedResultId === result.id}
+              onToggle={() => setExpandedResultId(current => current === result.id ? null : result.id)}
+              generated={props.generated[result.id]}
+              generationError={props.generationErrors[result.id]}
+              generating={props.generatingID === result.id}
+              onGenerate={() => props.onGenerate(candidateFromTrendIntelligence(result, country, language))}
               onOpenScriptStudio={props.onOpenScriptStudio}
             />
           ))}
         </div>
       )}
     </>
-  );
-}
-
-function PlatformTrendsTab({ providers, response, loading, error, generated, generationErrors, generatingID, onGenerate, onOpenScriptStudio, onManageDataSources }: {
-  providers: ResearchProviderStatus[];
-  response: TrendDiscoveryResponse | null;
-  loading: boolean;
-  error: string | null;
-  generated: Record<string, ReelContentPackage>;
-  generationErrors: Record<string, string>;
-  generatingID: string | null;
-  onGenerate: (candidate: TrendCandidate) => void;
-  onOpenScriptStudio?: () => void;
-  onManageDataSources?: () => void;
-}) {
-  const [selectedPlatform, setSelectedPlatform] = useState<Platform>('yt');
-  const selectedMeta = PLATFORMS[selectedPlatform];
-  const selectedConfig = SOCIAL_PLATFORM_FILTERS.find(platform => platform.id === selectedPlatform);
-  const selectedProvider = providers.find(provider => provider.id === selectedConfig?.providerID);
-  const providerStatus = selectedProvider?.status ?? (error ? 'unavailable' : 'unknown');
-  const candidates = platformCandidates(response?.candidates ?? [], selectedPlatform);
-  const updatedTimes = candidates
-    .map(candidate => candidate.discovered_at)
-    .filter(Boolean)
-    .sort();
-  const lastUpdated = updatedTimes.length ? updatedTimes[updatedTimes.length - 1] : undefined;
-
-  return (
-    <div className="platform-trends-panel">
-      <div className="platform-selector-section">
-        <div className="section-kicker">Platform selector</div>
-        <TargetPlatformSelector
-          platforms={SOCIAL_PLATFORM_FILTERS.map(platform => ({ id: platform.id }))}
-          selectedPlatform={selectedPlatform}
-          onSelect={setSelectedPlatform}
-          ariaLabel="Select social platform for trend research"
-        />
-      </div>
-
-      <div className="platform-status-card">
-        <div>
-          <div className="section-kicker">Selected-platform status</div>
-          <h2>{selectedMeta.name}</h2>
-          <p>{platformStatusDescription(providerStatus, selectedProvider)}</p>
-        </div>
-        <div className="platform-status-meta">
-          <span className={`readiness-badge ${semanticStatus(providerStatus).className}`}>{semanticStatus(providerStatus).label}</span>
-          {lastUpdated && <span>Last updated {formatDateTime(lastUpdated)}</span>}
-          {!lastUpdated && <span>Freshness unavailable</span>}
-        </div>
-      </div>
-
-      <div className="platform-results-section">
-        <div className="section-kicker">Trend results</div>
-        {loading && <EmptyState tone="loading" title="Checking platform trend data." desc="Looking for real results from configured providers." />}
-        {!loading && error && <EmptyState tone="error" title="Platform trend research is unavailable." desc={error} />}
-        {!loading && !error && providerStatus === 'not_configured' && (
-          <PlatformSetupState onManageDataSources={onManageDataSources} />
-        )}
-        {!loading && !error && providerStatus === 'unavailable' && (
-          <EmptyState
-            tone="unavailable"
-            title="Platform API unavailable or unsupported."
-            desc={selectedProvider?.message || 'This platform does not currently return official platform trend data in this build.'}
-          />
-        )}
-        {!loading && !error && providerStatus === 'active' && candidates.length === 0 && (
-          <EmptyState
-            tone="empty"
-            title="No platform-specific trend results are available yet."
-            desc="The provider is configured, but it did not return social-platform trend results for this request."
-          />
-        )}
-        {!loading && !error && providerStatus === 'unknown' && (
-          <EmptyState
-            tone="warning"
-            title="Platform trend research is not configured yet."
-            desc="Provider status is not available. Open Connections to review platform access."
-          />
-        )}
-        {!loading && !error && candidates.length > 0 && (
-          <div className="platform-results-list">
-            {candidates.map(candidate => (
-              <TrendCandidateCard
-                key={candidate.id}
-                candidate={candidate}
-                audience={selectedMeta.name}
-                generated={generated[candidate.id]}
-                generationError={generationErrors[candidate.id]}
-                generating={generatingID === candidate.id}
-                onGenerate={() => onGenerate(candidate)}
-                onOpenScriptStudio={onOpenScriptStudio}
-              />
-            ))}
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function PlatformSetupState({ onManageDataSources }: { onManageDataSources?: () => void }) {
-  return (
-    <EmptyState
-      tone="warning"
-      title="Platform trend research is not configured yet."
-      desc="Connect or configure platform access before platform-specific trend data can appear here."
-      action={onManageDataSources ? <button type="button" className="generate-btn idle" onClick={onManageDataSources}>Open Connections</button> : undefined}
-    />
   );
 }
 
@@ -874,14 +815,12 @@ function NicheFinderTab({ providers, region, language, audience, onGenerate, gen
             </div>
           </div>
           <div className="niche-form-section niche-readiness-section">
-            <div className="niche-section-heading">Provider readiness</div>
+            <div className="niche-section-heading">Signal readiness</div>
             <ReadinessPanel rows={[
               { label: 'Country', value: region, type: 'value' },
               { label: 'Language', value: language, type: 'value' },
-              { label: 'YouTube Data API', value: providerMap.get('youtube_data_api')?.status || 'unknown', type: 'status' },
-              { label: 'Google Ads Keyword Planner', value: providerMap.get('google_ads_keyword_planner')?.status || 'not_configured', type: 'status' },
-              { label: 'YouTube Analytics', value: providerMap.get('youtube_analytics')?.status || 'not_configured', type: 'status' },
-              { label: 'Google Trends RSS', value: providerMap.get('google_trends_rss')?.status || 'unknown', type: 'status' },
+              { label: 'Video validation', value: providerMap.get('youtube_data_api')?.status || 'unknown', type: 'status' },
+              { label: 'Current trend discovery', value: providerMap.get('google_trends_rss')?.status || 'unknown', type: 'status' },
             ]} />
           </div>
         </div>
@@ -896,7 +835,7 @@ function NicheFinderTab({ providers, region, language, audience, onGenerate, gen
       </div>
 
       <div className="neutral-callout">
-        Revenue potential is directional. Connect Google Ads Keyword Planner for stronger monetization research data; owned-channel revenue still requires YouTube Analytics.
+        Revenue potential is directional and based on public content signals plus category heuristics.
       </div>
 
       {error && <EmptyState tone="error" title="Niche analysis failed." desc={error} />}
@@ -978,45 +917,172 @@ function NicheOpportunityCard({ opportunity, generated, generationError, generat
   );
 }
 
-function TrendCandidateCard({ candidate, audience, generated, generationError, generating, onGenerate, onOpenScriptStudio }: {
-  candidate: TrendCandidate;
-  audience: string;
+function TrendOpportunityCard({ result, expanded, onToggle, generated, generationError, generating, onGenerate, onOpenScriptStudio }: {
+  result: TrendIntelligenceResult;
+  expanded: boolean;
+  onToggle: () => void;
   generated?: ReelContentPackage;
   generationError?: string;
   generating: boolean;
   onGenerate: () => void;
   onOpenScriptStudio?: () => void;
 }) {
-  const scoreReason = `Why this scored high: ${candidate.source === 'google_trends_rss' ? 'Google Trends shows current demand; the score weighs traffic, recency, evidence quality, and audience fit.' : 'The score weighs source confidence, evidence quality, visible engagement, and audience fit.'} Treat it as a directional priority, not a ranking guarantee.`;
+  const [imageFailed, setImageFailed] = useState(false);
+  const title = result.display_title || result.keyword;
+  const panelId = `trend-opportunity-panel-${stableKey(result.id)}`;
+  const summary = result.summary || 'Current demand and supporting activity indicate a content opportunity.';
+  const trendAge = result.trend_age || 'Current';
+  const hasImage = Boolean(result.strongest_thumbnail_url && !imageFailed);
+  const summarySignals = strongestSummarySignals(result);
+  const handleTriggerKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
+    if (event.key !== 'Enter' && event.key !== ' ') return;
+    event.preventDefault();
+    onToggle();
+  };
+
   return (
-    <article className="trend-candidate-card">
-      <div style={{ minWidth: 0 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-          <span className="filter-chip-dot" style={{ background: PLATFORMS.gt.color }} />
-          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-dim)', textTransform: 'uppercase' }}>
-            {candidate.source.replaceAll('_', ' ')} · {candidate.region} · {candidate.language}
-          </span>
-        </div>
-        <div className="result-card-title">{candidate.title || candidate.keyword}</div>
-        <TextBlock label="Suggested angle" value={`For ${audience || 'Global'}: explain why "${candidate.keyword}" matters today and make the first three seconds concrete.`} />
-        {candidate.evidence && <TextBlock label="Evidence" value={candidate.evidence} />}
-        <TextBlock label="Score explanation" value={scoreReason} />
-        {candidate.source_url && <a href={candidate.source_url} target="_blank" rel="noreferrer" style={{ display: 'inline-block', marginTop: 8, fontSize: 12, color: 'var(--accent)' }}>Source evidence</a>}
-        <ScriptAction
-          label="Generate Script"
-          generating={generating}
-          generated={Boolean(generated)}
-          error={generationError}
-          onGenerate={onGenerate}
-          onOpenScriptStudio={onOpenScriptStudio}
+    <article className={`trend-opportunity-card${expanded ? ' is-expanded' : ''}`}>
+      <button
+        type="button"
+        className="trend-opportunity-trigger"
+        onClick={onToggle}
+        onKeyDown={handleTriggerKeyDown}
+        aria-expanded={expanded}
+        aria-controls={panelId}
+      >
+        <TrendOpportunityImage
+          className="trend-opportunity-thumb"
+          title={title}
+          src={hasImage ? result.strongest_thumbnail_url : undefined}
+          onError={() => setImageFailed(true)}
         />
-        {generated && <GeneratedPackageView pkg={generated} />}
-      </div>
-      <div style={{ textAlign: 'right', minWidth: 88 }}>
-        <div className="score-value">{Math.round(candidate.score)}</div>
-        <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text-dim)', textTransform: 'uppercase' }}>score</div>
+        <span className="trend-opportunity-copy">
+          <span className="result-card-title trend-opportunity-title">{title}</span>
+          <span className="trend-opportunity-summary">{summary}</span>
+          <span className="trend-opportunity-signals">
+            {summarySignals.map(signal => <span key={signal}>{signal}</span>)}
+            {trendAge && <span>{trendAge}</span>}
+          </span>
+        </span>
+        <span className="trend-opportunity-score" aria-label={`Opportunity score ${Math.round(result.opportunity_score)} out of 100`}>
+          <span className="score-value">{Math.round(result.opportunity_score)}</span>
+          <span>Opportunity</span>
+        </span>
+        <span className="trend-chevron" aria-hidden="true" />
+      </button>
+
+      <div id={panelId} className="trend-opportunity-panel" aria-hidden={!expanded}>
+        <div className="trend-opportunity-panel-inner">
+          <TrendOpportunityImage
+            className="trend-opportunity-hero"
+            title={title}
+            src={hasImage ? result.strongest_thumbnail_url : undefined}
+            onError={() => setImageFailed(true)}
+          />
+          <div className="trend-opportunity-expanded-body">
+            <div className="trend-expanded-header">
+              <div>
+                <div className="result-card-title trend-opportunity-title">{title}</div>
+                <p>{summary}</p>
+              </div>
+              <div className="trend-expanded-score">
+                <span>{Math.round(result.opportunity_score)}</span>
+                <small>Opportunity</small>
+                <small>{trendAge}</small>
+              </div>
+            </div>
+
+            <div className="trend-metric-tiles" aria-label="Trend opportunity metrics">
+              <TrendMetricTile label="Momentum" value={result.momentum_score} />
+              <TrendMetricTile label="Demand" value={result.demand_score} />
+              <TrendMetricTile label="Competition" value={result.competition_score} />
+              <TrendMetricTile label="Confidence" value={result.confidence_score} />
+            </div>
+
+            <section className="trend-detail-section" aria-labelledby={`${panelId}-activity`}>
+              <h3 id={`${panelId}-activity`}>Activity</h3>
+              <div className="trend-activity-grid">
+                <TrendActivityStat label="Videos sampled" value={formatCountWithUnit(result.video_count_sampled, 'video', 'videos')} />
+                <TrendActivityStat label="Sampled views" value={formatViews(result.total_sampled_views)} />
+                <TrendActivityStat label="Median views" value={formatViews(result.median_sampled_views ?? result.average_sampled_views)} />
+                <TrendActivityStat label="Newest activity" value={formatDateTime(result.newest_relevant_video_at)} />
+              </div>
+              {result.sampled_video_activity && <p className="trend-activity-note">{result.sampled_video_activity}</p>}
+            </section>
+
+            {(result.scoring_reasons?.length || result.related_keywords?.length) ? (
+              <section className="trend-detail-section" aria-labelledby={`${panelId}-reasons`}>
+                <h3 id={`${panelId}-reasons`}>Why it matters</h3>
+                {result.scoring_reasons?.length ? (
+                  <div className="trend-reason-pills">
+                    {result.scoring_reasons.map(reason => <span key={reason}>{reason}</span>)}
+                  </div>
+                ) : null}
+                {result.related_keywords?.length ? (
+                  <div className="trend-related-keywords" aria-label="Related keywords">
+                    {result.related_keywords.map(keyword => <span key={keyword}>{keyword}</span>)}
+                  </div>
+                ) : null}
+              </section>
+            ) : null}
+
+            <div className="trend-opportunity-actions">
+              <ScriptAction
+                label="Create Script"
+                generating={generating}
+                generated={Boolean(generated)}
+                error={generationError}
+                onGenerate={onGenerate}
+                onOpenScriptStudio={onOpenScriptStudio}
+              />
+              <div className="trend-secondary-actions">
+                <button type="button" className="link-button" disabled>Analyze</button>
+                {result.strongest_relevant_video_url && (
+                  <a href={result.strongest_relevant_video_url} target="_blank" rel="noopener noreferrer" className="link-button">Inspect supporting content</a>
+                )}
+                <button type="button" className="link-button" disabled>Create clips later</button>
+              </div>
+            </div>
+            {generated && <GeneratedPackageView pkg={generated} />}
+          </div>
+        </div>
       </div>
     </article>
+  );
+}
+
+function TrendOpportunityImage({ className, title, src, onError }: { className: string; title: string; src?: string; onError: () => void }) {
+  if (!src) {
+    return (
+      <span className={`${className} trend-image-fallback`} role="img" aria-label={`No supporting image available for ${title}`}>
+        <span>{initialsForTitle(title)}</span>
+      </span>
+    );
+  }
+  return <img className={className} src={src} alt="" loading="lazy" onError={onError} />;
+}
+
+function TrendMetricTile({ label, value }: { label: string; value: number }) {
+  const rounded = clampScore(value);
+  return (
+    <div className="trend-metric-tile" aria-label={`${label} ${rounded} out of 100`}>
+      <div>
+        <span>{label}</span>
+        <strong>{rounded}</strong>
+      </div>
+      <div className="trend-metric-track" aria-hidden="true">
+        <span style={{ width: `${rounded}%` }} />
+      </div>
+    </div>
+  );
+}
+
+function TrendActivityStat({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="trend-activity-stat">
+      <span>{label}</span>
+      <strong>{value}</strong>
+    </div>
   );
 }
 
@@ -1241,37 +1307,6 @@ function Limitations({ items }: { items: string[] }) {
   );
 }
 
-function sourceFilterOptions(): { label: string; value: string }[] {
-  return PLATFORM_FILTERS.map(filter => ({ label: filter.label, value: filter.id }));
-}
-
-function platformCandidates(candidates: TrendCandidate[], platform: Platform): TrendCandidate[] {
-  const sourceMatches: Record<Platform, string[]> = {
-    yt: ['youtube', 'youtube_data_api', 'youtube_video_analysis', 'youtube_channel_analysis'],
-    tt: ['tiktok', 'tiktok_research_api'],
-    ig: ['instagram', 'instagram_graph_api'],
-    fb: ['facebook', 'facebook_graph_api'],
-    x: ['x', 'twitter', 'x_api'],
-    th: ['threads'],
-    gt: ['google_trends_rss'],
-  };
-  const matches = sourceMatches[platform] ?? [];
-  return candidates.filter(candidate => matches.includes(candidate.source));
-}
-
-function platformStatusDescription(status: string, provider?: ResearchProviderStatus): string {
-  if (status === 'active') return provider?.message || 'Provider access is ready. Results appear only when the backend returns platform-specific trend data.';
-  if (status === 'not_configured') return 'Platform access is not configured yet. Use Connections to review available setup options.';
-  if (status === 'unavailable') return provider?.message || 'This platform API is unavailable or unsupported for trend research right now.';
-  return 'Provider status is unavailable. No platform trend data will be shown until status can be checked.';
-}
-
-function formatDateTime(value: string): string {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-  return date.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
-}
-
 function statusLabel(status: string): string {
   return userStatusLabel(status);
 }
@@ -1334,6 +1369,28 @@ function candidateFromVideo(result: YouTubeVideoAnalysisResponse, region: string
     discovered_at: new Date().toISOString(),
     source_url: result.metadata?.source_url,
     evidence: result.metadata?.score_reason || result.message,
+    status: 'discovered',
+  };
+}
+
+function candidateFromTrendIntelligence(result: TrendIntelligenceResult, region: string, language: string): TrendCandidate {
+  return {
+    id: result.id,
+    source: 'google_trend',
+    region,
+    language,
+    keyword: result.keyword,
+    title: result.display_title || result.keyword,
+    score: result.opportunity_score,
+    velocity: result.momentum_score,
+    discovered_at: result.discovered_at,
+    source_url: result.strongest_relevant_video_url,
+    evidence: [
+      result.summary,
+      result.sampled_video_activity,
+      `Opportunity ${Math.round(result.opportunity_score)}, momentum ${Math.round(result.momentum_score)}, demand ${Math.round(result.demand_score)}, competition ${Math.round(result.competition_score)}.`,
+      ...(result.scoring_reasons ?? []),
+    ].filter(Boolean).join(' '),
     status: 'discovered',
   };
 }
@@ -1541,50 +1598,58 @@ function stableKey(value: string): string {
   return value.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '').slice(0, 60) || 'idea';
 }
 
-function formatValue(value: unknown): string {
-  if (value == null || value === '') return 'Unavailable';
-  if (typeof value === 'number') return Number.isInteger(value) ? value.toLocaleString() : value.toFixed(3);
-  if (typeof value === 'string') return value;
-  return JSON.stringify(value);
+function clampScore(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  return Math.max(0, Math.min(100, Math.round(value)));
 }
 
-function formatMetric(label: string, value: unknown): string {
-  if (value == null || value === '') return 'Unavailable';
-  const normalized = label.toLowerCase();
-  if (typeof value === 'number') {
-    if (normalized.includes('rate') || normalized.includes('concentration') || normalized.includes('confidence')) {
-      return `${(value * 100).toFixed(1)}%`;
-    }
-    if (normalized.includes('per_1000') || normalized.includes('per 1000')) {
-      return value.toFixed(1);
-    }
-    if (!Number.isInteger(value) && normalized.includes('day')) {
-      return value.toLocaleString(undefined, { maximumFractionDigits: 1 });
-    }
-    return Number.isInteger(value) ? value.toLocaleString() : value.toFixed(2);
+function formatCompactNumber(value?: number): string {
+  if (value == null || !Number.isFinite(value)) return 'Unavailable';
+  const abs = Math.abs(value);
+  const format = (divisor: number, suffix: string) => `${(value / divisor).toLocaleString(undefined, { maximumFractionDigits: value >= divisor * 10 ? 0 : 1 })}${suffix}`;
+  if (abs >= 1_000_000_000) return format(1_000_000_000, 'B');
+  if (abs >= 1_000_000) return format(1_000_000, 'M');
+  if (abs >= 1_000) return format(1_000, 'K');
+  return Math.round(value).toLocaleString();
+}
+
+function formatViews(value?: number): string {
+  if (value == null || !Number.isFinite(value)) return 'Unavailable';
+  return `${formatCompactNumber(value)} views`;
+}
+
+function formatCountWithUnit(value: number | undefined, singular: string, plural: string): string {
+  if (value == null || !Number.isFinite(value)) return 'Unavailable';
+  const rounded = Math.round(value);
+  return `${rounded.toLocaleString()} ${rounded === 1 ? singular : plural}`;
+}
+
+function formatDateTime(value?: string): string {
+  if (!value) return 'Unavailable';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+function initialsForTitle(title: string): string {
+  const initials = title
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map(word => word[0]?.toUpperCase())
+    .join('');
+  return initials || 'TI';
+}
+
+function strongestSummarySignals(result: TrendIntelligenceResult): string[] {
+  const signals = [
+    `Momentum ${clampScore(result.momentum_score)}`,
+    `Competition ${clampScore(result.competition_score)}`,
+  ];
+  if ((result.video_count_sampled ?? 0) > 0) {
+    signals.unshift(formatCountWithUnit(result.video_count_sampled, 'video sampled', 'videos sampled'));
   }
-  if (Array.isArray(value)) return value.join(' · ');
-  return formatValue(value);
-}
-
-function formatLabel(label: string): string {
-  const preferred: Record<string, string> = {
-    views_per_day: 'Views/day',
-    likes_per_1000_views: 'Likes per 1,000 views',
-    comments_per_1000_views: 'Comments per 1,000 views',
-    engagement_rate: 'Engagement rate',
-    velocity_label: 'Velocity',
-    age_days: 'Age in days',
-    average_views: 'Average views',
-    median_views: 'Median views',
-    max_views: 'Max views',
-    min_views: 'Min views',
-    sample_size: 'Sample size',
-    view_concentration: 'View concentration',
-    outlier_videos: 'Outlier videos',
-  };
-  if (preferred[label]) return preferred[label];
-  return label.replaceAll('_', ' ').replace(/\b\w/g, char => char.toUpperCase());
+  return signals.slice(0, 3);
 }
 
 function formatEvidenceSummary(values: Record<string, unknown>): string {
@@ -1619,3 +1684,6 @@ function TextBlock({ label, value }: { label: string; value?: string }) {
     </div>
   );
 }
+
+void AUDIENCE_OPTIONS;
+void DiscoveryState;

@@ -4,6 +4,8 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+
+	"github.com/joho/godotenv"
 )
 
 // Config holds all runtime configuration loaded from environment variables.
@@ -40,6 +42,7 @@ type Config struct {
 	TrendDiscoveryProvider string
 	TrendDiscoveryBaseURL  string
 	TrendDiscoveryTimeout  string
+	DefaultTrendCountry    string
 	YouTubeAPIKey          string
 	TikTokResearchClientID string
 	TikTokResearchSecret   string
@@ -70,6 +73,22 @@ type Config struct {
 	XClientSecret string
 }
 
+// LoadDotEnv loads the repository-root .env for local development. Existing
+// process environment values win, so Railway variables continue to take
+// precedence in production.
+func LoadDotEnv() error {
+	candidates := []string{
+		filepath.Join(".", ".env"),
+		filepath.Join("..", ".env"),
+	}
+	for _, candidate := range candidates {
+		if _, err := os.Stat(candidate); err == nil {
+			return godotenv.Load(candidate)
+		}
+	}
+	return nil
+}
+
 // Load reads configuration from environment variables.
 // Returns an error if required values are missing.
 func Load() (*Config, error) {
@@ -96,6 +115,7 @@ func Load() (*Config, error) {
 		TrendDiscoveryProvider: getEnv("TREND_DISCOVERY_PROVIDER", ""),
 		TrendDiscoveryBaseURL:  getEnv("TREND_DISCOVERY_BASE_URL", "https://trends.google.com/trending/rss"),
 		TrendDiscoveryTimeout:  getEnv("TREND_DISCOVERY_TIMEOUT", "10s"),
+		DefaultTrendCountry:    getEnv("DEFAULT_TREND_COUNTRY", "GB"),
 		YouTubeAPIKey:          os.Getenv("YOUTUBE_API_KEY"),
 		TikTokResearchClientID: os.Getenv("TIKTOK_RESEARCH_CLIENT_ID"),
 		TikTokResearchSecret:   os.Getenv("TIKTOK_RESEARCH_CLIENT_SECRET"),

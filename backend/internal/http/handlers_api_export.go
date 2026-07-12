@@ -87,16 +87,16 @@ func buildMissingArtifactMessage(missingVideoRanks, missingThumbnailRanks []int)
 func reelExportMetadata(c reelArtifactCheck) storage.ReelExportMetadata {
 	r := c.reel
 	meta := storage.ReelExportMetadata{
-		ReelPlanID:   r.ID,
-		Rank:         r.Rank,
-		Platform:     r.Platform,
-		TitleIdea:    r.TitleIdea,
-		Status:       r.Status,
-		HasVideo:     c.hasVideo,
-		HasThumbnail: c.hasThumbnail,
-		VideoFormat:  r.VideoFormat,
-		VideoCodec:   r.VideoCodec,
-		AudioCodec:   r.AudioCodec,
+		ReelPlanID:      r.ID,
+		Rank:            r.Rank,
+		Platform:        r.Platform,
+		TitleIdea:       r.TitleIdea,
+		Status:          r.Status,
+		HasVideo:        c.hasVideo,
+		HasThumbnail:    c.hasThumbnail,
+		VideoFormat:     r.VideoFormat,
+		VideoCodec:      r.VideoCodec,
+		AudioCodec:      r.AudioCodec,
 		ThumbnailFormat: r.ThumbnailFormat,
 	}
 	if r.VideoWidth != nil {

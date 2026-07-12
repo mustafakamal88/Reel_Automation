@@ -13,6 +13,10 @@ import (
 )
 
 func main() {
+	if err := config.LoadDotEnv(); err != nil {
+		log.Fatalf("dotenv: %v", err)
+	}
+
 	cfg, err := config.Load()
 	if err != nil {
 		log.Fatalf("config: %v\n\nSet the required environment variables in .env and restart.\nSee .env.example for the full list.", err)

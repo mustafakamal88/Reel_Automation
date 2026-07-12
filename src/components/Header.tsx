@@ -2,8 +2,7 @@ import type { View } from '../types';
 
 const VIEW_META: Record<View, { title: string; sub: string }> = {
   dashboard:              { title: 'Dashboard',                sub: 'Trend research, scripts, clips, and publishing readiness' },
-  trendingKeywords:       { title: 'Trending Keywords',        sub: 'Find active search and social topics by market.' },
-  platformTrends:         { title: 'Platform Trends',          sub: 'Compare trend data from each connected platform.' },
+  trendingKeywords:       { title: 'Trend Intelligence',       sub: 'Discover and rank current content opportunities.' },
   youtubeVideoAnalyzer:   { title: 'Video Analyzer',           sub: 'Break down a YouTube video into hooks, keywords, and script angles.' },
   youtubeChannelAnalyzer: { title: 'Channel Analyzer',         sub: 'Review a YouTube channel profile, content patterns, and next-video ideas.' },
   nicheFinder:            { title: 'Niche Finder',             sub: 'Evaluate demand, competition and readiness for a creator niche.' },

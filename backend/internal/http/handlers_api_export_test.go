@@ -101,10 +101,10 @@ func TestCheckReelArtifacts_HonestAboutMissingArtifacts(t *testing.T) {
 
 func TestReelExportStatusFor(t *testing.T) {
 	tests := []struct {
-		name                       string
-		hasVideo, hasThumbnail     bool
-		wantStatus                 string
-		wantErrPresent             bool
+		name                   string
+		hasVideo, hasThumbnail bool
+		wantStatus             string
+		wantErrPresent         bool
 	}{
 		{"both present", true, true, models.ReelExportStatusReady, false},
 		{"both missing", false, false, models.ReelExportStatusArtifactMissing, true},

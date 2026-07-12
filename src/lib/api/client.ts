@@ -504,6 +504,123 @@ export async function discoverTrendCandidates(params: { region?: string; languag
   return apiFetch(`/api/trends/discover${suffix}`);
 }
 
+export interface TrendIntelligenceResult {
+  id: string;
+  keyword: string;
+  normalized_keyword: string;
+  display_title: string;
+  summary?: string;
+  country_code: string;
+  language_code?: string;
+  region?: string;
+  category?: string;
+  related_keywords?: string[];
+  search_volume_text?: string;
+  published_at?: string;
+  discovered_at: string;
+  trend_age?: string;
+  trend_velocity?: number;
+  video_count_sampled?: number;
+  total_sampled_views?: number;
+  median_sampled_views?: number;
+  average_sampled_views?: number;
+  total_sampled_likes?: number;
+  total_sampled_comments?: number;
+  newest_relevant_video_at?: string;
+  strongest_relevant_video_url?: string;
+  strongest_thumbnail_url?: string;
+  confidence_score: number;
+  opportunity_score: number;
+  momentum_score: number;
+  demand_score: number;
+  competition_score: number;
+  scoring_reasons: string[];
+  sampled_video_activity?: string;
+  supporting_content_available: boolean;
+  fetched_at: string;
+}
+
+export interface TrendResolvedLocation {
+  input: string;
+  country: string;
+  region?: string;
+  city?: string;
+  latitude?: number;
+  longitude?: number;
+  status: string;
+  message?: string;
+}
+
+export interface TrendIntelligenceResponse {
+  status: string;
+  message?: string;
+  mode: 'discover' | 'keyword';
+  query?: string;
+  country: string;
+  country_name: string;
+  language: string;
+  language_name: string;
+  time_window: string;
+  category: string;
+  resolved_location?: TrendResolvedLocation;
+  local_videos_only: boolean;
+  local_radius_km?: number;
+  results: TrendIntelligenceResult[];
+  fetched_at: string;
+  cache: { hit: boolean; stored_at?: string; ttl: string };
+}
+
+export interface TrendFilterMetadata {
+  countries: { label: string; value: string }[];
+  languages: { label: string; value: string }[];
+  time_windows: { label: string; value: string }[];
+  categories: { label: string; value: string }[];
+  video_durations: { label: string; value: string }[];
+  local_radii_km: number[];
+  sort_orders: { label: string; value: string }[];
+  default_country: string;
+  default_language: string;
+}
+
+export interface TrendSearchParams {
+  q?: string;
+  country?: string;
+  language?: string;
+  window?: string;
+  category?: string;
+  niche?: string;
+  postcode?: string;
+  local_videos_only?: boolean;
+  radius_km?: number;
+  include_words?: string;
+  exclude_words?: string;
+  exact_phrase?: string;
+  video_duration?: string;
+  min_views?: string;
+  max_competition?: string;
+  min_opportunity?: string;
+  sort?: string;
+  refresh?: boolean;
+  limit?: number;
+}
+
+export async function searchTrendIntelligence(params: TrendSearchParams = {}): Promise<TrendIntelligenceResponse> {
+  const qs = new URLSearchParams();
+  Object.entries(params).forEach(([key, value]) => {
+    if (value !== undefined && value !== '' && value !== false) qs.set(key, String(value));
+  });
+  const suffix = qs.toString() ? `?${qs.toString()}` : '';
+  return apiFetch(`/api/trends/search${suffix}`);
+}
+
+export async function getTrendFilters(): Promise<TrendFilterMetadata> {
+  return apiFetch('/api/trends/filters');
+}
+
+export async function resolveTrendLocation(location: string): Promise<TrendResolvedLocation> {
+  return apiFetch('/api/location/resolve', { method: 'POST', body: JSON.stringify({ location }) });
+}
+
 export async function getResearchProviderStatus(): Promise<{ providers: ResearchProviderStatus[] }> {
   return apiFetch('/api/research/providers/status');
 }

@@ -15,7 +15,6 @@ interface Props {
 
 const RESEARCH_VIEWS: View[] = [
   'trendingKeywords',
-  'platformTrends',
   'youtubeVideoAnalyzer',
   'youtubeChannelAnalyzer',
   'nicheFinder',
@@ -39,8 +38,7 @@ const DASHBOARD_ITEM: NavItem = { id: 'dashboard', label: 'Dashboard' };
 const SETTINGS_ITEM: NavItem = { id: 'settings', label: 'Settings' };
 
 const RESEARCH_ITEMS: NavItem[] = [
-  { id: 'trendingKeywords', label: 'Trending Keywords' },
-  { id: 'platformTrends', label: 'Platform Trends' },
+  { id: 'trendingKeywords', label: 'Trend Intelligence' },
   { id: 'youtubeVideoAnalyzer', label: 'Video Analyzer' },
   { id: 'youtubeChannelAnalyzer', label: 'Channel Analyzer' },
   { id: 'nicheFinder', label: 'Niche Finder' },

@@ -9,9 +9,9 @@ import (
 type JobType string
 
 const (
-	JobTypePublishVideo  JobType = "publish_video"
-	JobTypeCreateZip     JobType = "create_zip"
-	JobTypeRefreshToken  JobType = "refresh_token"
+	JobTypePublishVideo   JobType = "publish_video"
+	JobTypeCreateZip      JobType = "create_zip"
+	JobTypeRefreshToken   JobType = "refresh_token"
 	JobTypeFetchAnalytics JobType = "fetch_analytics"
 )
 
@@ -31,7 +31,7 @@ type Job struct {
 	ID          string
 	Type        JobType
 	WorkspaceID string
-	Payload     []byte    // JSON-encoded job-specific payload
+	Payload     []byte // JSON-encoded job-specific payload
 	Status      JobStatus
 	RetryCount  int
 	MaxRetries  int
@@ -63,24 +63,25 @@ type PublishVideoPayload struct {
 
 // CreateZipPayload is the JSON payload for a create_zip job.
 type CreateZipPayload struct {
-	BatchID     string   `json:"batch_id"`
-	VideoIDs    []string `json:"video_ids"`
-	OutputPath  string   `json:"output_path"`
+	BatchID    string   `json:"batch_id"`
+	VideoIDs   []string `json:"video_ids"`
+	OutputPath string   `json:"output_path"`
 }
 
 // ZipStructure documents the required layout of the daily batch ZIP.
 // The actual file creation happens in the storage package.
 //
 // trendcortex-daily-batch-YYYY-MM-DD.zip
-//   video-01/
-//     video.mp4
-//     thumbnail.jpg
-//     title.txt
-//     description.txt
-//     hashtags.txt
-//     captions.srt
-//     platforms.json
-//   video-02/ … video-06/
-//   batch-summary.json
-//   compliance-checklist.json
+//
+//	video-01/
+//	  video.mp4
+//	  thumbnail.jpg
+//	  title.txt
+//	  description.txt
+//	  hashtags.txt
+//	  captions.srt
+//	  platforms.json
+//	video-02/ … video-06/
+//	batch-summary.json
+//	compliance-checklist.json
 type ZipStructure struct{}
