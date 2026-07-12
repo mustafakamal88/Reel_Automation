@@ -1234,11 +1234,11 @@ function NicheCandidateDashboard({ candidate, showTopics, onToggleTopics }: { ca
       <NichePanel title="Content-pillar distribution">
         <PillarChart pillars={pillars} />
       </NichePanel>
-      <NichePanel title={runwayTitle}>
-        <RunwayCard candidate={candidate} pillars={pillars} />
-      </NichePanel>
       <NichePanel title="Demand evidence">
         <DemandEvidence candidate={candidate} />
+      </NichePanel>
+      <NichePanel title={runwayTitle}>
+        <RunwayCard candidate={candidate} pillars={pillars} />
       </NichePanel>
       <NichePanel title="Competition opportunity">
         <CompetitionVisual candidate={candidate} />
@@ -1473,7 +1473,7 @@ function RunwayCard({ candidate, pillars }: { candidate: NicheCandidate; pillars
 function DemandEvidence({ candidate }: { candidate: NicheCandidate }) {
   const ev = candidate.market_evidence;
   if (!ev || ev.sample_size === 0) return <UnavailableChart title="No provider time series available" desc="This candidate is based on AI strategic analysis and available trend context, not fabricated historical points." />;
-  return <MetricGrid values={{ 'Evidence mode': evidenceModeLabel(ev.status), 'Sample size': ev.sample_size, 'Median views': ev.median_views == null ? 'Unavailable' : formatCount(ev.median_views), Engagement: ev.engagement == null ? 'Unavailable' : `${ev.engagement}%`, 'Recent activity': ev.recent_activity, Collected: ev.collected_at ? formatCacheTime(ev.collected_at) : 'Unavailable' }} />;
+  return <div className="demand-evidence-summary"><MetricGrid values={{ 'Evidence mode': evidenceModeLabel(ev.status), 'Sample size': ev.sample_size, 'Median views': ev.median_views == null ? 'Unavailable' : formatCount(ev.median_views), Engagement: ev.engagement == null ? 'Unavailable' : `${ev.engagement}%`, 'Recent activity': ev.recent_activity, Collected: ev.collected_at ? formatCacheTime(ev.collected_at) : 'Unavailable' }} /></div>;
 }
 
 function CompetitionVisual({ candidate }: { candidate: NicheCandidate }) {

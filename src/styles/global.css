@@ -6928,6 +6928,33 @@ body,
   align-content: start;
 }
 
+.runway-card {
+  grid-template-columns: 128px minmax(220px, 1fr) minmax(220px, 1fr);
+  align-items: start;
+  gap: 14px 18px;
+}
+
+.runway-card > .niche-progress-circle {
+  align-self: center;
+  justify-self: center;
+}
+
+.runway-card > .pillar-chart {
+  min-width: 0;
+}
+
+.runway-card > .muted-note {
+  grid-column: 1 / -1;
+}
+
+.demand-evidence-summary .status-list {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.demand-evidence-summary .status-row {
+  min-width: 0;
+}
+
 .contribution-row,
 .pillar-row {
   display: grid;
@@ -7149,6 +7176,18 @@ body,
   .alternative-card-meta {
     grid-column: 1 / -1;
   }
+
+  .runway-card {
+    grid-template-columns: 128px minmax(0, 1fr);
+  }
+
+  .runway-card > .pillar-chart {
+    grid-column: 1 / -1;
+  }
+
+  .demand-evidence-summary .status-list {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 @media (max-width: 767px) {
@@ -7170,6 +7209,16 @@ body,
   .niche-dimension-card {
     grid-template-columns: 88px minmax(0, 1fr);
     min-height: 0;
+  }
+
+  .runway-card,
+  .demand-evidence-summary .status-list {
+    grid-template-columns: 1fr;
+  }
+
+  .runway-card > .pillar-chart,
+  .runway-card > .muted-note {
+    grid-column: auto;
   }
 
   .niche-progress-circle-metric {
