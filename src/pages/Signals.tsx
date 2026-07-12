@@ -577,7 +577,7 @@ function TrendingKeywordsTab(props: {
             </div>
           )}
           <div className="trend-filter-footer">
-            <span>{trendResponse?.resolved_location?.status === 'resolved' ? `Resolved locality: ${trendResponse.resolved_location.city || trendResponse.resolved_location.region || trendResponse.resolved_location.input}` : 'Enter a keyword to search trend intelligence.'}</span>
+            <span>{trendResponse?.resolved_location?.status === 'resolved' ? `Resolved locality: ${trendResponse.resolved_location.city || trendResponse.resolved_location.region || trendResponse.resolved_location.input}` : 'Enter a keyword to search content opportunities.'}</span>
             <button type="button" className="link-button" onClick={() => setShowMore(value => !value)}>More Filters</button>
           </div>
           <div className="trend-search-actions">
@@ -588,9 +588,9 @@ function TrendingKeywordsTab(props: {
         {localOnly && <div className="neutral-callout">Local videos only matches supporting videos with available geographic metadata. Country-level trend geography is still used.</div>}
       </div>
 
-      {trendLoading && <EmptyState tone="loading" title="Loading trend intelligence." desc="Checking current demand, recency, and public engagement signals." />}
-      {!trendLoading && trendError && <EmptyState tone="error" title="Trend intelligence is temporarily unavailable." desc={trendError} />}
-      {!trendLoading && !trendError && !trendResponse && <EmptyState tone="empty" title="Enter a keyword to search trend intelligence." desc="Choose country, language, time window, and niche filters to rank opportunities." />}
+      {trendLoading && <EmptyState tone="loading" title="Loading keyword search." desc="Checking current demand, recency, and public engagement signals." />}
+      {!trendLoading && trendError && <EmptyState tone="error" title="Keyword search is temporarily unavailable." desc={trendError} />}
+      {!trendLoading && !trendError && !trendResponse && <EmptyState tone="empty" title="Enter a keyword to search content opportunities." desc="Choose country, language, time window, and niche filters to rank opportunities." />}
       {!trendLoading && !trendError && trendResponse?.message && trendResponse.results.length === 0 && (
         <EmptyState tone="empty" title={trendResponse.message} desc="Try a broader country, language, or time window." />
       )}

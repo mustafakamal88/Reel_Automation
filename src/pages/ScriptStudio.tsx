@@ -46,7 +46,7 @@ function sourceLabel(source?: string): string {
       return 'YouTube Channel Analysis';
     case 'google_trend':
     case 'google_trends_rss':
-      return 'Trend Intelligence';
+      return 'Keyword Search';
     case 'niche_idea':
       return 'Niche Idea';
     default:

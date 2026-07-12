@@ -40,7 +40,7 @@ const SETTINGS_ITEM: NavItem = { id: 'settings', label: 'Settings' };
 
 const RESEARCH_ITEMS: NavItem[] = [
   { id: 'discoverTrends', label: 'Discover Trends' },
-  { id: 'trendingKeywords', label: 'Trend Intelligence' },
+  { id: 'trendingKeywords', label: 'Keyword Search' },
   { id: 'youtubeVideoAnalyzer', label: 'Video Analyzer' },
   { id: 'youtubeChannelAnalyzer', label: 'Channel Analyzer' },
   { id: 'nicheFinder', label: 'Niche Finder' },
