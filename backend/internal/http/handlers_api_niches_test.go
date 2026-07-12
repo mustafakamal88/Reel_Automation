@@ -1,12 +1,46 @@
 package http
 
 import (
+	"bytes"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
 	"trendcortex/api/internal/config"
 	"trendcortex/api/internal/research"
 )
+
+func TestHandleCreateNicheResearchOpenAIUnavailableApplicationState(t *testing.T) {
+	srv := NewServer(&config.Config{}, nil, nil, nil)
+	body := `{"profile":{"professional_skills":"teach how to code","hobbies":"coding","lived_experiences":"how to build apps","teaching_subjects":"cross-platform apps","target_audience":"vibe coders and students","target_country":"US","target_language":"en","creator_presence":"faceless","content_formats":["long-form"],"optional_broad_topic":"programming","weekly_production_capacity":"2 videos per week"}}`
+	req := httptest.NewRequest(http.MethodPost, "/api/niches/research", bytes.NewBufferString(body))
+	rec := httptest.NewRecorder()
+
+	srv.handleCreateNicheResearch(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 application state; body=%s", rec.Code, rec.Body.String())
+	}
+	var report research.NicheReport
+	if err := json.Unmarshal(rec.Body.Bytes(), &report); err != nil {
+		t.Fatalf("decode report: %v; body=%s", err, rec.Body.String())
+	}
+	if report.Status != "openai_unavailable" || report.AnalysisMode != "openai_unavailable" {
+		t.Fatalf("status=%s analysis_mode=%s, want openai_unavailable", report.Status, report.AnalysisMode)
+	}
+	if !strings.Contains(strings.ToLower(report.Message), "ai niche strategy") {
+		t.Fatalf("message should explain unavailable AI strategy: %q", report.Message)
+	}
+	if len(report.Candidates) != 0 {
+		t.Fatalf("OpenAI unavailable response must not include candidates: %d", len(report.Candidates))
+	}
+	if report.Profile.ProfessionalSkills != "teach how to code" {
+		t.Fatalf("profile inputs not preserved for retry: %#v", report.Profile)
+	}
+}
 
 func TestNicheCacheSuccessfulFallbackAgeLimitAndFailureIsolation(t *testing.T) {
 	srv := NewServer(&config.Config{}, nil, nil, nil)

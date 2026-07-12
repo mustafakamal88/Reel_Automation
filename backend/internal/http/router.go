@@ -6,12 +6,14 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 	"trendcortex/api/internal/audit"
 	"trendcortex/api/internal/config"
 	"trendcortex/api/internal/content"
 	"trendcortex/api/internal/database"
 	"trendcortex/api/internal/oauth"
 	"trendcortex/api/internal/renderer"
+	"trendcortex/api/internal/research"
 	trenddiscovery "trendcortex/api/internal/trends"
 )
 
@@ -25,17 +27,19 @@ type Server struct {
 	discover               func(ctx context.Context, region, language string, limit int) (trenddiscovery.DiscoverResult, error)
 	renderDailyPackageReel func(ctx context.Context, cfg renderer.Config, input renderer.ReelInput) renderer.Result
 
-	dailyRenderMu   sync.Mutex
-	dailyRenderJobs map[string]dailyPackageRenderJob
-	aiSceneMu       sync.Mutex
-	aiSceneJobs     map[string]*aiSceneGenerationJob
-	nicheMu         sync.Mutex
-	nicheReports    map[string]nicheReportCacheItem
+	dailyRenderMu     sync.Mutex
+	dailyRenderJobs   map[string]dailyPackageRenderJob
+	aiSceneMu         sync.Mutex
+	aiSceneJobs       map[string]*aiSceneGenerationJob
+	nicheMu           sync.Mutex
+	nicheReports      map[string]nicheReportCacheItem
+	nicheYouTubeCache *research.YouTubeEvidenceCache
+	nicheYouTubeDaily *research.DailyYouTubeSearchLimiter
 }
 
 // NewServer constructs the Server with all dependencies.
 func NewServer(cfg *config.Config, db *database.DB, reg oauth.Registry, al *audit.Logger) *Server {
-	return &Server{cfg: cfg, db: db, registry: reg, audit: al, dailyRenderJobs: map[string]dailyPackageRenderJob{}, aiSceneJobs: map[string]*aiSceneGenerationJob{}, nicheReports: map[string]nicheReportCacheItem{}}
+	return &Server{cfg: cfg, db: db, registry: reg, audit: al, dailyRenderJobs: map[string]dailyPackageRenderJob{}, aiSceneJobs: map[string]*aiSceneGenerationJob{}, nicheReports: map[string]nicheReportCacheItem{}, nicheYouTubeCache: research.NewYouTubeEvidenceCache(24 * time.Hour), nicheYouTubeDaily: research.NewDailyYouTubeSearchLimiter(80, nil)}
 }
 
 // Routes returns the root http.Handler with all routes registered.

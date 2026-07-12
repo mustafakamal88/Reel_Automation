@@ -1,13 +1,20 @@
 package research
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha1"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"math"
+	"net/http"
 	"sort"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -41,7 +48,7 @@ type CreatorNicheProfile struct {
 	TargetLanguage           string   `json:"target_language"`
 	CreatorPresence          string   `json:"creator_presence"`
 	ContentFormats           []string `json:"content_formats"`
-	PrimaryMonetizationGoal  string   `json:"primary_monetization_goal"`
+	PrimaryMonetizationGoal  string   `json:"-"`
 	OptionalBroadTopic       string   `json:"optional_broad_topic"`
 	WeeklyProductionCapacity string   `json:"weekly_production_capacity"`
 }
@@ -52,15 +59,23 @@ type NicheResearchRequest struct {
 }
 
 type NicheReport struct {
-	ID          string              `json:"id"`
-	Status      string              `json:"status"`
-	Message     string              `json:"message"`
-	Profile     CreatorNicheProfile `json:"profile"`
-	Candidates  []NicheCandidate    `json:"candidates"`
-	Cache       NicheCacheInfo      `json:"cache"`
-	Limitations []string            `json:"limitations"`
-	CreatedAt   time.Time           `json:"created_at"`
-	Internal    NicheInternal       `json:"-"`
+	ID                    string              `json:"id"`
+	Status                string              `json:"status"`
+	Message               string              `json:"message"`
+	GeneratedAt           time.Time           `json:"generated_at"`
+	EvidenceFreshness     string              `json:"evidence_freshness"`
+	AnalysisMode          string              `json:"analysis_mode"`
+	ProviderStatus        []ProviderStatus    `json:"provider_status,omitempty"`
+	CreatorProfileSummary string              `json:"creator_profile_summary"`
+	PrimaryRecommendation *NicheCandidate     `json:"primary_recommendation,omitempty"`
+	AlternativeCandidates []NicheCandidate    `json:"alternative_candidates,omitempty"`
+	Methodology           []string            `json:"methodology"`
+	Profile               CreatorNicheProfile `json:"profile"`
+	Candidates            []NicheCandidate    `json:"candidates"`
+	Cache                 NicheCacheInfo      `json:"cache"`
+	Limitations           []string            `json:"limitations"`
+	CreatedAt             time.Time           `json:"created_at"`
+	Internal              NicheInternal       `json:"-"`
 }
 
 type NicheCacheInfo struct {
@@ -76,6 +91,25 @@ type NicheCacheInfo struct {
 
 type NicheCandidate struct {
 	ID                       string                 `json:"id"`
+	Name                     string                 `json:"name"`
+	ConcisePositioning       string                 `json:"concise_positioning"`
+	Category                 string                 `json:"category"`
+	Subcategory              string                 `json:"subcategory"`
+	TargetAudience           string                 `json:"target_audience"`
+	AudienceProblems         []string               `json:"audience_problems"`
+	CreatorAdvantages        []string               `json:"creator_advantages"`
+	UniqueAngle              string                 `json:"unique_angle"`
+	OverallScore             float64                `json:"overall_score"`
+	Confidence               string                 `json:"confidence"`
+	Dimensions               NicheScoreDimensions   `json:"dimensions"`
+	ContentPillars           []ContentPillar        `json:"content_pillars"`
+	TopicClusters            []TopicCluster         `json:"topic_clusters"`
+	RecommendedTitles        []VideoTopic           `json:"recommended_titles"`
+	OpportunityGaps          []string               `json:"opportunity_gaps"`
+	EvidenceSummary          string                 `json:"evidence_summary"`
+	MarketEvidence           MarketEvidence         `json:"market_evidence"`
+	SearchQueriesUsed        []string               `json:"search_queries_used"`
+	Runway                   ContentRunway          `json:"runway"`
 	Level1                   string                 `json:"level_1"`
 	Level2                   string                 `json:"level_2"`
 	Level3                   string                 `json:"level_3"`
@@ -85,11 +119,11 @@ type NicheCandidate struct {
 	ViewerProblem            string                 `json:"viewer_problem"`
 	CreatorAdvantage         string                 `json:"creator_advantage"`
 	RecommendedContentFormat string                 `json:"recommended_content_format"`
-	MonetizationRoutes       []string               `json:"monetization_routes"`
+	MonetizationRoutes       []string               `json:"-"`
 	Validation               NicheValidation        `json:"validation"`
 	Outliers                 []OutlierEvidence      `json:"outliers"`
 	SupplyGaps               []SupplyGap            `json:"supply_gaps"`
-	Monetization             MonetizationEstimate   `json:"monetization"`
+	Monetization             MonetizationEstimate   `json:"-"`
 	VideoTopics              []VideoTopic           `json:"video_topics"`
 	TopicPillars             []ContentPillar        `json:"topic_pillars"`
 	First10Titles            []string               `json:"first_10_titles"`
@@ -97,7 +131,39 @@ type NicheCandidate struct {
 	Scores                   NicheScores            `json:"scores"`
 	Risks                    []string               `json:"risks"`
 	RecommendedFirstAction   string                 `json:"recommended_first_action"`
-	GeneratedReasoning       string                 `json:"generated_reasoning,omitempty"`
+	GeneratedReasoning       string                 `json:"-"`
+}
+
+type NicheScoreDimensions struct {
+	CreatorFit             ScoreExplanation `json:"creator_fit"`
+	AudienceDemand         ScoreExplanation `json:"audience_demand"`
+	CompetitionOpportunity ScoreExplanation `json:"competition_opportunity"`
+	Sustainability         ScoreExplanation `json:"sustainability"`
+	Differentiation        ScoreExplanation `json:"differentiation"`
+}
+
+type TopicCluster struct {
+	Name        string   `json:"name"`
+	Description string   `json:"description"`
+	Titles      []string `json:"titles"`
+}
+
+type MarketEvidence struct {
+	Status         string     `json:"status"`
+	SourceTypes    []string   `json:"source_types"`
+	SampleSize     int        `json:"sample_size"`
+	RecentActivity string     `json:"recent_activity"`
+	MedianViews    *uint64    `json:"median_views"`
+	Engagement     *float64   `json:"engagement"`
+	CollectedAt    *time.Time `json:"collected_at"`
+	Limitations    []string   `json:"limitations"`
+}
+
+type ContentRunway struct {
+	ViableTopicCount       int    `json:"viable_topic_count"`
+	EstimatedWeeks         int    `json:"estimated_weeks"`
+	WeeklyCapacity         int    `json:"weekly_capacity"`
+	EstimatedContentRunway string `json:"estimated_content_runway"`
 }
 
 type NicheValidation struct {
@@ -171,8 +237,11 @@ type VideoTopic struct {
 }
 
 type ContentPillar struct {
-	Name       string `json:"name"`
-	TopicCount int    `json:"topic_count"`
+	Name          string   `json:"name"`
+	Description   string   `json:"description,omitempty"`
+	Percentage    float64  `json:"percentage"`
+	TopicCount    int      `json:"topic_count"`
+	ExampleTitles []string `json:"example_titles,omitempty"`
 }
 
 type SustainabilityEvidence struct {
@@ -269,11 +338,314 @@ type NicheRPMCalibration struct {
 }
 
 type NicheResearchConfig struct {
-	YouTube         NicheEvidenceProvider
-	Trends          NicheTrendProvider
-	GoogleAdsStatus ProviderStatus
-	Calibration     *NicheRPMCalibration
-	Now             func() time.Time
+	YouTube                      NicheEvidenceProvider
+	Trends                       NicheTrendProvider
+	GoogleAdsStatus              ProviderStatus
+	Calibration                  *NicheRPMCalibration
+	Strategist                   NicheStrategist
+	OpenAIAPIKey                 string
+	OpenAIModel                  string
+	RequireOpenAI                bool
+	YouTubeCache                 *YouTubeEvidenceCache
+	YouTubeDailyLimiter          *DailyYouTubeSearchLimiter
+	MaxYouTubeSearchesPerRequest int
+	DailyYouTubeSearchLimit      int
+	Now                          func() time.Time
+}
+
+type NicheStrategist interface {
+	GenerateCandidates(ctx context.Context, input NicheStrategyInput) (NicheStrategyResult, error)
+}
+
+type NicheStrategyInput struct {
+	Profile          CreatorNicheProfile      `json:"profile"`
+	RisingSignals    []string                 `json:"rising_signals"`
+	ExistingEvidence []CandidateEvidenceBrief `json:"existing_evidence"`
+	GeneratedAt      time.Time                `json:"generated_at"`
+}
+
+type CandidateEvidenceBrief struct {
+	Query       string `json:"query"`
+	Status      string `json:"status"`
+	SampleSize  int    `json:"sample_size"`
+	CollectedAt string `json:"collected_at,omitempty"`
+}
+
+type NicheStrategyResult struct {
+	CreatorProfileSummary string       `json:"creator_profile_summary"`
+	PrimaryRecommendation string       `json:"primary_recommendation"`
+	Candidates            []NicheDraft `json:"candidates"`
+	Methodology           []string     `json:"methodology"`
+	Limitations           []string     `json:"limitations"`
+}
+
+type NicheDraft struct {
+	ID                     string                       `json:"id"`
+	Name                   string                       `json:"name"`
+	ConcisePositioning     string                       `json:"concise_positioning"`
+	Category               string                       `json:"category"`
+	Subcategory            string                       `json:"subcategory"`
+	TargetAudience         string                       `json:"target_audience"`
+	AudienceProblems       []string                     `json:"audience_problems"`
+	CreatorAdvantages      []string                     `json:"creator_advantages"`
+	UniqueAngle            string                       `json:"unique_angle"`
+	DimensionScores        NicheDraftDimensionScores    `json:"dimension_scores"`
+	DimensionReasoning     NicheDraftDimensionReasoning `json:"dimension_reasoning"`
+	ContentPillars         []ContentPillar              `json:"content_pillars"`
+	TopicClusters          []TopicCluster               `json:"topic_clusters"`
+	RecommendedTitles      []VideoTopic                 `json:"recommended_titles"`
+	OpportunityGaps        []string                     `json:"opportunity_gaps"`
+	Risks                  []string                     `json:"risks"`
+	RecommendedFirstAction string                       `json:"recommended_first_action"`
+	SearchQuery            string                       `json:"search_query"`
+	Runway                 string                       `json:"runway"`
+	Reasoning              string                       `json:"reasoning"`
+}
+
+type NicheDraftDimensionScores struct {
+	CreatorFit             float64 `json:"creator_fit"`
+	AudienceDemand         float64 `json:"audience_demand"`
+	CompetitionOpportunity float64 `json:"competition_opportunity"`
+	Sustainability         float64 `json:"sustainability"`
+	Differentiation        float64 `json:"differentiation"`
+}
+
+type NicheDraftDimensionReasoning struct {
+	CreatorFit             string `json:"creator_fit"`
+	AudienceDemand         string `json:"audience_demand"`
+	CompetitionOpportunity string `json:"competition_opportunity"`
+	Sustainability         string `json:"sustainability"`
+	Differentiation        string `json:"differentiation"`
+}
+
+type OpenAINicheStrategist struct {
+	APIKey     string
+	Model      string
+	HTTPClient *http.Client
+}
+
+type heuristicNicheStrategist struct{}
+
+func (heuristicNicheStrategist) GenerateCandidates(ctx context.Context, input NicheStrategyInput) (NicheStrategyResult, error) {
+	_ = ctx
+	blueprints := generateNicheBlueprints(input.Profile)
+	drafts := []NicheDraft{}
+	for i, bp := range blueprints {
+		pillars := []ContentPillar{{Name: "Beginner foundations"}, {Name: "Tools and workflows"}, {Name: "Mistakes and fixes"}, {Name: "Case studies"}, {Name: "Comparisons"}}
+		if strings.Contains(strings.ToLower(bp.Level3), "visa") || strings.Contains(strings.ToLower(bp.Level3), "student") {
+			pillars = []ContentPillar{{Name: "Application steps"}, {Name: "Mistakes and refusals"}, {Name: "Money and housing"}, {Name: "Career route"}, {Name: "Case studies"}}
+		}
+		titles := []VideoTopic{}
+		intents := []string{"tutorial", "comparison", "mistake", "case study", "opinion", "breakdown", "beginner guide", "experiment", "workflow", "checklist"}
+		for len(titles) < 50 {
+			intent := intents[len(titles)%len(intents)]
+			pillar := pillars[len(titles)%len(pillars)].Name
+			titles = append(titles, VideoTopic{Title: naturalTitle(intent, NicheDraft{Name: bp.Level3, Subcategory: bp.Level2, TargetAudience: bp.TargetViewer}), Pillar: pillar, Intent: intent, Difficulty: "medium", Source: "backend_heuristic_strategy", EvidenceStatus: evidenceModeAIStrategicAnalysis})
+		}
+		for p := range pillars {
+			pillars[p].Percentage = 20
+			pillars[p].TopicCount = 10
+		}
+		drafts = append(drafts, NicheDraft{
+			ID:                     fmt.Sprintf("heuristic_%d", i+1),
+			Name:                   bp.Level3,
+			ConcisePositioning:     sentenceCase(bp.Level3) + " for " + bp.TargetViewer + ".",
+			Category:               bp.Level1,
+			Subcategory:            bp.Level2,
+			TargetAudience:         bp.TargetViewer,
+			AudienceProblems:       []string{bp.ViewerProblem},
+			CreatorAdvantages:      []string{bp.Advantage},
+			UniqueAngle:            bp.Advantage,
+			DimensionScores:        NicheDraftDimensionScores{CreatorFit: 72, AudienceDemand: 68, CompetitionOpportunity: 64, Sustainability: 76, Differentiation: 66},
+			DimensionReasoning:     NicheDraftDimensionReasoning{CreatorFit: "Matches supplied profile inputs.", AudienceDemand: "Demand requires public validation.", CompetitionOpportunity: "Opportunity depends on specific positioning.", Sustainability: "Has enough distinct pillars for a pilot runway.", Differentiation: "Uses creator-specific lived experience and format fit."},
+			ContentPillars:         pillars,
+			RecommendedTitles:      titles,
+			OpportunityGaps:        []string{"Validate the strongest angle with a focused pilot before scaling."},
+			Risks:                  []string{"Public evidence may be limited until validation runs."},
+			RecommendedFirstAction: "Publish a pilot tutorial and compare retention, comments, and search phrasing before committing to a full series.",
+			SearchQuery:            firstString(bp.QueryPhrases),
+			Runway:                 "50-title starter runway",
+			Reasoning:              bp.Reasoning,
+		})
+	}
+	return NicheStrategyResult{
+		CreatorProfileSummary: "Profile interpreted from supplied skills, audience, format, and topic inputs.",
+		PrimaryRecommendation: firstStringFromDrafts(drafts),
+		Candidates:            drafts,
+		Methodology:           []string{"Used deterministic local strategy generation for tests when no OpenAI client was injected."},
+		Limitations:           []string{"Local deterministic strategy is for development and tests; production injects OpenAI."},
+	}, nil
+}
+
+func (s OpenAINicheStrategist) GenerateCandidates(ctx context.Context, input NicheStrategyInput) (NicheStrategyResult, error) {
+	if strings.TrimSpace(s.APIKey) == "" {
+		return NicheStrategyResult{}, ErrNotConfigured
+	}
+	model := strings.TrimSpace(s.Model)
+	if model == "" {
+		model = "gpt-4o-mini"
+	}
+	payload := map[string]any{
+		"model": model,
+		"messages": []map[string]string{
+			{"role": "system", "content": nicheStrategySystemPrompt()},
+			{"role": "user", "content": mustJSON(input)},
+		},
+		"temperature":     0.35,
+		"response_format": nicheStrategyResponseFormat(),
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return NicheStrategyResult{}, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://api.openai.com/v1/chat/completions", bytes.NewReader(body))
+	if err != nil {
+		return NicheStrategyResult{}, err
+	}
+	req.Header.Set("Authorization", "Bearer "+s.APIKey)
+	req.Header.Set("Content-Type", "application/json")
+	client := s.HTTPClient
+	if client == nil {
+		client = &http.Client{Timeout: 90 * time.Second}
+	}
+	res, err := client.Do(req)
+	if err != nil {
+		return NicheStrategyResult{}, err
+	}
+	defer res.Body.Close()
+	resBody, err := io.ReadAll(io.LimitReader(res.Body, 4<<20))
+	if err != nil {
+		return NicheStrategyResult{}, err
+	}
+	if res.StatusCode < 200 || res.StatusCode >= 300 {
+		return NicheStrategyResult{}, fmt.Errorf("openai niche strategy returned HTTP %d: %s", res.StatusCode, trimForLog(resBody))
+	}
+	var parsed struct {
+		Choices []struct {
+			Message struct {
+				Content string `json:"content"`
+			} `json:"message"`
+		} `json:"choices"`
+	}
+	if err := json.Unmarshal(resBody, &parsed); err != nil {
+		return NicheStrategyResult{}, err
+	}
+	if len(parsed.Choices) == 0 || strings.TrimSpace(parsed.Choices[0].Message.Content) == "" {
+		return NicheStrategyResult{}, errors.New("openai niche strategy response did not include content")
+	}
+	var strategy NicheStrategyResult
+	if err := json.Unmarshal([]byte(parsed.Choices[0].Message.Content), &strategy); err != nil {
+		return NicheStrategyResult{}, err
+	}
+	return strategy, nil
+}
+
+func nicheStrategySystemPrompt() string {
+	return strings.Join([]string{
+		"You are TrendCortex's niche intelligence strategist.",
+		"Use only the supplied creator profile and trend/evidence context.",
+		"Generate coherent creator niches, target audiences, content pillars, opportunity gaps, risks, and a 50-title runway.",
+		"Do not invent live YouTube views, revenue, RPM, advertiser demand, legal certainty, private analytics, or current facts not supplied.",
+		"Titles must sound natural, avoid repeatedly inserting the full niche/audience phrase, and cover tutorials, comparisons, mistakes, case studies, opinion, breakdowns, beginner guides, experiments, and workflows.",
+		"Return strict JSON matching the schema.",
+	}, " ")
+}
+
+func nicheStrategyResponseFormat() map[string]any {
+	stringSchema := map[string]any{"type": "string"}
+	numberSchema := map[string]any{"type": "number"}
+	stringArray := map[string]any{"type": "array", "items": stringSchema}
+	scoreProps := map[string]any{
+		"creator_fit":             numberSchema,
+		"audience_demand":         numberSchema,
+		"competition_opportunity": numberSchema,
+		"sustainability":          numberSchema,
+		"differentiation":         numberSchema,
+	}
+	reasonProps := map[string]any{
+		"creator_fit":             stringSchema,
+		"audience_demand":         stringSchema,
+		"competition_opportunity": stringSchema,
+		"sustainability":          stringSchema,
+		"differentiation":         stringSchema,
+	}
+	pillarSchema := map[string]any{
+		"type":                 "object",
+		"additionalProperties": false,
+		"properties": map[string]any{
+			"name":           stringSchema,
+			"description":    stringSchema,
+			"percentage":     numberSchema,
+			"topic_count":    numberSchema,
+			"example_titles": stringArray,
+		},
+		"required": []string{"name", "description", "percentage", "topic_count", "example_titles"},
+	}
+	topicSchema := map[string]any{
+		"type":                 "object",
+		"additionalProperties": false,
+		"properties": map[string]any{
+			"title":           stringSchema,
+			"pillar":          stringSchema,
+			"intent":          stringSchema,
+			"difficulty":      stringSchema,
+			"source":          stringSchema,
+			"evidence_status": stringSchema,
+		},
+		"required": []string{"title", "pillar", "intent", "difficulty", "source", "evidence_status"},
+	}
+	clusterSchema := map[string]any{
+		"type":                 "object",
+		"additionalProperties": false,
+		"properties":           map[string]any{"name": stringSchema, "description": stringSchema, "titles": stringArray},
+		"required":             []string{"name", "description", "titles"},
+	}
+	candidateSchema := map[string]any{
+		"type":                 "object",
+		"additionalProperties": false,
+		"properties": map[string]any{
+			"id":                       stringSchema,
+			"name":                     stringSchema,
+			"concise_positioning":      stringSchema,
+			"category":                 stringSchema,
+			"subcategory":              stringSchema,
+			"target_audience":          stringSchema,
+			"audience_problems":        stringArray,
+			"creator_advantages":       stringArray,
+			"unique_angle":             stringSchema,
+			"dimension_scores":         map[string]any{"type": "object", "additionalProperties": false, "properties": scoreProps, "required": []string{"creator_fit", "audience_demand", "competition_opportunity", "sustainability", "differentiation"}},
+			"dimension_reasoning":      map[string]any{"type": "object", "additionalProperties": false, "properties": reasonProps, "required": []string{"creator_fit", "audience_demand", "competition_opportunity", "sustainability", "differentiation"}},
+			"content_pillars":          map[string]any{"type": "array", "items": pillarSchema},
+			"topic_clusters":           map[string]any{"type": "array", "items": clusterSchema},
+			"recommended_titles":       map[string]any{"type": "array", "items": topicSchema},
+			"opportunity_gaps":         stringArray,
+			"risks":                    stringArray,
+			"recommended_first_action": stringSchema,
+			"search_query":             stringSchema,
+			"runway":                   stringSchema,
+			"reasoning":                stringSchema,
+		},
+		"required": []string{"id", "name", "concise_positioning", "category", "subcategory", "target_audience", "audience_problems", "creator_advantages", "unique_angle", "dimension_scores", "dimension_reasoning", "content_pillars", "topic_clusters", "recommended_titles", "opportunity_gaps", "risks", "recommended_first_action", "search_query", "runway", "reasoning"},
+	}
+	return map[string]any{
+		"type": "json_schema",
+		"json_schema": map[string]any{
+			"name":   "niche_research_response",
+			"strict": true,
+			"schema": map[string]any{
+				"type":                 "object",
+				"additionalProperties": false,
+				"properties": map[string]any{
+					"creator_profile_summary": stringSchema,
+					"primary_recommendation":  stringSchema,
+					"candidates":              map[string]any{"type": "array", "items": candidateSchema},
+					"methodology":             stringArray,
+					"limitations":             stringArray,
+				},
+				"required": []string{"creator_profile_summary", "primary_recommendation", "candidates", "methodology", "limitations"},
+			},
+		},
+	}
 }
 
 func ResearchNiches(ctx context.Context, req NicheResearchRequest, cfg NicheResearchConfig) (NicheReport, error) {
@@ -282,17 +654,28 @@ func ResearchNiches(ctx context.Context, req NicheResearchRequest, cfg NicheRese
 		now = cfg.Now
 	}
 	profile := normalizeCreatorNicheProfile(req.Profile)
+	generatedAt := now()
 	report := NicheReport{
-		ID:        nicheReportID(profile, now()),
-		Status:    StatusOK,
-		Message:   "Evaluated creator-fit, public demand, competition, sustainability, and commercial potential for niche candidates.",
-		Profile:   profile,
-		CreatedAt: now(),
-		Cache:     NicheCacheInfo{TTL: "6h", Freshness: "fresh"},
+		ID:                nicheReportID(profile, generatedAt),
+		Status:            StatusOK,
+		Message:           "Generated AI-assisted niche strategy with bounded public evidence validation where available.",
+		GeneratedAt:       generatedAt,
+		EvidenceFreshness: "ai_only",
+		AnalysisMode:      "ai_strategic_analysis",
+		Profile:           profile,
+		CreatedAt:         generatedAt,
+		Cache:             NicheCacheInfo{TTL: "6h", Freshness: "fresh"},
 		Limitations: []string{
-			"Public video metadata cannot reveal exact RPM, private retention, traffic sources, or guaranteed revenue.",
-			"Currency estimates are hidden unless a valid connected-channel or documented benchmark calibration exists.",
-			"Provider names and raw upstream payloads are kept out of customer-facing candidate cards.",
+			"OpenAI strategic analysis does not invent live YouTube numbers.",
+			"YouTube validation is optional, capped, cached, and labelled separately from AI reasoning.",
+			"Public video metadata cannot reveal private retention, traffic sources, or guaranteed outcomes.",
+		},
+		Methodology: []string{
+			"Normalize creator profile inputs.",
+			"Collect inexpensive trend signals where configured.",
+			"Ask OpenAI for structured niche strategy and content runway candidates.",
+			"Validate model output, filter repetitive titles, normalize pillar percentages, and calculate weighted scores in backend code.",
+			"Optionally validate only the highest-ranked candidates with a capped YouTube search budget.",
 		},
 	}
 	if meaningfulProfileFields(profile) < 3 {
@@ -300,67 +683,107 @@ func ResearchNiches(ctx context.Context, req NicheResearchRequest, cfg NicheRese
 		report.Message = "Add at least three creator-profile inputs before researching niches."
 		return report, nil
 	}
-	if cfg.YouTube == nil || cfg.YouTube.Status().Status != StatusActive {
-		report.Status = NicheStatusCredentialsInvalid
-		report.Message = "Local research configuration is invalid."
-		return report, &NicheResearchError{Code: NicheStatusCredentialsInvalid, Message: report.Message, Temporary: false, Err: ErrNotConfigured}
-	}
 
 	rising := []string{}
+	trendStatus := ProviderStatus{ID: "google_trends_rss", Name: "Google Trends RSS", Platform: "google_trends", Status: StatusNotConfigured, Message: "Trend provider is not configured."}
 	if cfg.Trends != nil {
 		trends, err := cfg.Trends.Discover(ctx, profile.TargetCountry, profile.TargetLanguage, 12)
 		if err == nil {
 			rising = trends
+			trendStatus.Status = StatusActive
+			trendStatus.Message = "Trend signals were available for strategic grounding."
+		} else {
+			trendStatus.Status = StatusUnavailable
+			trendStatus.Message = "Trend signals were unavailable; AI analysis continued without them."
 		}
 	}
+	youtubeStatus := ProviderStatus{ID: "youtube_data_api", Name: "YouTube Data API", Platform: "youtube", Status: StatusNotConfigured, Message: "YouTube validation was skipped because credentials are not configured."}
+	if cfg.YouTube != nil {
+		youtubeStatus = cfg.YouTube.Status()
+	}
+	report.ProviderStatus = []ProviderStatus{trendStatus, youtubeStatus}
 
-	blueprints := generateNicheBlueprints(profile)
-	candidates := make([]NicheCandidate, 0, len(blueprints))
-	sawNoMatchingContent := false
-	sawInsufficientEvidence := false
-	for _, bp := range blueprints {
-		evidence, err := collectNicheEvidence(ctx, cfg.YouTube, bp, profile)
-		if err != nil {
-			researchErr := classifyNicheResearchError(err)
-			report.Status = researchErr.Code
-			report.Message = researchErr.Message
-			report.Internal.ErrorCode = researchErr.Code
-			report.Internal.HTTPStatus = researchErr.HTTPStatus
-			report.Internal.Reason = researchErr.Reason
-			return report, researchErr
-		}
-		if len(evidence.videos) == 0 {
-			sawNoMatchingContent = true
-			continue
-		}
-		if len(evidence.videos) < 3 || videosWithPublicMetrics(evidence.videos) < 2 {
-			sawInsufficientEvidence = true
-			continue
-		}
-		candidate := buildNicheCandidate(bp, profile, evidence, rising, cfg.GoogleAdsStatus, cfg.Calibration, now())
+	strategist := cfg.Strategist
+	if strategist == nil && strings.TrimSpace(cfg.OpenAIAPIKey) != "" {
+		strategist = OpenAINicheStrategist{APIKey: cfg.OpenAIAPIKey, Model: cfg.OpenAIModel}
+	}
+	if strategist == nil && cfg.RequireOpenAI {
+		report.Status = "openai_unavailable"
+		report.Message = "AI niche strategy is unavailable because OpenAI is not configured."
+		report.AnalysisMode = "openai_unavailable"
+		return report, nil
+	}
+	if strategist == nil {
+		strategist = heuristicNicheStrategist{}
+	}
+
+	strategy, err := strategist.GenerateCandidates(ctx, NicheStrategyInput{Profile: profile, RisingSignals: rising, GeneratedAt: generatedAt})
+	if err != nil {
+		report.Status = "openai_unavailable"
+		report.Message = "AI niche strategy is temporarily unavailable."
+		report.AnalysisMode = "openai_unavailable"
+		return report, nil
+	}
+	report.CreatorProfileSummary = strings.TrimSpace(strategy.CreatorProfileSummary)
+	report.Methodology = appendStringGroups(report.Methodology, strategy.Methodology)
+	report.Limitations = appendStringGroups(report.Limitations, strategy.Limitations)
+
+	drafts := validateNicheDrafts(strategy.Candidates, profile)
+	if len(drafts) == 0 {
+		report.Status = "invalid_model_output"
+		report.Message = "AI niche strategy returned no usable candidates."
+		report.AnalysisMode = "invalid_model_output"
+		return report, nil
+	}
+	candidates := make([]NicheCandidate, 0, len(drafts))
+	for _, draft := range drafts {
+		candidate := buildAICandidate(draft, profile, rising, generatedAt)
 		candidates = append(candidates, candidate)
 	}
 	sort.SliceStable(candidates, func(i, j int) bool {
-		return candidates[i].Scores.Overall.Score > candidates[j].Scores.Overall.Score
+		return candidates[i].OverallScore > candidates[j].OverallScore
 	})
 	if len(candidates) > 5 {
 		candidates = candidates[:5]
 	}
-	if len(candidates) == 0 {
-		if sawInsufficientEvidence {
-			report.Status = NicheStatusInsufficientEvidence
-			report.Message = NicheMessageInsufficientEvidence
-		} else if sawNoMatchingContent {
-			report.Status = NicheStatusNoMatchingContent
-			report.Message = NicheMessageNoMatchingContent
-		} else {
-			report.Status = NicheStatusInsufficientEvidence
-			report.Message = NicheMessageInsufficientEvidence
+
+	budget := newYouTubeSearchBudget(cfg.MaxYouTubeSearchesPerRequest, cfg.DailyYouTubeSearchLimit, cfg.YouTubeDailyLimiter, now)
+	if cfg.YouTube != nil && cfg.YouTube.Status().Status == StatusActive && budget.maxPerRequest > 0 {
+		for i := range candidates {
+			if i >= 3 || !budget.allow() {
+				candidates[i].MarketEvidence.Status = evidenceModeAIStrategicAnalysis
+				candidates[i].EvidenceSummary = appendSentence(candidates[i].EvidenceSummary, "YouTube validation was skipped by the request budget.")
+				continue
+			}
+			query := bestCandidateSearchQuery(candidates[i])
+			evidence, err := collectBudgetedNicheEvidence(ctx, cfg.YouTube, cfg.YouTubeCache, budget, query, profile, generatedAt)
+			if err != nil {
+				researchErr := classifyNicheResearchError(err)
+				if researchErr.Code == NicheStatusQuotaTemporarilyUnavailable {
+					report.AnalysisMode = evidenceModeLimitedEvidence
+					report.Message = "Generated AI niche strategy. YouTube quota was reached, so remaining validation used AI and non-YouTube evidence only."
+					report.Limitations = append(report.Limitations, "YouTube quota was reached during validation; AI analysis is not presented as verified YouTube evidence.")
+					break
+				}
+				candidates[i].MarketEvidence.Limitations = append(candidates[i].MarketEvidence.Limitations, "YouTube validation was temporarily unavailable.")
+				continue
+			}
+			applyEvidenceToCandidate(&candidates[i], evidence, rising, generatedAt)
 		}
-		return report, nil
+		report.EvidenceFreshness = evidenceFreshness(candidates)
+		report.AnalysisMode = analysisMode(candidates)
+	} else {
+		report.AnalysisMode = evidenceModeAIStrategicAnalysis
+		report.EvidenceFreshness = "no_youtube_validation"
+		report.Limitations = append(report.Limitations, "YouTube validation was skipped because credentials are missing, unavailable, or disabled.")
 	}
+
 	report.Candidates = candidates
-	report.Internal.Provenance = []string{"public_video_search", "public_video_statistics", "public_channel_statistics", "current_trend_overlap"}
+	report.PrimaryRecommendation = &report.Candidates[0]
+	if len(report.Candidates) > 1 {
+		report.AlternativeCandidates = append([]NicheCandidate{}, report.Candidates[1:]...)
+	}
+	report.Internal.Provenance = []string{"openai_structured_strategy", "backend_score_normalization", "optional_budgeted_youtube_validation", "current_trend_overlap"}
 	return report, nil
 }
 
@@ -382,6 +805,146 @@ type nicheEvidence struct {
 	videos       []ChannelVideoSummary
 	channelStats map[string]NicheChannelStats
 	budgetUsed   int
+	query        string
+	mode         string
+	collectedAt  time.Time
+}
+
+const (
+	evidenceModeLiveValidated       = "live_validated"
+	evidenceModeCacheValidated      = "cache_validated"
+	evidenceModeTrendSupported      = "trend_supported"
+	evidenceModeAIStrategicAnalysis = "ai_strategic_analysis"
+	evidenceModeLimitedEvidence     = "limited_evidence"
+)
+
+type YouTubeEvidenceCache struct {
+	mu    sync.Mutex
+	items map[string]youtubeEvidenceCacheItem
+	TTL   time.Duration
+}
+
+type youtubeEvidenceCacheItem struct {
+	evidence nicheEvidence
+	storedAt time.Time
+}
+
+func NewYouTubeEvidenceCache(ttl time.Duration) *YouTubeEvidenceCache {
+	if ttl <= 0 {
+		ttl = 24 * time.Hour
+	}
+	return &YouTubeEvidenceCache{items: map[string]youtubeEvidenceCacheItem{}, TTL: ttl}
+}
+
+func (c *YouTubeEvidenceCache) get(key string, now time.Time) (nicheEvidence, time.Time, bool, bool) {
+	if c == nil {
+		return nicheEvidence{}, time.Time{}, false, false
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	item, ok := c.items[key]
+	if !ok {
+		return nicheEvidence{}, time.Time{}, false, false
+	}
+	ttl := c.TTL
+	if ttl <= 0 {
+		ttl = 24 * time.Hour
+	}
+	ev := item.evidence
+	ev.mode = evidenceModeCacheValidated
+	ev.collectedAt = item.storedAt
+	return ev, item.storedAt, true, now.Sub(item.storedAt) <= ttl
+}
+
+func (c *YouTubeEvidenceCache) set(key string, ev nicheEvidence, now time.Time) {
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.items[key] = youtubeEvidenceCacheItem{evidence: ev, storedAt: now}
+}
+
+type DailyYouTubeSearchLimiter struct {
+	mu    sync.Mutex
+	day   string
+	used  int
+	limit int
+	now   func() time.Time
+}
+
+func NewDailyYouTubeSearchLimiter(limit int, now func() time.Time) *DailyYouTubeSearchLimiter {
+	if limit <= 0 {
+		limit = 80
+	}
+	if now == nil {
+		now = func() time.Time { return time.Now().UTC() }
+	}
+	return &DailyYouTubeSearchLimiter{limit: limit, now: now}
+}
+
+func (l *DailyYouTubeSearchLimiter) TryConsume() bool {
+	if l == nil {
+		return true
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	day := l.now().UTC().Format("2006-01-02")
+	if l.day != day {
+		l.day = day
+		l.used = 0
+	}
+	if l.used >= l.limit {
+		return false
+	}
+	l.used++
+	return true
+}
+
+func (l *DailyYouTubeSearchLimiter) Snapshot() (day string, used int, limit int) {
+	if l == nil {
+		return "", 0, 0
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.day, l.used, l.limit
+}
+
+type youtubeSearchBudget struct {
+	maxPerRequest int
+	used          int
+	dailyLimiter  *DailyYouTubeSearchLimiter
+}
+
+func newYouTubeSearchBudget(maxPerRequest, dailyLimit int, limiter *DailyYouTubeSearchLimiter, now func() time.Time) *youtubeSearchBudget {
+	if maxPerRequest <= 0 {
+		maxPerRequest = 3
+	}
+	if dailyLimit <= 0 {
+		dailyLimit = 80
+	}
+	if limiter == nil {
+		limiter = NewDailyYouTubeSearchLimiter(dailyLimit, now)
+	}
+	return &youtubeSearchBudget{maxPerRequest: maxPerRequest, dailyLimiter: limiter}
+}
+
+func (b *youtubeSearchBudget) allow() bool {
+	if b == nil {
+		return false
+	}
+	return b.used < b.maxPerRequest
+}
+
+func (b *youtubeSearchBudget) consume() bool {
+	if !b.allow() {
+		return false
+	}
+	if b.dailyLimiter != nil && !b.dailyLimiter.TryConsume() {
+		return false
+	}
+	b.used++
+	return true
 }
 
 func generateNicheBlueprints(profile CreatorNicheProfile) []nicheBlueprint {
@@ -508,6 +1071,76 @@ func collectNicheEvidence(ctx context.Context, provider NicheEvidenceProvider, b
 	return nicheEvidence{videos: videos, channelStats: stats, budgetUsed: budget}, nil
 }
 
+func collectBudgetedNicheEvidence(ctx context.Context, provider NicheEvidenceProvider, cache *YouTubeEvidenceCache, budget *youtubeSearchBudget, query string, profile CreatorNicheProfile, now time.Time) (nicheEvidence, error) {
+	query = normalizeEvidenceQuery(query)
+	if query == "" {
+		return nicheEvidence{mode: evidenceModeAIStrategicAnalysis, collectedAt: now}, nil
+	}
+	key := youtubeEvidenceCacheKey(query, profile.TargetCountry, profile.TargetLanguage, "120d")
+	if cache != nil {
+		if ev, _, ok, fresh := cache.get(key, now); ok {
+			if fresh {
+				return ev, nil
+			}
+			if provider == nil || provider.Status().Status != StatusActive || !budget.allow() {
+				return ev, nil
+			}
+		}
+	}
+	if provider == nil || provider.Status().Status != StatusActive || !budget.consume() {
+		return nicheEvidence{query: query, mode: evidenceModeLimitedEvidence, collectedAt: now}, nil
+	}
+	videos, err := provider.SearchVideos(ctx, query, profile.TargetCountry, profile.TargetLanguage, 12)
+	if err != nil {
+		if cache != nil {
+			if ev, _, ok, _ := cache.get(key, now); ok {
+				return ev, nil
+			}
+		}
+		return nicheEvidence{query: query, budgetUsed: budget.used, mode: evidenceModeLimitedEvidence, collectedAt: now}, err
+	}
+	channelIDs := []string{}
+	for _, video := range videos {
+		if video.ChannelID != "" {
+			channelIDs = append(channelIDs, video.ChannelID)
+		}
+	}
+	stats := map[string]NicheChannelStats{}
+	if len(channelIDs) > 0 {
+		found, err := provider.ChannelStats(ctx, unique(channelIDs))
+		if err != nil {
+			return nicheEvidence{query: query, videos: videos, budgetUsed: budget.used, mode: evidenceModeLimitedEvidence, collectedAt: now}, err
+		}
+		stats = found
+	}
+	ev := nicheEvidence{videos: videos, channelStats: stats, budgetUsed: budget.used, query: query, mode: evidenceModeLiveValidated, collectedAt: now}
+	cache.set(key, ev, now)
+	return ev, nil
+}
+
+func normalizeEvidenceQuery(query string) string {
+	query = strings.ToLower(strings.TrimSpace(query))
+	query = strings.Join(strings.Fields(query), " ")
+	if len([]rune(query)) > 110 {
+		query = string([]rune(query)[:110])
+	}
+	return query
+}
+
+func youtubeEvidenceCacheKey(query, country, language, window string) string {
+	parts := []string{normalizeEvidenceQuery(query), strings.ToUpper(strings.TrimSpace(country)), strings.ToLower(strings.Split(strings.TrimSpace(language), "-")[0]), strings.TrimSpace(window)}
+	sum := sha1.Sum([]byte(strings.Join(parts, "|")))
+	return "yt_evidence_" + hex.EncodeToString(sum[:])
+}
+
+func trimForLog(body []byte) string {
+	text := strings.TrimSpace(string(body))
+	if len(text) > 500 {
+		return text[:500] + "..."
+	}
+	return text
+}
+
 func classifyNicheResearchError(err error) *NicheResearchError {
 	var researchErr *NicheResearchError
 	if errors.As(err, &researchErr) {
@@ -575,6 +1208,166 @@ func buildNicheCandidate(bp nicheBlueprint, profile CreatorNicheProfile, evidenc
 		Risks:                    risks,
 		RecommendedFirstAction:   recommendedFirstAction(bp, validation, sustainability),
 		GeneratedReasoning:       bp.Reasoning,
+	}
+}
+
+func validateNicheDrafts(drafts []NicheDraft, profile CreatorNicheProfile) []NicheDraft {
+	out := []NicheDraft{}
+	seen := map[string]bool{}
+	for _, draft := range drafts {
+		draft.Name = strings.TrimSpace(draft.Name)
+		if draft.Name == "" {
+			continue
+		}
+		key := strings.ToLower(draft.Name)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		if draft.TargetAudience == "" {
+			draft.TargetAudience = firstNonEmpty(profile.TargetAudience, countryAudience(profile.TargetCountry))
+		}
+		draft.RecommendedTitles = validateVideoTitles(draft.RecommendedTitles, draft.ContentPillars, draft.Name, draft.TargetAudience)
+		draft.ContentPillars = normalizeContentPillars(draft.ContentPillars, draft.RecommendedTitles)
+		if len(draft.RecommendedTitles) < 10 {
+			draft.RecommendedTitles = append(draft.RecommendedTitles, fallbackTitles(draft, 10-len(draft.RecommendedTitles))...)
+			draft.ContentPillars = normalizeContentPillars(draft.ContentPillars, draft.RecommendedTitles)
+		}
+		if len(draft.RecommendedTitles) > 50 {
+			draft.RecommendedTitles = draft.RecommendedTitles[:50]
+		}
+		out = append(out, draft)
+	}
+	return out
+}
+
+func buildAICandidate(draft NicheDraft, profile CreatorNicheProfile, rising []string, now time.Time) NicheCandidate {
+	dimensions := normalizeDimensions(draft)
+	overall := calculateNicheOverallScore(dimensions)
+	confidenceScore := round1((dimensions.CreatorFit.Score + dimensions.AudienceDemand.Score + dimensions.Sustainability.Score) / 3)
+	topics := draft.RecommendedTitles
+	pillars := normalizeContentPillars(draft.ContentPillars, topics)
+	runway := buildRunway(len(topics), profile.WeeklyProductionCapacity)
+	status := evidenceModeAIStrategicAnalysis
+	sourceTypes := []string{"openai_structured_strategy"}
+	if phraseOverlaps(draft.Name, rising) || phraseOverlaps(draft.SearchQuery, rising) {
+		status = evidenceModeTrendSupported
+		sourceTypes = append(sourceTypes, "trend_signal")
+	}
+	marketEvidence := MarketEvidence{
+		Status:         status,
+		SourceTypes:    sourceTypes,
+		SampleSize:     0,
+		RecentActivity: "Unavailable",
+		MedianViews:    nil,
+		Engagement:     nil,
+		CollectedAt:    nil,
+		Limitations:    []string{"No live YouTube statistics are attached to this candidate yet."},
+	}
+	validation := NicheValidation{
+		SearchPhrases:         topN(unique([]string{draft.SearchQuery, draft.Name, draft.Subcategory}), 3),
+		MarketEvidenceSummary: "Strategic AI analysis using creator profile and available trend context. No live YouTube statistics are claimed for this candidate.",
+		CompetitionLevel:      scoreLabel(dimensions.CompetitionOpportunity.Score),
+		EvidenceConfidence:    confidenceLabel(confidenceScore),
+	}
+	sustainability := SustainabilityEvidence{
+		ViableTopicCount:       len(topics),
+		ContentPillarCount:     len(pillars),
+		TopicRepetitionRisk:    repetitionRisk(len(topics), len(pillars)),
+		EstimatedContentRunway: runway.EstimatedContentRunway,
+		Score:                  dimensions.Sustainability.Score,
+	}
+	scores := NicheScores{
+		PersonalFit:    dimensions.CreatorFit,
+		Demand:         dimensions.AudienceDemand,
+		OpportunityGap: dimensions.CompetitionOpportunity,
+		Sustainability: dimensions.Sustainability,
+		Overall:        ScoreExplanation{Score: overall, Label: scoreLabel(overall), Explanation: "Formula: 0.25 creator fit + 0.25 audience demand + 0.20 competition opportunity + 0.20 sustainability + 0.10 differentiation."},
+		Confidence:     ScoreExplanation{Score: confidenceScore, Label: confidenceLabel(confidenceScore), Explanation: "Confidence reflects profile specificity, evidence availability, and title/pillar validation."},
+	}
+	return NicheCandidate{
+		ID:                       stableNicheID(draft.ID, draft.Name, profile.TargetCountry, profile.TargetLanguage),
+		Name:                     draft.Name,
+		ConcisePositioning:       strings.TrimSpace(draft.ConcisePositioning),
+		Category:                 firstNonEmpty(draft.Category, "Creator strategy"),
+		Subcategory:              firstNonEmpty(draft.Subcategory, draft.Name),
+		TargetAudience:           draft.TargetAudience,
+		AudienceProblems:         cleanStringList(draft.AudienceProblems),
+		CreatorAdvantages:        cleanStringList(draft.CreatorAdvantages),
+		UniqueAngle:              strings.TrimSpace(draft.UniqueAngle),
+		OverallScore:             overall,
+		Confidence:               scores.Confidence.Label,
+		Dimensions:               dimensions,
+		ContentPillars:           pillars,
+		TopicClusters:            draft.TopicClusters,
+		RecommendedTitles:        topics,
+		OpportunityGaps:          cleanStringList(draft.OpportunityGaps),
+		EvidenceSummary:          validation.MarketEvidenceSummary,
+		MarketEvidence:           marketEvidence,
+		SearchQueriesUsed:        validation.SearchPhrases,
+		Runway:                   runway,
+		Level1:                   firstNonEmpty(draft.Category, "Creator strategy"),
+		Level2:                   firstNonEmpty(draft.Subcategory, draft.Name),
+		Level3:                   draft.Name,
+		NicheName:                draft.Name,
+		CorePhrase:               firstNonEmpty(draft.SearchQuery, draft.Name),
+		TargetViewer:             draft.TargetAudience,
+		ViewerProblem:            strings.Join(topN(cleanStringList(draft.AudienceProblems), 2), " "),
+		CreatorAdvantage:         strings.Join(topN(cleanStringList(draft.CreatorAdvantages), 2), " "),
+		RecommendedContentFormat: primaryFormat(profile.ContentFormats),
+		Validation:               validation,
+		Outliers:                 []OutlierEvidence{},
+		SupplyGaps:               supplyGapsFromStrings(draft.OpportunityGaps),
+		Monetization:             MonetizationEstimate{RPMEstimateAvailable: false, UnavailableReason: publicRPMUnavailableMessage, CommercialPotential: "Not evaluated", Confidence: "not_applicable"},
+		VideoTopics:              topics,
+		TopicPillars:             pillars,
+		First10Titles:            firstTopicTitles(topics, 10),
+		Sustainability:           sustainability,
+		Scores:                   scores,
+		Risks:                    cleanStringList(draft.Risks),
+		RecommendedFirstAction:   strings.TrimSpace(draft.RecommendedFirstAction),
+		GeneratedReasoning:       strings.TrimSpace(draft.Reasoning),
+	}
+}
+
+func applyEvidenceToCandidate(candidate *NicheCandidate, evidence nicheEvidence, rising []string, now time.Time) {
+	validation := buildNicheValidation(nicheBlueprint{CorePhrase: candidate.CorePhrase, QueryPhrases: []string{evidence.query}}, evidence.videos, rising, now)
+	outliers := detectOutliers(evidence.videos, evidence.channelStats, now)
+	candidate.Validation = validation
+	candidate.Outliers = topOutliers(outliers, 4)
+	candidate.SearchQueriesUsed = unique(append(candidate.SearchQueriesUsed, evidence.query))
+	candidate.MarketEvidence = marketEvidenceFromValidation(validation, evidence)
+	candidate.EvidenceSummary = validation.MarketEvidenceSummary
+	candidate.Scores.Demand = ScoreExplanation{Score: scoreDemandValidation(validation), Label: scoreLabel(scoreDemandValidation(validation)), Explanation: validation.MarketEvidenceSummary}
+	candidate.Scores.OpportunityGap = ScoreExplanation{Score: scoreOpportunityGap(validation, outliers, candidate.SupplyGaps), Label: scoreLabel(scoreOpportunityGap(validation, outliers, candidate.SupplyGaps)), Explanation: "Uses capped public evidence, outliers, and gap statements when validation is available."}
+	candidate.Dimensions.AudienceDemand = candidate.Scores.Demand
+	candidate.Dimensions.CompetitionOpportunity = candidate.Scores.OpportunityGap
+	candidate.OverallScore = calculateNicheOverallScore(candidate.Dimensions)
+	candidate.Scores.Overall.Score = candidate.OverallScore
+	candidate.Scores.Overall.Label = scoreLabel(candidate.OverallScore)
+}
+
+func marketEvidenceFromValidation(v NicheValidation, ev nicheEvidence) MarketEvidence {
+	var median *uint64
+	if v.MedianSampledViews > 0 {
+		value := v.MedianSampledViews
+		median = &value
+	}
+	var engagement *float64
+	if v.EngagementRate > 0 {
+		value := v.EngagementRate
+		engagement = &value
+	}
+	collected := ev.collectedAt
+	return MarketEvidence{
+		Status:         firstNonEmpty(ev.mode, evidenceModeLiveValidated),
+		SourceTypes:    []string{"youtube_public_search", "youtube_public_video_statistics"},
+		SampleSize:     v.SampledVideoCount,
+		RecentActivity: firstNonEmpty(v.NewestActivity, "Unavailable"),
+		MedianViews:    median,
+		Engagement:     engagement,
+		CollectedAt:    &collected,
+		Limitations:    []string{"A capped YouTube sample validates public activity only; it does not represent full market size or private channel analytics."},
 	}
 }
 
@@ -894,25 +1687,379 @@ func scoreNiche(bp nicheBlueprint, profile CreatorNicheProfile, validation Niche
 	personalFit := scorePersonalFit(bp, profile)
 	demand := scoreDemandValidation(validation)
 	gapScore := scoreOpportunityGap(validation, outliers, gaps)
-	monetizationScore := monetization.Score
 	sustainabilityScore := sustainability.Score
+	differentiationScore := round1(clampScore((personalFit + gapScore) / 2))
 	overall := round1(clampScore(
 		0.25*personalFit +
-			0.20*demand +
+			0.25*demand +
 			0.20*gapScore +
-			0.20*monetizationScore +
-			0.15*sustainabilityScore,
+			0.20*sustainabilityScore +
+			0.10*differentiationScore,
 	))
 	conf := scoreConfidence(validation, monetization, sustainability)
 	return NicheScores{
 		PersonalFit:    ScoreExplanation{Score: personalFit, Label: scoreLabel(personalFit), Explanation: "Considers expertise, lived experience, audience understanding, and preferred creator format."},
 		Demand:         ScoreExplanation{Score: demand, Label: scoreLabel(demand), Explanation: validation.MarketEvidenceSummary},
 		OpportunityGap: ScoreExplanation{Score: gapScore, Label: scoreLabel(gapScore), Explanation: "Rewards real demand, manageable supply, outlier evidence, and supported gap statements."},
-		Monetization:   ScoreExplanation{Score: monetizationScore, Label: monetization.CommercialPotential, Explanation: "Commercial potential considers advertiser intent, buyer intent, geography, route diversity, and calibration availability."},
+		Monetization:   ScoreExplanation{Score: 0, Label: "Not scored", Explanation: "Monetisation is not part of the Niche Finder score."},
 		Sustainability: ScoreExplanation{Score: sustainabilityScore, Label: scoreLabel(sustainabilityScore), Explanation: "Based on distinct topic count, pillar depth, creator interest, and production practicality."},
-		Overall:        ScoreExplanation{Score: overall, Label: scoreLabel(overall), Explanation: "Formula: 0.25 personal fit + 0.20 demand + 0.20 opportunity gap + 0.20 monetization + 0.15 sustainability."},
+		Overall:        ScoreExplanation{Score: overall, Label: scoreLabel(overall), Explanation: "Formula: 0.25 creator fit + 0.25 audience demand + 0.20 competition opportunity + 0.20 sustainability + 0.10 differentiation."},
 		Confidence:     ScoreExplanation{Score: conf, Label: confidenceLabel(conf), Explanation: "Confidence is separate from score and reflects evidence coverage, monetization calibration, and topic depth."},
 	}
+}
+
+func normalizeDimensions(draft NicheDraft) NicheScoreDimensions {
+	return NicheScoreDimensions{
+		CreatorFit:             scoreFromDraft(draft.DimensionScores.CreatorFit, draft.DimensionReasoning.CreatorFit),
+		AudienceDemand:         scoreFromDraft(draft.DimensionScores.AudienceDemand, draft.DimensionReasoning.AudienceDemand),
+		CompetitionOpportunity: scoreFromDraft(draft.DimensionScores.CompetitionOpportunity, draft.DimensionReasoning.CompetitionOpportunity),
+		Sustainability:         scoreFromDraft(draft.DimensionScores.Sustainability, draft.DimensionReasoning.Sustainability),
+		Differentiation:        scoreFromDraft(draft.DimensionScores.Differentiation, draft.DimensionReasoning.Differentiation),
+	}
+}
+
+func scoreFromDraft(score float64, explanation string) ScoreExplanation {
+	score = round1(clampScore(score))
+	if score == 0 {
+		score = 50
+	}
+	return ScoreExplanation{Score: score, Label: scoreLabel(score), Explanation: firstNonEmpty(strings.TrimSpace(explanation), "Model-provided dimension reasoning was unavailable.")}
+}
+
+func calculateNicheOverallScore(d NicheScoreDimensions) float64 {
+	return round1(clampScore(
+		0.25*d.CreatorFit.Score +
+			0.25*d.AudienceDemand.Score +
+			0.20*d.CompetitionOpportunity.Score +
+			0.20*d.Sustainability.Score +
+			0.10*d.Differentiation.Score,
+	))
+}
+
+func validateVideoTitles(titles []VideoTopic, pillars []ContentPillar, niche, audience string) []VideoTopic {
+	validPillars := map[string]bool{}
+	for _, pillar := range pillars {
+		if strings.TrimSpace(pillar.Name) != "" {
+			validPillars[strings.ToLower(strings.TrimSpace(pillar.Name))] = true
+		}
+	}
+	out := []VideoTopic{}
+	seen := map[string]bool{}
+	for _, topic := range titles {
+		title := strings.Join(strings.Fields(strings.TrimSpace(topic.Title)), " ")
+		key := strings.ToLower(title)
+		if title == "" || seen[key] || len([]rune(title)) > 95 || excessiveTitleRepetition(title, niche, audience) || malformedTitle(title) || unsupportedCurrentClaim(title) {
+			continue
+		}
+		seen[key] = true
+		topic.Title = title
+		if strings.TrimSpace(topic.Pillar) == "" || (len(validPillars) > 0 && !validPillars[strings.ToLower(strings.TrimSpace(topic.Pillar))]) {
+			if len(pillars) > 0 {
+				topic.Pillar = pillars[len(out)%len(pillars)].Name
+			} else {
+				topic.Pillar = "Core videos"
+			}
+		}
+		topic.Intent = firstNonEmpty(topic.Intent, inferTitleIntent(title))
+		topic.Difficulty = firstNonEmpty(topic.Difficulty, "medium")
+		topic.Source = firstNonEmpty(topic.Source, "openai_structured_strategy")
+		topic.EvidenceStatus = firstNonEmpty(topic.EvidenceStatus, "ai_strategic_analysis")
+		out = append(out, topic)
+	}
+	return out
+}
+
+func excessiveTitleRepetition(title, niche, audience string) bool {
+	lower := strings.ToLower(title)
+	for _, phrase := range []string{strings.ToLower(niche), strings.ToLower(audience), "vibe coder, students", "vibe coder students"} {
+		phrase = strings.TrimSpace(phrase)
+		if phrase == "" {
+			continue
+		}
+		if strings.Count(lower, phrase) > 1 {
+			return true
+		}
+		if len(strings.Fields(phrase)) >= 4 && strings.Contains(lower, phrase) {
+			return true
+		}
+	}
+	words := strings.Fields(lower)
+	counts := map[string]int{}
+	for _, word := range words {
+		word = strings.Trim(word, ".,:;!?()[]")
+		if len(word) < 5 {
+			continue
+		}
+		counts[word]++
+		if counts[word] >= 3 {
+			return true
+		}
+	}
+	return false
+}
+
+func malformedTitle(title string) bool {
+	if strings.Contains(title, "??") || strings.Contains(title, "!!") || strings.Contains(title, "::") || strings.Contains(title, "  ") {
+		return true
+	}
+	trimmed := strings.TrimSpace(title)
+	return strings.HasPrefix(trimmed, "-") || strings.HasPrefix(trimmed, ":") || strings.HasSuffix(trimmed, ":")
+}
+
+func unsupportedCurrentClaim(title string) bool {
+	lower := strings.ToLower(title)
+	currentMarkers := []string{"new law", "visa rule", "tax rule", "guaranteed", "will happen", "confirmed", "breaking"}
+	claimDomains := []string{"visa", "legal", "law", "tax", "financial", "investment", "mortgage", "immigration"}
+	for _, marker := range currentMarkers {
+		if !strings.Contains(lower, marker) {
+			continue
+		}
+		for _, domain := range claimDomains {
+			if strings.Contains(lower, domain) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func normalizeContentPillars(pillars []ContentPillar, topics []VideoTopic) []ContentPillar {
+	if len(pillars) == 0 {
+		pillars = []ContentPillar{{Name: "Foundations"}, {Name: "Workflows"}, {Name: "Case studies"}, {Name: "Mistakes"}, {Name: "Comparisons"}}
+	}
+	counts := map[string]int{}
+	examples := map[string][]string{}
+	for _, topic := range topics {
+		pillar := strings.TrimSpace(topic.Pillar)
+		if pillar == "" {
+			continue
+		}
+		counts[pillar]++
+		if len(examples[pillar]) < 3 {
+			examples[pillar] = append(examples[pillar], topic.Title)
+		}
+	}
+	out := []ContentPillar{}
+	indexByName := map[string]int{}
+	for _, pillar := range pillars {
+		name := strings.TrimSpace(pillar.Name)
+		if name == "" {
+			continue
+		}
+		key := strings.ToLower(name)
+		count := counts[name]
+		if count == 0 && pillar.TopicCount > 0 {
+			count = pillar.TopicCount
+		}
+		if count == 0 {
+			count = 1
+			if len(topics)/len(pillars) > count {
+				count = len(topics) / len(pillars)
+			}
+		}
+		pct := pillar.Percentage
+		if pct <= 0 && len(topics) > 0 {
+			pct = round1(float64(count) / float64(len(topics)) * 100)
+		}
+		normalized := ContentPillar{Name: name, Description: pillar.Description, Percentage: pct, TopicCount: count, ExampleTitles: appendStringGroups(pillar.ExampleTitles, examples[name])}
+		if existing, ok := indexByName[key]; ok {
+			out[existing].TopicCount += normalized.TopicCount
+			out[existing].Percentage += normalized.Percentage
+			out[existing].ExampleTitles = appendStringGroups(out[existing].ExampleTitles, normalized.ExampleTitles)
+			if out[existing].Description == "" {
+				out[existing].Description = normalized.Description
+			}
+			continue
+		}
+		indexByName[key] = len(out)
+		out = append(out, normalized)
+	}
+	totalPct := 0.0
+	for _, pillar := range out {
+		totalPct += pillar.Percentage
+	}
+	if len(out) > 0 && totalPct > 0 {
+		adjustment := 100 / totalPct
+		for i := range out {
+			out[i].Percentage = round1(out[i].Percentage * adjustment)
+		}
+	}
+	return out
+}
+
+func fallbackTitles(draft NicheDraft, count int) []VideoTopic {
+	pillars := draft.ContentPillars
+	if len(pillars) == 0 {
+		pillars = []ContentPillar{{Name: "Foundations"}, {Name: "Workflows"}, {Name: "Case studies"}, {Name: "Mistakes"}, {Name: "Comparisons"}}
+	}
+	intents := []string{"tutorial", "comparison", "mistake", "case study", "opinion", "breakdown", "beginner guide", "experiment", "workflow", "checklist"}
+	out := []VideoTopic{}
+	for i := 0; i < count && i < len(intents); i++ {
+		title := naturalTitle(intents[i], draft)
+		out = append(out, VideoTopic{Title: title, Pillar: pillars[i%len(pillars)].Name, Intent: intents[i], Difficulty: "medium", Source: "backend_title_validation", EvidenceStatus: "ai_strategic_analysis"})
+	}
+	return out
+}
+
+func naturalTitle(intent string, draft NicheDraft) string {
+	topic := firstNonEmpty(draft.Subcategory, draft.Name, "this workflow")
+	switch intent {
+	case "tutorial":
+		return "Build a simple " + topic + " workflow from scratch"
+	case "comparison":
+		return "The fastest path versus the safest path"
+	case "mistake":
+		return "Five mistakes beginners make before they see results"
+	case "case study":
+		return "I tested the workflow on a realistic example"
+	case "opinion":
+		return "What most advice gets wrong about this niche"
+	case "breakdown":
+		return "A practical breakdown of the first week"
+	case "beginner guide":
+		return "Start here if you are completely new"
+	case "experiment":
+		return "I tried three approaches and tracked what changed"
+	case "workflow":
+		return "A repeatable weekly workflow you can copy"
+	default:
+		return "A practical checklist before you start"
+	}
+}
+
+func inferTitleIntent(title string) string {
+	lower := strings.ToLower(title)
+	switch {
+	case strings.Contains(lower, " vs ") || strings.Contains(lower, "versus"):
+		return "comparison"
+	case strings.Contains(lower, "mistake"):
+		return "mistake"
+	case strings.Contains(lower, "case study") || strings.Contains(lower, "tested"):
+		return "case study"
+	case strings.Contains(lower, "how to") || strings.Contains(lower, "build"):
+		return "tutorial"
+	case strings.Contains(lower, "beginner"):
+		return "beginner guide"
+	default:
+		return "breakdown"
+	}
+}
+
+func buildRunway(topicCount int, capacity string) ContentRunway {
+	weekly := weeklyCapacity(capacity)
+	if weekly <= 0 {
+		weekly = 2
+	}
+	weeks := int(math.Ceil(float64(topicCount) / float64(weekly)))
+	return ContentRunway{ViableTopicCount: topicCount, WeeklyCapacity: weekly, EstimatedWeeks: weeks, EstimatedContentRunway: estimateRunway(topicCount, capacity)}
+}
+
+func weeklyCapacity(value string) int {
+	for _, field := range strings.Fields(value) {
+		n, err := strconv.Atoi(strings.Trim(field, " ,./"))
+		if err == nil && n > 0 && n < 30 {
+			return n
+		}
+	}
+	return 2
+}
+
+func repetitionRisk(topicCount, pillarCount int) string {
+	if topicCount < 30 || pillarCount < 3 {
+		return "high"
+	}
+	if topicCount < 45 {
+		return "medium"
+	}
+	return "low"
+}
+
+func supplyGapsFromStrings(values []string) []SupplyGap {
+	out := []SupplyGap{}
+	for _, value := range cleanStringList(values) {
+		out = append(out, SupplyGap{Statement: value, Confidence: "medium"})
+	}
+	return out
+}
+
+func bestCandidateSearchQuery(c NicheCandidate) string {
+	return firstNonEmpty(firstString(c.SearchQueriesUsed), c.CorePhrase, c.Name, c.NicheName)
+}
+
+func evidenceFreshness(candidates []NicheCandidate) string {
+	for _, c := range candidates {
+		if c.MarketEvidence.Status == evidenceModeLiveValidated && c.MarketEvidence.CollectedAt != nil {
+			return "live"
+		}
+	}
+	for _, c := range candidates {
+		if c.MarketEvidence.Status == evidenceModeCacheValidated && c.MarketEvidence.CollectedAt != nil {
+			return "cached"
+		}
+	}
+	return "strategic_only"
+}
+
+func analysisMode(candidates []NicheCandidate) string {
+	for _, c := range candidates {
+		if c.MarketEvidence.Status == evidenceModeLiveValidated {
+			return evidenceModeLiveValidated
+		}
+	}
+	for _, c := range candidates {
+		if c.MarketEvidence.Status == evidenceModeCacheValidated {
+			return evidenceModeCacheValidated
+		}
+	}
+	for _, c := range candidates {
+		if c.MarketEvidence.Status == evidenceModeTrendSupported {
+			return evidenceModeTrendSupported
+		}
+	}
+	return evidenceModeAIStrategicAnalysis
+}
+
+func appendSentence(base, next string) string {
+	base = strings.TrimSpace(base)
+	next = strings.TrimSpace(next)
+	if base == "" {
+		return next
+	}
+	if next == "" {
+		return base
+	}
+	return base + " " + next
+}
+
+func appendStringGroups(base []string, values ...[]string) []string {
+	seen := map[string]bool{}
+	out := []string{}
+	for _, item := range base {
+		item = strings.TrimSpace(item)
+		if item != "" && !seen[strings.ToLower(item)] {
+			seen[strings.ToLower(item)] = true
+			out = append(out, item)
+		}
+	}
+	for _, group := range values {
+		for _, item := range group {
+			item = strings.TrimSpace(item)
+			if item != "" && !seen[strings.ToLower(item)] {
+				seen[strings.ToLower(item)] = true
+				out = append(out, item)
+			}
+		}
+	}
+	return out
+}
+
+func firstStringFromDrafts(drafts []NicheDraft) string {
+	for _, draft := range drafts {
+		if strings.TrimSpace(draft.Name) != "" {
+			return strings.TrimSpace(draft.Name)
+		}
+	}
+	return ""
 }
 
 func scorePersonalFit(bp nicheBlueprint, profile CreatorNicheProfile) float64 {

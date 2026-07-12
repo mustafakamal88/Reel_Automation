@@ -367,7 +367,6 @@ export interface CreatorNicheProfile {
   target_language: string;
   creator_presence: string;
   content_formats: string[];
-  primary_monetization_goal: string;
   optional_broad_topic: string;
   weekly_production_capacity: string;
 }
@@ -379,8 +378,16 @@ export interface NicheResearchRequest {
 
 export interface NicheReport {
   id: string;
-  status: 'ok' | 'not_configured' | 'invalid_input' | 'insufficient_evidence' | 'no_matching_content' | 'quota_temporarily_unavailable' | 'credentials_invalid' | 'provider_temporarily_unavailable' | 'validation_timeout' | 'research_failed' | string;
+  status: 'ok' | 'openai_unavailable' | 'invalid_model_output' | 'not_configured' | 'invalid_input' | 'insufficient_evidence' | 'no_matching_content' | 'quota_temporarily_unavailable' | 'credentials_invalid' | 'provider_temporarily_unavailable' | 'validation_timeout' | 'research_failed' | string;
   message: string;
+  generated_at?: string;
+  evidence_freshness?: string;
+  analysis_mode?: string;
+  provider_status?: ResearchProviderStatus[];
+  creator_profile_summary?: string;
+  primary_recommendation?: NicheCandidate;
+  alternative_candidates?: NicheCandidate[];
+  methodology?: string[];
   profile: CreatorNicheProfile;
   candidates: NicheCandidate[];
   cache: { hit: boolean; cache_hit?: boolean; key?: string; stored_at?: string; ttl: string; evidence_fetched_at?: string; evidence_age?: string; freshness?: string };
@@ -390,6 +397,25 @@ export interface NicheReport {
 
 export interface NicheCandidate {
   id: string;
+  name?: string;
+  concise_positioning?: string;
+  category?: string;
+  subcategory?: string;
+  target_audience?: string;
+  audience_problems?: string[];
+  creator_advantages?: string[];
+  unique_angle?: string;
+  overall_score?: number;
+  confidence?: string;
+  dimensions?: NicheScoreDimensions;
+  content_pillars?: ContentPillar[];
+  topic_clusters?: TopicCluster[];
+  recommended_titles?: VideoTopic[];
+  opportunity_gaps?: string[];
+  evidence_summary?: string;
+  market_evidence?: MarketEvidence;
+  search_queries_used?: string[];
+  runway?: ContentRunway;
   level_1: string;
   level_2: string;
   level_3: string;
@@ -399,11 +425,9 @@ export interface NicheCandidate {
   viewer_problem: string;
   creator_advantage: string;
   recommended_content_format: string;
-  monetization_routes?: string[];
   validation: NicheValidation;
   outliers?: OutlierEvidence[];
   supply_gaps?: SupplyGap[];
-  monetization: MonetizationEstimate;
   video_topics?: VideoTopic[];
   topic_pillars?: ContentPillar[];
   first_10_titles?: string[];
@@ -411,6 +435,38 @@ export interface NicheCandidate {
   scores: NicheScores;
   risks?: string[];
   recommended_first_action: string;
+}
+
+export interface NicheScoreDimensions {
+  creator_fit: ScoreExplanation;
+  audience_demand: ScoreExplanation;
+  competition_opportunity: ScoreExplanation;
+  sustainability: ScoreExplanation;
+  differentiation: ScoreExplanation;
+}
+
+export interface TopicCluster {
+  name: string;
+  description: string;
+  titles?: string[];
+}
+
+export interface MarketEvidence {
+  status: 'live_validated' | 'cache_validated' | 'trend_supported' | 'ai_strategic_analysis' | 'limited_evidence' | string;
+  source_types?: string[];
+  sample_size: number;
+  recent_activity: string;
+  median_views?: number | null;
+  engagement?: number | null;
+  collected_at?: string | null;
+  limitations?: string[];
+}
+
+export interface ContentRunway {
+  viable_topic_count: number;
+  estimated_weeks: number;
+  weekly_capacity: number;
+  estimated_content_runway: string;
 }
 
 export interface NicheValidation {
@@ -485,7 +541,10 @@ export interface VideoTopic {
 
 export interface ContentPillar {
   name: string;
+  description?: string;
+  percentage?: number;
   topic_count: number;
+  example_titles?: string[];
 }
 
 export interface SustainabilityEvidence {
@@ -502,7 +561,6 @@ export interface NicheScores {
   personal_fit: ScoreExplanation;
   demand: ScoreExplanation;
   opportunity_gap: ScoreExplanation;
-  monetization: ScoreExplanation;
   sustainability: ScoreExplanation;
   overall: ScoreExplanation;
   confidence: ScoreExplanation;

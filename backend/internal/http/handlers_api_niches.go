@@ -62,9 +62,16 @@ func (s *Server) handleCreateNicheResearch(w http.ResponseWriter, r *http.Reques
 		timeout = 10 * time.Second
 	}
 	cfg := research.NicheResearchConfig{
-		YouTube:         research.NewYouTubeProvider(s.cfg.YouTubeAPIKey, nil),
-		Trends:          nicheTrendAdapter{discoverer: trenddiscovery.NewDiscoverer(trenddiscovery.Config{Provider: s.cfg.TrendDiscoveryProvider, BaseURL: s.cfg.TrendDiscoveryBaseURL, Timeout: timeout}, nil)},
-		GoogleAdsStatus: s.googleAdsKeywordPlannerStatus(),
+		YouTube:                      research.NewYouTubeProvider(s.cfg.YouTubeAPIKey, nil),
+		Trends:                       nicheTrendAdapter{discoverer: trenddiscovery.NewDiscoverer(trenddiscovery.Config{Provider: s.cfg.TrendDiscoveryProvider, BaseURL: s.cfg.TrendDiscoveryBaseURL, Timeout: timeout}, nil)},
+		GoogleAdsStatus:              s.googleAdsKeywordPlannerStatus(),
+		OpenAIAPIKey:                 s.cfg.OpenAIAPIKey,
+		OpenAIModel:                  s.cfg.OpenAITextModel,
+		RequireOpenAI:                true,
+		YouTubeCache:                 s.nicheYouTubeCache,
+		YouTubeDailyLimiter:          s.nicheYouTubeDaily,
+		MaxYouTubeSearchesPerRequest: 3,
+		DailyYouTubeSearchLimit:      80,
 	}
 	report, researchErr := research.ResearchNiches(r.Context(), req, cfg)
 	report.Cache = research.NicheCacheInfo{Hit: false, CacheHit: false, Key: cacheKey, StoredAt: time.Now().UTC(), EvidenceFetchedAt: time.Now().UTC(), TTL: ttl.String(), Freshness: "fresh"}
@@ -162,7 +169,6 @@ func (s *Server) handleNicheFilters(w http.ResponseWriter, r *http.Request) {
 			{"label": "Shorts", "value": "shorts"},
 			{"label": "Both", "value": "both"},
 		},
-		"monetization_goals": []string{"AdSense", "affiliate marketing", "sponsorships", "digital products", "services", "leads"},
 	})
 }
 

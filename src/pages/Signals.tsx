@@ -1,8 +1,7 @@
-import { useCallback, useEffect, useId, useMemo, useState, type KeyboardEvent, type ReactNode } from 'react';
+import { useCallback, useEffect, useId, useMemo, useState, type CSSProperties, type KeyboardEvent, type ReactNode } from 'react';
 import type { Platform, View } from '../types';
 import {
   ApiError,
-  analyseNicheGaps,
   analyzeYouTubeChannel,
   analyzeYouTubeVideo,
   generateResearchScript,
@@ -10,6 +9,7 @@ import {
   getResearchProviderStatus,
   researchNiches,
   searchTrendIntelligence,
+  type ContentPillar,
   type CreatorNicheProfile,
   type NicheCandidate,
   type NicheReport,
@@ -58,7 +58,7 @@ const AI_TOOL_PAGE_META: Record<AIToolView, { title: string; eyebrow: string; de
   nicheFinder: {
     eyebrow: 'Opportunity research',
     title: 'Niche Finder',
-    description: 'Evaluate a seed topic across demand, competition, monetization context and provider readiness.',
+    description: 'Evaluate creator fit, demand, competition opportunity, sustainability, and differentiation.',
     action: 'Analyze niche opportunity',
   },
 };
@@ -948,7 +948,6 @@ function defaultNicheProfile(region: string, language: string, audience: string)
     target_language: (language || 'en').split('-')[0],
     creator_presence: 'faceless channel',
     content_formats: ['long-form'],
-    primary_monetization_goal: 'AdSense',
     optional_broad_topic: '',
     weekly_production_capacity: '2 videos per week',
   };
@@ -991,7 +990,6 @@ function NicheFinderTab({ providers, region, language, audience, onGenerate, gen
   const [error, setError] = useState<string | null>(null);
   const [expandedID, setExpandedID] = useState<string | null>(null);
   const [showTopicsID, setShowTopicsID] = useState<string | null>(null);
-  const [gapLoading, setGapLoading] = useState(false);
   const providerMap = new Map(providers.map(provider => [provider.id, provider]));
   const meaningfulFields = [
     profile.professional_skills,
@@ -1036,24 +1034,12 @@ function NicheFinderTab({ providers, region, language, audience, onGenerate, gen
       .finally(() => setLoading(false));
   }
 
-  function runGapAnalysis() {
-    if (!report?.id) return;
-    setGapLoading(true);
-    analyseNicheGaps(report.id)
-      .then(data => {
-        setReport(data);
-        setExpandedID(current => current ?? data.candidates?.[0]?.id ?? null);
-      })
-      .catch(err => setError(err instanceof ApiError ? err.message : 'Content gap analysis failed.'))
-      .finally(() => setGapLoading(false));
-  }
-
   return (
     <div className="niche-workflow">
       <div className="settings-card niche-form-card">
         <div>
           <div className="settings-card-title">Creator profile</div>
-          <div className="muted-note">Find niches where your credibility, audience demand, content runway, and commercial potential overlap.</div>
+          <div className="muted-note">Find niches where your credibility, audience demand, content runway, and differentiation overlap.</div>
         </div>
         <div className="niche-form-sections">
           <div className="niche-form-section">
@@ -1095,16 +1081,8 @@ function NicheFinderTab({ providers, region, language, audience, onGenerate, gen
             </div>
           </div>
           <div className="niche-form-section">
-            <div className="niche-section-heading">Commercial goal</div>
+            <div className="niche-section-heading">Topic focus</div>
             <div className="form-grid two">
-              <Select label="Primary monetization goal" value={profile.primary_monetization_goal} onChange={value => setProfileField('primary_monetization_goal', value)} options={[
-                { label: 'AdSense', value: 'AdSense' },
-                { label: 'Affiliate marketing', value: 'affiliate marketing' },
-                { label: 'Sponsorships', value: 'sponsorships' },
-                { label: 'Digital products', value: 'digital products' },
-                { label: 'Services', value: 'services' },
-                { label: 'Leads', value: 'leads' },
-              ]} />
               <TextInput label="Optional broad topic" value={profile.optional_broad_topic} onChange={value => setProfileField('optional_broad_topic', value)} placeholder="AI automation, UK visa, personal finance" />
             </div>
           </div>
@@ -1114,7 +1092,6 @@ function NicheFinderTab({ providers, region, language, audience, onGenerate, gen
               { label: 'Profile inputs', value: `${meaningfulFields}/3 minimum`, type: 'value' },
               { label: 'Video validation', value: providerMap.get('youtube_data_api')?.status || 'unknown', type: 'status' },
               { label: 'Current trends', value: providerMap.get('google_trends_rss')?.status || 'unknown', type: 'status' },
-              { label: 'Monetization calibration', value: 'not connected', type: 'status' },
             ]} />
           </div>
         </div>
@@ -1129,7 +1106,7 @@ function NicheFinderTab({ providers, region, language, audience, onGenerate, gen
       </div>
 
       <div className="neutral-callout">
-        Public niche research shows commercial potential only unless valid RPM calibration exists. Search-ad bid data is never presented as YouTube earnings.
+        Niche Finder separates AI strategy from verified public evidence. It does not estimate RPM, revenue, advertiser demand, or commercial potential.
       </div>
 
       {loading && <EmptyState tone="loading" title="Researching niche evidence." desc="Checking public market signals for this creator profile." />}
@@ -1137,163 +1114,134 @@ function NicheFinderTab({ providers, region, language, audience, onGenerate, gen
       {report && report.status !== 'ok' && <NicheResearchState report={report} />}
       {report?.status === 'ok' && (
         <div className="niche-results">
-          <div className="niche-report-summary">
-            <div>
-              <div className="settings-card-title">Ranked niche candidates</div>
-              <div className="muted-note">{report.message} Evidence: {report.cache?.freshness === 'stale' ? 'cached/stale' : report.cache?.hit ? 'cached' : 'fresh'}.</div>
-            </div>
-            <button className="generate-btn secondary" type="button" onClick={runGapAnalysis} disabled={gapLoading}>
-              {gapLoading ? 'Analysing...' : 'Analyse Content Gaps'}
-            </button>
-          </div>
+          <NicheDashboardHeader
+            report={report}
+            candidate={report.primary_recommendation ?? report.candidates[0]}
+            generating={Boolean((report.primary_recommendation ?? report.candidates[0]) && generatingID === nicheCandidateKey(report.primary_recommendation ?? report.candidates[0]))}
+            generated={Boolean((report.primary_recommendation ?? report.candidates[0]) && generated[nicheCandidateKey(report.primary_recommendation ?? report.candidates[0])])}
+            generationError={(report.primary_recommendation ?? report.candidates[0]) ? generationErrors[nicheCandidateKey(report.primary_recommendation ?? report.candidates[0])] : undefined}
+            onBuildStrategy={() => report.candidates[0] && onGenerate(report.primary_recommendation ?? report.candidates[0])}
+            onOpenScriptStudio={onOpenScriptStudio}
+          />
           {report.cache?.freshness === 'stale' && (
             <div className="neutral-callout niche-stale-notice">
               Showing the most recent verified evidence from {formatCacheTime(report.cache.evidence_fetched_at || report.cache.stored_at)}. Fresh validation is temporarily unavailable.
             </div>
           )}
-          {report.candidates.map(candidate => {
-            const key = nicheCandidateKey(candidate);
-            return (
-              <NicheCandidateCard
-                key={candidate.id}
-                candidate={candidate}
-                expanded={expandedID === candidate.id}
-                showTopics={showTopicsID === candidate.id}
-                generated={generated[key]}
-                generationError={generationErrors[key]}
-                generating={generatingID === key}
-                onToggle={() => setExpandedID(current => current === candidate.id ? null : candidate.id)}
-                onToggleTopics={() => setShowTopicsID(current => current === candidate.id ? null : candidate.id)}
-                onBuildStrategy={() => onGenerate(candidate)}
-                onOpenScriptStudio={onOpenScriptStudio}
-              />
-            );
-          })}
-          <Limitations items={report.limitations ?? []} />
+          {report.candidates[0] && (
+            <NicheCandidateDashboard
+              candidate={report.primary_recommendation ?? report.candidates[0]}
+              showTopics={showTopicsID === (report.primary_recommendation ?? report.candidates[0]).id}
+              onToggleTopics={() => setShowTopicsID(current => current === (report.primary_recommendation ?? report.candidates[0]).id ? null : (report.primary_recommendation ?? report.candidates[0]).id)}
+            />
+          )}
+          <AlternativeCandidates
+            candidates={report.alternative_candidates?.length ? report.alternative_candidates : report.candidates.slice(1)}
+            expandedID={expandedID}
+            onToggle={setExpandedID}
+          />
+          <NichePanel title="Score methodology">
+            <List items={report.methodology ?? []} />
+            <Limitations items={report.limitations ?? []} />
+          </NichePanel>
         </div>
       )}
     </div>
   );
 }
 
-function NicheCandidateCard({ candidate, expanded, showTopics, generated, generationError, generating, onToggle, onToggleTopics, onBuildStrategy, onOpenScriptStudio }: {
-  candidate: NicheCandidate;
-  expanded: boolean;
-  showTopics: boolean;
-  generated?: ReelContentPackage;
-  generationError?: string;
+function NicheDashboardHeader({ report, candidate, generating, generated, generationError, onBuildStrategy, onOpenScriptStudio }: {
+  report: NicheReport;
+  candidate?: NicheCandidate;
   generating: boolean;
-  onToggle: () => void;
-  onToggleTopics: () => void;
+  generated: boolean;
+  generationError?: string;
   onBuildStrategy: () => void;
   onOpenScriptStudio?: () => void;
 }) {
-  const monetization = candidate.monetization;
+  if (!candidate) return null;
   return (
-    <article className={`niche-candidate-card${expanded ? ' expanded' : ''}`}>
-      <button className="niche-card-trigger" type="button" onClick={onToggle} aria-expanded={expanded}>
-        <div className="niche-card-main">
-          <div className="niche-path">{candidate.level_1} <span>→</span> {candidate.level_2} <span>→</span> {candidate.level_3}</div>
-          <div className="niche-card-title">{candidate.niche_name}</div>
-          <div className="niche-card-subtitle">{candidate.target_viewer} · {candidate.recommended_content_format}</div>
+    <section className="niche-dashboard-header">
+      <div className="niche-header-copy">
+        <div className="niche-path">{candidate.category || candidate.level_1} / {candidate.subcategory || candidate.level_2}</div>
+        <h2>{candidate.name || candidate.niche_name}</h2>
+        <p>{candidate.concise_positioning || candidate.unique_angle || report.creator_profile_summary}</p>
+        <div className="niche-header-badges">
+          <span>{candidate.confidence || candidate.scores.confidence.label} confidence</span>
+          <span>{evidenceBadgeLabel(report, candidate)}</span>
+          <span>{evidenceFreshnessLabel(report.evidence_freshness, candidate.market_evidence?.collected_at)}</span>
         </div>
-        <div className="niche-score-lockup">
-          <div className="score-value">{Math.round(candidate.scores.overall.score)}</div>
-          <div className="niche-score-label">score</div>
-        </div>
-      </button>
-      <div className="niche-card-metrics">
-        <MetricPill label="Demand" value={Math.round(candidate.scores.demand.score)} />
-        <MetricPill label="Competition" value={candidate.validation.competition_level} />
-        <MetricPill label="Monetization" value={monetization.commercial_potential} />
-        <MetricPill label="Sustainability" value={Math.round(candidate.sustainability.score)} />
-        <MetricPill label="Confidence" value={candidate.scores.confidence.label} />
       </div>
-      {expanded && (
-        <div className="niche-card-body">
-          <div className="niche-detail-grid">
-            <NichePanel title="Audience fit">
-              <TextBlock label="Target viewer" value={candidate.target_viewer} />
-              <TextBlock label="Viewer problem" value={candidate.viewer_problem} />
-              <TextBlock label="Creator advantage" value={candidate.creator_advantage} />
-              <LabelledChips label="Monetization routes" items={candidate.monetization_routes ?? []} />
-            </NichePanel>
-            <NichePanel title="Market evidence">
-              <MetricGrid values={{
-                'Videos sampled': candidate.validation.sampled_video_count,
-                'Recent volume': candidate.validation.recent_publication_volume,
-                'Median views': formatCount(candidate.validation.median_sampled_views),
-                Engagement: `${candidate.validation.engagement_rate}%`,
-                'Newest activity': candidate.validation.newest_activity || 'Unavailable',
-              }} />
-              <TextBlock label="Evidence summary" value={candidate.validation.market_evidence_summary} />
-              <LabelledChips label="Search phrases" items={candidate.validation.search_phrases ?? []} />
-            </NichePanel>
-          </div>
-          <MonetizationPanel estimate={monetization} />
-          <div className="niche-detail-grid">
-            <NichePanel title="Outlier examples">
-              {candidate.outliers?.length ? (
-                <div className="niche-outlier-list">
-                  {candidate.outliers.map(outlier => (
-                    <a className="niche-outlier" href={outlier.canonical_url} target="_blank" rel="noreferrer" key={outlier.canonical_url}>
-                      {outlier.thumbnail_url && <img src={outlier.thumbnail_url} alt="" />}
-                      <span>
-                        <strong>{outlier.title}</strong>
-                        <small>{outlier.channel_name} · {formatCount(outlier.public_views)} views · strength {Math.round(outlier.outlier_strength)}</small>
-                        <em>{outlier.outlier_reason}</em>
-                      </span>
-                    </a>
-                  ))}
-                </div>
-              ) : (
-                <div className="muted-note">No safe small or mid-sized channel outliers found in the controlled sample.</div>
-              )}
-            </NichePanel>
-            <NichePanel title="Supply gaps">
-              <SectionList label="Supported gaps" items={(candidate.supply_gaps ?? []).map(gap => `${gap.statement} (${gap.confidence})`)} />
-            </NichePanel>
-          </div>
-          <NichePanel title="50-video sustainability test">
-            <div className="muted-note">Topic ideas are labelled separately from measured demand evidence. Generated titles are not treated as verified demand unless evidence-backed.</div>
-            <MetricGrid values={{
-              'Viable topics': candidate.sustainability.viable_topic_count,
-              Pillars: candidate.sustainability.content_pillar_count,
-              'Repetition risk': candidate.sustainability.topic_repetition_risk,
-              Runway: candidate.sustainability.estimated_content_runway,
-            }} />
-            {candidate.sustainability.warning && <div className="neutral-callout warning">{candidate.sustainability.warning}</div>}
-            <LabelledChips label="Content pillars" items={(candidate.topic_pillars ?? []).map(pillar => `${pillar.name} (${pillar.topic_count})`)} />
-            <SectionList label="First 10 recommended titles" items={candidate.first_10_titles ?? []} />
-            {showTopics && <SectionList label="Full topic list" items={(candidate.video_topics ?? []).map(topic => `${topic.title} · ${topic.pillar} · ${topic.evidence_status || 'unvalidated idea'}`)} />}
-          </NichePanel>
-          <NichePanel title="Score explanations">
-            <TextBlock label="Overall" value={`${candidate.scores.overall.explanation} Score: ${Math.round(candidate.scores.overall.score)}.`} />
-            <TextBlock label="Personal fit" value={candidate.scores.personal_fit.explanation} />
-            <TextBlock label="Demand" value={candidate.scores.demand.explanation} />
-            <TextBlock label="Opportunity gap" value={candidate.scores.opportunity_gap.explanation} />
-            <TextBlock label="Monetization" value={candidate.scores.monetization.explanation} />
-            <TextBlock label="Sustainability" value={candidate.scores.sustainability.explanation} />
-          </NichePanel>
-          <SectionList label="Risks" items={candidate.risks ?? []} />
-          <TextBlock label="Recommended first action" value={candidate.recommended_first_action} />
-          <div className="niche-card-actions">
-            <ScriptAction
-              label="Build Channel Strategy"
-              generating={generating}
-              generated={Boolean(generated)}
-              error={generationError}
-              onGenerate={onBuildStrategy}
-              onOpenScriptStudio={onOpenScriptStudio}
-            />
-            <button className="generate-btn secondary" type="button" onClick={onToggleTopics}>View 50 Video Ideas</button>
-            <button className="generate-btn secondary" type="button">Inspect Outliers</button>
-            <button className="generate-btn secondary" type="button" disabled>Save Niche</button>
-          </div>
-          {generated && <GeneratedPackageView pkg={generated} />}
+      <ScoreGauge value={candidate.overall_score ?? candidate.scores.overall.score} label="Overall" accent="cyan" />
+      <div className="niche-header-action">
+        <TextBlock label="Recommended first action" value={candidate.recommended_first_action} />
+        <div className="niche-card-actions">
+          <button className="generate-btn secondary" type="button" disabled>Save Niche</button>
+          <ScriptAction
+            label="Build Channel Strategy"
+            generating={generating}
+            generated={generated}
+            error={generationError}
+            onGenerate={onBuildStrategy}
+            onOpenScriptStudio={onOpenScriptStudio}
+          />
         </div>
-      )}
-    </article>
+      </div>
+    </section>
+  );
+}
+
+function NicheCandidateDashboard({ candidate, showTopics, onToggleTopics }: { candidate: NicheCandidate; showTopics: boolean; onToggleTopics: () => void }) {
+  const dimensions = dimensionRows(candidate);
+  const pillars = candidate.content_pillars?.length ? candidate.content_pillars : candidate.topic_pillars ?? [];
+  const titles = candidate.recommended_titles?.length ? candidate.recommended_titles : candidate.video_topics ?? [];
+  return (
+    <div className="niche-dashboard-grid">
+      <div className="niche-score-card-grid">
+        {dimensions.map(dim => <DimensionCard key={dim.key} row={dim} />)}
+      </div>
+      <NichePanel title="Strategic scoring radar">
+        <RadarChart rows={dimensions} />
+      </NichePanel>
+      <NichePanel title="Deterministic score contribution">
+        <ContributionChart rows={dimensions} />
+      </NichePanel>
+      <NichePanel title="Content-pillar distribution">
+        <PillarChart pillars={pillars} />
+      </NichePanel>
+      <NichePanel title="50-video runway">
+        <RunwayCard candidate={candidate} pillars={pillars} />
+      </NichePanel>
+      <NichePanel title="Demand evidence">
+        <DemandEvidence candidate={candidate} />
+      </NichePanel>
+      <NichePanel title="Competition opportunity">
+        <CompetitionVisual candidate={candidate} />
+      </NichePanel>
+      <NichePanel title="Audience profile">
+        <TextBlock label="Audience" value={candidate.target_audience || candidate.target_viewer} />
+        <SectionList label="Audience problems" items={candidate.audience_problems?.length ? candidate.audience_problems : [candidate.viewer_problem].filter(Boolean)} />
+        <SectionList label="Creator advantages" items={candidate.creator_advantages?.length ? candidate.creator_advantages : [candidate.creator_advantage].filter(Boolean)} />
+        <TextBlock label="Unique positioning" value={candidate.unique_angle} />
+      </NichePanel>
+      <NichePanel title="Opportunity gaps">
+        <List items={candidate.opportunity_gaps?.length ? candidate.opportunity_gaps : (candidate.supply_gaps ?? []).map(gap => gap.statement)} />
+      </NichePanel>
+      <NichePanel title="First 10 video ideas">
+        <List items={titles.slice(0, 10).map(topic => topic.title)} />
+        <button className="generate-btn secondary" type="button" onClick={onToggleTopics}>{showTopics ? 'Hide Full Explorer' : 'Open 50-Video Explorer'}</button>
+        {showTopics && <SectionList label="Full 50-video idea explorer" items={titles.map(topic => `${topic.title} · ${topic.pillar} · ${topic.intent}`)} />}
+      </NichePanel>
+      <NichePanel title="Evidence and outliers">
+        <TextBlock label="Evidence summary" value={candidate.evidence_summary || candidate.validation.market_evidence_summary} />
+        <LabelledChips label="Search queries used" items={candidate.search_queries_used?.length ? candidate.search_queries_used : candidate.validation.search_phrases ?? []} />
+        {candidate.outliers?.length ? <div className="niche-outlier-list">{candidate.outliers.map(outlier => <a className="niche-outlier" href={outlier.canonical_url} target="_blank" rel="noreferrer" key={outlier.canonical_url}><span><strong>{outlier.title}</strong><small>{outlier.channel_name} · {formatCount(outlier.public_views)} views</small></span></a>)}</div> : <div className="muted-note">No validated outlier examples are available for this evidence mode.</div>}
+      </NichePanel>
+      <NichePanel title="Risks and limitations">
+        <List items={candidate.risks ?? []} />
+        <Limitations items={candidate.market_evidence?.limitations ?? []} />
+      </NichePanel>
+    </div>
   );
 }
 
@@ -1307,6 +1255,10 @@ function NicheResearchState({ report }: { report: NicheReport }) {
 
 function nicheStateCopy(status: string, message: string): { tone: StateTone; title: string; desc: string } {
   switch (status) {
+    case 'openai_unavailable':
+      return { tone: 'unavailable', title: 'AI niche generation is unavailable.', desc: message || 'OpenAI is unavailable, so Niche Finder did not generate candidates or run YouTube validation. Your profile inputs remain above for retry.' };
+    case 'invalid_model_output':
+      return { tone: 'unavailable', title: 'AI niche generation returned unusable output.', desc: message || 'Niche Finder could not validate the AI strategy output. Your profile inputs remain above for retry.' };
     case 'no_matching_content':
       return { tone: 'empty', title: 'No reliable evidence matched this profile.', desc: message || 'No reliable market evidence matched this profile.' };
     case 'insufficient_evidence':
@@ -1333,15 +1285,6 @@ function formatCacheTime(value?: string): string {
   return date.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
 }
 
-function MetricPill({ label, value }: { label: string; value: string | number }) {
-  return (
-    <div className="niche-metric-pill">
-      <span>{label}</span>
-      <strong>{value}</strong>
-    </div>
-  );
-}
-
 function NichePanel({ title, children }: { title: string; children: ReactNode }) {
   return (
     <section className="niche-detail-panel">
@@ -1351,37 +1294,97 @@ function NichePanel({ title, children }: { title: string; children: ReactNode })
   );
 }
 
-function MonetizationPanel({ estimate }: { estimate: NicheCandidate['monetization'] }) {
-  if (estimate.rpm_estimate_available && estimate.rpm_low != null && estimate.rpm_high != null) {
-    return (
-      <NichePanel title="Estimated monetization">
-        <div className="niche-rpm-range">Estimated RPM {estimate.currency} {estimate.rpm_low.toFixed(2)}-{estimate.rpm_high.toFixed(2)}</div>
-        <MetricGrid values={{
-          Format: estimate.format,
-          Market: estimate.target_market,
-          Confidence: estimate.confidence,
-          Calibration: estimate.calibration_type,
-          'Last calibrated': estimate.calibration_age || 'Unavailable',
-        }} />
-        <SectionList label="Estimated creator earnings" items={(estimate.estimated_earnings ?? []).map(item => `${formatCount(item.views)} views: ${estimate.currency} ${item.low.toFixed(2)}-${item.high.toFixed(2)}`)} />
-        <TextBlock label="Assumptions" value={(estimate.calculation_assumptions ?? []).join(' ')} />
-        <TextBlock label="Disclaimer" value={estimate.estimate_disclaimer} />
-      </NichePanel>
-    );
-  }
+type DimensionRow = { key: string; label: string; score: number; explanation: string; weight: number; accent: string };
+
+function dimensionRows(candidate: NicheCandidate): DimensionRow[] {
+  const dims = candidate.dimensions;
+  return [
+    { key: 'creator_fit', label: 'Creator Fit', score: dims?.creator_fit?.score ?? candidate.scores.personal_fit.score, explanation: dims?.creator_fit?.explanation ?? candidate.scores.personal_fit.explanation, weight: 0.25, accent: 'purple' },
+    { key: 'audience_demand', label: 'Audience Demand', score: dims?.audience_demand?.score ?? candidate.scores.demand.score, explanation: dims?.audience_demand?.explanation ?? candidate.scores.demand.explanation, weight: 0.25, accent: 'blue' },
+    { key: 'competition_opportunity', label: 'Competition Opportunity', score: dims?.competition_opportunity?.score ?? candidate.scores.opportunity_gap.score, explanation: dims?.competition_opportunity?.explanation ?? candidate.scores.opportunity_gap.explanation, weight: 0.2, accent: 'green' },
+    { key: 'sustainability', label: 'Content Sustainability', score: dims?.sustainability?.score ?? candidate.scores.sustainability.score, explanation: dims?.sustainability?.explanation ?? candidate.scores.sustainability.explanation, weight: 0.2, accent: 'amber' },
+    { key: 'differentiation', label: 'Differentiation', score: dims?.differentiation?.score ?? Math.round(((candidate.scores.personal_fit.score + candidate.scores.opportunity_gap.score) / 2)), explanation: dims?.differentiation?.explanation ?? 'Measures positioning, production feasibility, and creator-specific angle.', weight: 0.1, accent: 'pink' },
+  ];
+}
+
+function ScoreGauge({ value, label, accent }: { value: number; label: string; accent: string }) {
+  const score = clampScore(value);
+  return <div className={`niche-gauge accent-${accent}`} style={{ '--score': `${score * 3.6}deg` } as CSSProperties}><strong>{Math.round(score)}</strong><span>{label}</span></div>;
+}
+
+function DimensionCard({ row }: { row: DimensionRow }) {
   return (
-    <NichePanel title="Commercial potential">
-      <div className="niche-commercial-potential">{estimate.commercial_potential}</div>
-      <TextBlock label="Currency estimate" value={estimate.unavailable_reason || 'Currency estimate unavailable until sufficient monetization evidence is connected.'} />
-      <MetricGrid values={{
-        Format: estimate.format,
-        Market: estimate.target_market,
-        Confidence: estimate.confidence,
-      }} />
-      <LabelledChips label="Advertiser-demand signals" items={estimate.advertiser_demand_signals ?? []} />
-      <TextBlock label="Disclaimer" value={estimate.estimate_disclaimer} />
-    </NichePanel>
+    <div className={`niche-dimension-card accent-${row.accent}`} title={row.explanation}>
+      <ScoreGauge value={row.score} label="" accent={row.accent} />
+      <div><strong>{row.label}</strong><p>{row.explanation}</p></div>
+    </div>
   );
+}
+
+function RadarChart({ rows }: { rows: DimensionRow[] }) {
+  const points = rows.map((row, i) => {
+    const angle = (-90 + i * (360 / rows.length)) * Math.PI / 180;
+    const radius = 18 + (clampScore(row.score) / 100) * 72;
+    return `${100 + Math.cos(angle) * radius},${100 + Math.sin(angle) * radius}`;
+  }).join(' ');
+  return <svg className="niche-radar" viewBox="0 0 200 200" role="img" aria-label="Strategic scoring radar based on model-derived dimensions and backend normalization"><polygon className="radar-grid" points="100,20 176,75 147,165 53,165 24,75" /><polygon className="radar-shape" points={points} />{rows.map((row, i) => { const angle = (-90 + i * (360 / rows.length)) * Math.PI / 180; return <text key={row.key} x={100 + Math.cos(angle) * 92} y={104 + Math.sin(angle) * 92}>{row.label.split(' ')[0]}</text>; })}</svg>;
+}
+
+function ContributionChart({ rows }: { rows: DimensionRow[] }) {
+  return <div className="niche-contribution-chart" aria-label="Deterministic weighted score contribution">{rows.map(row => <div key={row.key} className={`contribution-row accent-${row.accent}`}><span>{row.label}</span><div><b style={{ width: `${clampScore(row.score) * row.weight}%` }} /></div><strong>{(row.score * row.weight).toFixed(1)}</strong></div>)}</div>;
+}
+
+function PillarChart({ pillars }: { pillars: ContentPillar[] }) {
+  if (!pillars.length) return <div className="muted-note">No content-pillar allocation returned.</div>;
+  return <div className="pillar-chart"><div className="pillar-stack">{pillars.map(p => <span key={p.name} style={{ width: `${p.percentage ?? 0}%` }} title={`${p.name}: ${Math.round(p.percentage ?? 0)}%`} />)}</div>{pillars.map(p => <div className="pillar-row" key={p.name}><span>{p.name}</span><strong>{Math.round(p.percentage ?? 0)}% · {p.topic_count} topics</strong></div>)}</div>;
+}
+
+function RunwayCard({ candidate, pillars }: { candidate: NicheCandidate; pillars: ContentPillar[] }) {
+  const topicCount = candidate.runway?.viable_topic_count ?? candidate.sustainability.viable_topic_count;
+  return <div className="runway-card"><ScoreGauge value={Math.min(100, topicCount * 2)} label={`${topicCount} ideas`} accent="cyan" /><MetricGrid values={{ 'Production weeks': candidate.runway?.estimated_weeks, 'Weekly capacity': candidate.runway?.weekly_capacity, Runway: candidate.runway?.estimated_content_runway ?? candidate.sustainability.estimated_content_runway }} /><PillarChart pillars={pillars} /></div>;
+}
+
+function DemandEvidence({ candidate }: { candidate: NicheCandidate }) {
+  const ev = candidate.market_evidence;
+  if (!ev || ev.sample_size === 0) return <UnavailableChart title="No provider time series available" desc="This candidate is based on AI strategic analysis and available trend context, not fabricated historical points." />;
+  return <MetricGrid values={{ 'Evidence mode': evidenceModeLabel(ev.status), 'Sample size': ev.sample_size, 'Median views': ev.median_views == null ? 'Unavailable' : formatCount(ev.median_views), Engagement: ev.engagement == null ? 'Unavailable' : `${ev.engagement}%`, 'Recent activity': ev.recent_activity, Collected: ev.collected_at ? formatCacheTime(ev.collected_at) : 'Unavailable' }} />;
+}
+
+function CompetitionVisual({ candidate }: { candidate: NicheCandidate }) {
+  const opportunity = candidate.dimensions?.competition_opportunity?.score ?? candidate.scores.opportunity_gap.score;
+  const demand = candidate.dimensions?.audience_demand?.score ?? candidate.scores.demand.score;
+  return <div className="quadrant-chart" aria-label="Model-derived demand and opportunity position"><span style={{ left: `${clampScore(opportunity)}%`, bottom: `${clampScore(demand)}%` }} /><small>Model-derived strategic scoring, not provider measurement</small></div>;
+}
+
+function UnavailableChart({ title, desc }: { title: string; desc: string }) {
+  return <div className="chart-unavailable"><strong>{title}</strong><p>{desc}</p></div>;
+}
+
+function AlternativeCandidates({ candidates, expandedID, onToggle }: { candidates: NicheCandidate[]; expandedID: string | null; onToggle: (id: string | null) => void }) {
+  if (!candidates.length) return null;
+  return <section className="alternative-candidates"><div className="settings-card-title">Alternative candidates</div>{candidates.map(candidate => <button key={candidate.id} className="alternative-card" type="button" onClick={() => onToggle(expandedID === candidate.id ? null : candidate.id)}><strong>{candidate.name || candidate.niche_name}</strong><ScoreGauge value={candidate.overall_score ?? candidate.scores.overall.score} label="" accent="cyan" /><span>{candidate.target_audience || candidate.target_viewer}</span><small>{candidate.unique_angle || candidate.creator_advantage}</small><DimensionBars rows={dimensionRows(candidate)} /><em>{evidenceModeLabel(candidate.market_evidence?.status)}</em>{expandedID === candidate.id && <p>{candidate.concise_positioning || candidate.unique_angle}</p>}</button>)}</section>;
+}
+
+function DimensionBars({ rows }: { rows: DimensionRow[] }) {
+  return <div className="dimension-bars">{rows.map(row => <span key={row.key} title={`${row.label}: ${Math.round(row.score)}`}><b style={{ width: `${clampScore(row.score)}%` }} /></span>)}</div>;
+}
+
+function evidenceModeLabel(mode?: string): string {
+  const labels: Record<string, string> = { live_validated: 'Live validated', cache_validated: 'Cache validated', trend_supported: 'Trend supported', ai_strategic_analysis: 'AI strategic analysis', limited_evidence: 'Limited evidence' };
+  return labels[String(mode ?? '')] || 'Limited evidence';
+}
+
+function evidenceBadgeLabel(report: NicheReport, candidate: NicheCandidate): string {
+  if (report.cache?.freshness === 'stale') return 'Cached stale evidence';
+  if (report.cache?.hit || candidate.market_evidence?.status === 'cache_validated') return 'Cached evidence';
+  return evidenceModeLabel(candidate.market_evidence?.status || report.analysis_mode);
+}
+
+function evidenceFreshnessLabel(freshness?: string, collectedAt?: string | null): string {
+  if (collectedAt) return `Collected ${formatCacheTime(collectedAt)}`;
+  if (freshness === 'live') return 'Live evidence';
+  if (freshness === 'cached') return 'Cached evidence';
+  return 'Strategic only';
 }
 
 function TrendOpportunityCard({ result, expanded, onToggle, generated, generationError, generating, onGenerate, onOpenScriptStudio }: {
@@ -1879,7 +1882,7 @@ function candidateFromChannel(result: YouTubeChannelAnalysisResponse, idea: stri
 }
 
 function nicheCandidateKey(candidate: NicheCandidate): string {
-  return `niche-${stableKey(`${candidate.niche_name}-${candidate.validation.competition_level}-${candidate.monetization.format}`)}`;
+  return `niche-${stableKey(`${candidate.name || candidate.niche_name}-${candidate.validation.competition_level}-${candidate.recommended_content_format}`)}`;
 }
 
 function trendCandidateFromNicheCandidate(candidate: NicheCandidate, region: string, language: string): TrendCandidate {
@@ -1889,8 +1892,8 @@ function trendCandidateFromNicheCandidate(candidate: NicheCandidate, region: str
     region,
     language,
     keyword: candidate.core_phrase,
-    title: candidate.niche_name,
-    score: candidate.scores.overall.score,
+    title: candidate.name || candidate.niche_name,
+    score: candidate.overall_score ?? candidate.scores.overall.score,
     discovered_at: new Date().toISOString(),
     evidence: candidate.validation.market_evidence_summary,
     status: 'discovered',
@@ -1901,33 +1904,34 @@ function researchScriptFromNicheCandidate(candidate: NicheCandidate, region: str
   return {
     source_type: 'niche_idea',
     source_id: nicheCandidateKey(candidate),
-    topic: candidate.niche_name,
-    title: candidate.first_10_titles?.[0] || candidate.niche_name,
+    topic: candidate.name || candidate.niche_name,
+    title: candidate.first_10_titles?.[0] || candidate.recommended_titles?.[0]?.title || candidate.name || candidate.niche_name,
     summary: [
-      `Niche score: ${Math.round(candidate.scores.overall.score)}.`,
-      `Three-level path: ${candidate.level_1} > ${candidate.level_2} > ${candidate.level_3}.`,
-      candidate.viewer_problem,
-      candidate.creator_advantage,
-      candidate.validation.market_evidence_summary,
-      `Commercial potential: ${candidate.monetization.commercial_potential}.`,
-      `Sustainability: ${candidate.sustainability.viable_topic_count} viable topics across ${candidate.sustainability.content_pillar_count} pillars.`,
-      (candidate.first_10_titles ?? []).slice(0, 5).join(' '),
+      `Niche score: ${Math.round(candidate.overall_score ?? candidate.scores.overall.score)}.`,
+      `Positioning: ${candidate.concise_positioning || candidate.unique_angle || ''}.`,
+      `Audience: ${candidate.target_audience || candidate.target_viewer}.`,
+      (candidate.audience_problems ?? [candidate.viewer_problem]).filter(Boolean).join(' '),
+      (candidate.creator_advantages ?? [candidate.creator_advantage]).filter(Boolean).join(' '),
+      candidate.evidence_summary || candidate.validation.market_evidence_summary,
+      `Sustainability: ${candidate.runway?.viable_topic_count ?? candidate.sustainability.viable_topic_count} viable topics across ${(candidate.content_pillars ?? candidate.topic_pillars ?? []).length} pillars.`,
+      (candidate.first_10_titles ?? candidate.recommended_titles?.map(topic => topic.title) ?? []).slice(0, 5).join(' '),
     ].filter(Boolean).join(' '),
     keywords: [
-      candidate.niche_name,
+      candidate.name || candidate.niche_name,
       candidate.core_phrase,
-      ...(candidate.validation.search_phrases ?? []),
+      ...(candidate.search_queries_used?.length ? candidate.search_queries_used : candidate.validation.search_phrases ?? []),
     ],
-    inferred_niche: candidate.niche_name,
+    inferred_niche: candidate.name || candidate.niche_name,
     inferred_angle: candidate.recommended_first_action,
     performance_signals: {
-      demand_score: candidate.scores.demand.score,
-      monetization_score: candidate.scores.monetization.score,
-      opportunity_gap_score: candidate.scores.opportunity_gap.score,
-      sustainability_score: candidate.scores.sustainability.score,
-      opportunity_score: candidate.scores.overall.score,
+      demand_score: candidate.dimensions?.audience_demand?.score ?? candidate.scores.demand.score,
+      creator_fit_score: candidate.dimensions?.creator_fit?.score ?? candidate.scores.personal_fit.score,
+      opportunity_gap_score: candidate.dimensions?.competition_opportunity?.score ?? candidate.scores.opportunity_gap.score,
+      sustainability_score: candidate.dimensions?.sustainability?.score ?? candidate.scores.sustainability.score,
+      differentiation_score: candidate.dimensions?.differentiation?.score,
+      opportunity_score: candidate.overall_score ?? candidate.scores.overall.score,
       competition_level: candidate.validation.competition_level,
-      monetization_available: candidate.monetization.rpm_estimate_available,
+      evidence_mode: candidate.market_evidence?.status,
     },
     suggested_angle: candidate.recommended_first_action,
     target_platforms: ['instagram', 'tiktok', 'youtube', 'facebook', 'x'],
@@ -1939,18 +1943,17 @@ function researchScriptFromNicheCandidate(candidate: NicheCandidate, region: str
       outliers: candidate.outliers,
       supply_gaps: candidate.supply_gaps,
       risks: candidate.risks,
-      first_10_video_ideas: candidate.first_10_titles,
-      monetization_note: candidate.monetization.rpm_estimate_available ? 'Estimated RPM uses a valid calibration source.' : 'Currency estimate unavailable; commercial potential only.',
+      first_10_video_ideas: candidate.first_10_titles ?? candidate.recommended_titles?.slice(0, 10).map(topic => topic.title),
+      market_evidence: candidate.market_evidence,
     },
     metadata: {
       source_provider: 'niche_research_engine',
-      score: candidate.scores.overall.score,
+      score: candidate.overall_score ?? candidate.scores.overall.score,
       confidence: candidate.scores.confidence.score / 100,
       platform: 'youtube',
     },
     limitations: [
-      'Public niche research does not include private analytics, exact revenue, guaranteed earnings, retention, or traffic sources.',
-      candidate.monetization.estimate_disclaimer,
+      'Niche Finder does not include private analytics, RPM, revenue projections, advertiser-demand claims, or guaranteed outcomes.',
     ],
     language,
     region,
