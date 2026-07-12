@@ -108,6 +108,7 @@ export const DEFAULT_APPROVALS: Record<string, ApprovalStatus> = {
 
 const VALID_VIEWS: View[] = [
   'dashboard',
+  'discoverTrends',
   'trendingKeywords',
   'youtubeVideoAnalyzer',
   'youtubeChannelAnalyzer',

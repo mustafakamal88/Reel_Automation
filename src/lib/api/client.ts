@@ -604,13 +604,62 @@ export interface TrendSearchParams {
   limit?: number;
 }
 
-export async function searchTrendIntelligence(params: TrendSearchParams = {}): Promise<TrendIntelligenceResponse> {
+const trendSearchInflight = new Map<string, {
+  controller: AbortController;
+  promise: Promise<TrendIntelligenceResponse>;
+  consumers: number;
+  abortTimer: number | undefined;
+}>();
+
+export async function searchTrendIntelligence(params: TrendSearchParams = {}, init?: RequestInit): Promise<TrendIntelligenceResponse> {
   const qs = new URLSearchParams();
   Object.entries(params).forEach(([key, value]) => {
     if (value !== undefined && value !== '' && value !== false) qs.set(key, String(value));
   });
   const suffix = qs.toString() ? `?${qs.toString()}` : '';
-  return apiFetch(`/api/trends/search${suffix}`);
+  const path = `/api/trends/search${suffix}`;
+  const signal = init?.signal;
+  let entry = trendSearchInflight.get(path);
+
+  if (!entry) {
+    const controller = new AbortController();
+    const headers = init?.headers;
+    const promise = apiFetch<TrendIntelligenceResponse>(path, { headers, signal: controller.signal })
+      .finally(() => {
+        trendSearchInflight.delete(path);
+      });
+    entry = { controller, promise, consumers: 0, abortTimer: undefined };
+    trendSearchInflight.set(path, entry);
+  } else if (entry.abortTimer !== undefined) {
+    window.clearTimeout(entry.abortTimer);
+    entry.abortTimer = undefined;
+  }
+
+  if (!signal) return entry.promise;
+
+  entry.consumers += 1;
+  const release = () => {
+    if (!entry) return;
+    entry.consumers = Math.max(0, entry.consumers - 1);
+    if (entry.consumers === 0) {
+      entry.abortTimer = window.setTimeout(() => {
+        if (entry && entry.consumers === 0) entry.controller.abort();
+      }, 25);
+    }
+  };
+
+  if (signal.aborted) {
+    release();
+    throw new DOMException('The operation was aborted.', 'AbortError');
+  }
+
+  signal.addEventListener('abort', release, { once: true });
+  try {
+    return await entry.promise;
+  } finally {
+    signal.removeEventListener('abort', release);
+    if (!signal.aborted) release();
+  }
 }
 
 export async function getTrendFilters(): Promise<TrendFilterMetadata> {

@@ -14,6 +14,7 @@ interface Props {
 }
 
 const RESEARCH_VIEWS: View[] = [
+  'discoverTrends',
   'trendingKeywords',
   'youtubeVideoAnalyzer',
   'youtubeChannelAnalyzer',
@@ -38,6 +39,7 @@ const DASHBOARD_ITEM: NavItem = { id: 'dashboard', label: 'Dashboard' };
 const SETTINGS_ITEM: NavItem = { id: 'settings', label: 'Settings' };
 
 const RESEARCH_ITEMS: NavItem[] = [
+  { id: 'discoverTrends', label: 'Discover Trends' },
   { id: 'trendingKeywords', label: 'Trend Intelligence' },
   { id: 'youtubeVideoAnalyzer', label: 'Video Analyzer' },
   { id: 'youtubeChannelAnalyzer', label: 'Channel Analyzer' },

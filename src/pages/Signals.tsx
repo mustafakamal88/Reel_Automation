@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useState, type KeyboardEvent, type ReactNode } from 'react';
+import { useCallback, useEffect, useId, useMemo, useState, type KeyboardEvent, type ReactNode } from 'react';
 import type { Platform, View } from '../types';
 import {
   ApiError,
@@ -26,9 +26,15 @@ import {
 import { formatLabel, formatMetric } from '../lib/metricFormat';
 import { storage } from '../lib/storage';
 
-type AIToolView = 'trendingKeywords' | 'youtubeVideoAnalyzer' | 'youtubeChannelAnalyzer' | 'nicheFinder';
+type AIToolView = 'discoverTrends' | 'trendingKeywords' | 'youtubeVideoAnalyzer' | 'youtubeChannelAnalyzer' | 'nicheFinder';
 
 const AI_TOOL_PAGE_META: Record<AIToolView, { title: string; eyebrow: string; description: string; action: string }> = {
+  discoverTrends: {
+    eyebrow: 'LIVE OPPORTUNITIES',
+    title: 'Latest Trends',
+    description: 'Browse current rising topics ranked by momentum, demand, competition, and opportunity.',
+    action: 'Refresh',
+  },
   trendingKeywords: {
     eyebrow: 'Keyword Research',
     title: 'Keyword Discovery',
@@ -74,6 +80,38 @@ const LANGUAGE_OPTIONS = [
 ];
 
 const AUDIENCE_OPTIONS = ['Global', 'South Asian', 'UK Pakistani', 'US Gen Z', 'Muslim audience', 'Tech creators', 'Finance creators', 'Entertainment creators', 'custom text'];
+const TREND_MARKET_PREFS_KEY = 'trendcortex_trend_market_preferences';
+const DEFAULT_TREND_MARKET_PREFS = {
+  country: 'GB',
+  language: 'en',
+  windowValue: '24h',
+  category: 'all',
+};
+type TrendMarketPrefs = typeof DEFAULT_TREND_MARKET_PREFS;
+
+function getTrendMarketPrefs(): TrendMarketPrefs {
+  try {
+    const raw = localStorage.getItem(TREND_MARKET_PREFS_KEY);
+    if (!raw) return DEFAULT_TREND_MARKET_PREFS;
+    const parsed = JSON.parse(raw) as Partial<typeof DEFAULT_TREND_MARKET_PREFS>;
+    return {
+      country: parsed.country || DEFAULT_TREND_MARKET_PREFS.country,
+      language: parsed.language || DEFAULT_TREND_MARKET_PREFS.language,
+      windowValue: parsed.windowValue || DEFAULT_TREND_MARKET_PREFS.windowValue,
+      category: parsed.category || DEFAULT_TREND_MARKET_PREFS.category,
+    };
+  } catch {
+    return DEFAULT_TREND_MARKET_PREFS;
+  }
+}
+
+function setTrendMarketPrefs(prefs: TrendMarketPrefs): void {
+  try {
+    localStorage.setItem(TREND_MARKET_PREFS_KEY, JSON.stringify(prefs));
+  } catch {
+    // localStorage might be unavailable in some environments
+  }
+}
 
 interface Props {
   initialFilter?: Platform | 'all';
@@ -291,6 +329,16 @@ export function AIToolPage({ tool, initialFilter = 'all', onFilterChange, onScri
           </div>
         </div>
 
+        {tool === 'discoverTrends' && (
+          <DiscoverTrendsTab
+            generated={generated}
+            generationErrors={generationErrors}
+            generatingID={generatingID}
+            onGenerate={handleGenerate}
+            onOpenScriptStudio={onOpenScriptStudio}
+          />
+        )}
+
         {tool === 'trendingKeywords' && (
           <TrendingKeywordsTab
             regionChoice={regionChoice}
@@ -399,12 +447,13 @@ function TrendingKeywordsTab(props: {
   onOpenScriptStudio?: () => void;
   onManageDataSources?: () => void;
 }) {
+  const initialPrefs = useMemo(() => getTrendMarketPrefs(), []);
   const [filters, setFilters] = useState<TrendFilterMetadata | null>(null);
   const [query, setQuery] = useState('');
-  const [country, setCountry] = useState('GB');
-  const [language, setLanguage] = useState('en');
-  const [windowValue, setWindowValue] = useState('24h');
-  const [category, setCategory] = useState('all');
+  const [country, setCountry] = useState(initialPrefs.country);
+  const [language, setLanguage] = useState(initialPrefs.language);
+  const [windowValue, setWindowValue] = useState(initialPrefs.windowValue);
+  const [category, setCategory] = useState(initialPrefs.category);
   const [postcode, setPostcode] = useState('');
   const [includeWords, setIncludeWords] = useState('');
   const [excludeWords, setExcludeWords] = useState('');
@@ -421,8 +470,7 @@ function TrendingKeywordsTab(props: {
   const [trendResponse, setTrendResponse] = useState<TrendIntelligenceResponse | null>(null);
   const [trendLoading, setTrendLoading] = useState(false);
   const [trendError, setTrendError] = useState<string | null>(null);
-  const [expandedResultId, setExpandedResultId] = useState<string | null>(null);
-  const resultIdsKey = useMemo(() => trendResponse?.results.map(result => result.id).join('|') ?? '', [trendResponse]);
+  const [validationMessage, setValidationMessage] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -430,8 +478,6 @@ function TrendingKeywordsTab(props: {
       .then(data => {
         if (cancelled) return;
         setFilters(data);
-        setCountry(data.default_country || 'GB');
-        setLanguage(data.default_language || 'en');
       })
       .catch(() => {
         if (!cancelled) setFilters(null);
@@ -441,11 +487,21 @@ function TrendingKeywordsTab(props: {
     };
   }, []);
 
-  function runSearch(discover = false, refresh = false) {
+  useEffect(() => {
+    setTrendMarketPrefs({ country, language, windowValue, category });
+  }, [category, country, language, windowValue]);
+
+  function runSearch() {
+    const trimmedQuery = query.trim();
+    if (!trimmedQuery && !exactPhrase.trim()) {
+      setValidationMessage('Enter a keyword before searching.');
+      return;
+    }
     setTrendLoading(true);
     setTrendError(null);
+    setValidationMessage(null);
     searchTrendIntelligence({
-      q: discover ? undefined : query.trim(),
+      q: trimmedQuery,
       country,
       language,
       window: windowValue,
@@ -462,7 +518,6 @@ function TrendingKeywordsTab(props: {
       max_competition: maxCompetition,
       min_opportunity: minOpportunity,
       sort,
-      refresh,
       limit: 20,
     })
       .then(data => {
@@ -477,10 +532,11 @@ function TrendingKeywordsTab(props: {
       .finally(() => setTrendLoading(false));
   }
 
-  useEffect(() => {
-    if (!trendResponse) return;
-    setExpandedResultId(trendResponse.results[0]?.id ?? null);
-  }, [resultIdsKey, trendResponse]);
+  function handleSearchFormKeyDown(event: KeyboardEvent<HTMLFormElement>) {
+    if (event.key !== 'Enter') return;
+    event.preventDefault();
+    runSearch();
+  }
 
   const countryOptions = filters?.countries ?? REGION_OPTIONS.filter(option => option.value !== 'custom').map(option => ({ label: option.label === 'UK' ? 'United Kingdom' : option.label, value: option.value }));
   const languageOptions = filters?.languages ?? LANGUAGE_OPTIONS.filter(option => option.value !== 'custom').map(option => ({ label: option.label, value: option.value.split('-')[0] }));
@@ -493,68 +549,218 @@ function TrendingKeywordsTab(props: {
     <>
       <div className="settings-card research-filter-card">
         <div className="settings-card-title">Search & Filters</div>
-        <div className="form-grid four">
-          <TextInput label="Search keyword" value={query} onChange={setQuery} placeholder="artificial intelligence, football highlights" />
-          <Select label="Country" value={country} onChange={setCountry} options={countryOptions} />
-          <Select label="Language" value={language} onChange={setLanguage} options={languageOptions} />
-          <TextInput label="Postcode or location" value={postcode} onChange={setPostcode} placeholder="Optional" />
-          <Select label="Time window" value={windowValue} onChange={setWindowValue} options={timeOptions} />
-          <Select label="Category" value={category} onChange={setCategory} options={categoryOptions} />
-          <Select label="Sort" value={sort} onChange={setSort} options={sortOptions} />
-          <TextInput label="Exclude words" value={excludeWords} onChange={setExcludeWords} placeholder="comma separated" />
-        </div>
-        {showMore && (
-          <div className="form-grid four" style={{ marginTop: 12 }}>
-            <TextInput label="Include words" value={includeWords} onChange={setIncludeWords} placeholder="comma separated" />
-            <TextInput label="Exact phrase" value={exactPhrase} onChange={setExactPhrase} placeholder="Optional" />
-            <TextInput label="Custom niche" value={customNiche} onChange={setCustomNiche} placeholder="Optional" />
-            <Select label="Video duration" value={videoDuration} onChange={setVideoDuration} options={durationOptions} />
-            <TextInput label="Minimum views" value={minViews} onChange={setMinViews} placeholder="Optional" />
-            <TextInput label="Max competition" value={maxCompetition} onChange={setMaxCompetition} placeholder="0-100" />
-            <TextInput label="Minimum opportunity" value={minOpportunity} onChange={setMinOpportunity} placeholder="0-100" />
-            <Select label="Local radius" value={String(radius)} onChange={value => setRadius(Number(value))} options={(filters?.local_radii_km ?? [10, 25, 50, 100]).map(value => ({ label: `${value} km`, value: String(value) }))} />
-            <label className="checkbox-row">
-              <input type="checkbox" checked={localOnly} onChange={event => setLocalOnly(event.target.checked)} />
-              <span>Local videos only</span>
-            </label>
+        <form onSubmit={event => { event.preventDefault(); runSearch(); }} onKeyDown={handleSearchFormKeyDown}>
+          <div className="form-grid four">
+            <TextInput label="Search keyword" value={query} onChange={setQuery} placeholder="artificial intelligence, football highlights" />
+            <Select label="Country" value={country} onChange={setCountry} options={countryOptions} />
+            <Select label="Language" value={language} onChange={setLanguage} options={languageOptions} />
+            <TextInput label="Postcode or location" value={postcode} onChange={setPostcode} placeholder="Optional" />
+            <Select label="Time window" value={windowValue} onChange={setWindowValue} options={timeOptions} />
+            <Select label="Category" value={category} onChange={setCategory} options={categoryOptions} />
+            <Select label="Sort" value={sort} onChange={setSort} options={sortOptions} />
+            <TextInput label="Exclude words" value={excludeWords} onChange={setExcludeWords} placeholder="comma separated" />
           </div>
-        )}
-        <div className="trend-filter-footer">
-          <span>{trendResponse?.resolved_location?.status === 'resolved' ? `Resolved locality: ${trendResponse.resolved_location.city || trendResponse.resolved_location.region || trendResponse.resolved_location.input}` : 'Enter a keyword or discover current trends.'}</span>
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          {showMore && (
+            <div className="form-grid four" style={{ marginTop: 12 }}>
+              <TextInput label="Include words" value={includeWords} onChange={setIncludeWords} placeholder="comma separated" />
+              <TextInput label="Exact phrase" value={exactPhrase} onChange={setExactPhrase} placeholder="Optional" />
+              <TextInput label="Custom niche" value={customNiche} onChange={setCustomNiche} placeholder="Optional" />
+              <Select label="Video duration" value={videoDuration} onChange={setVideoDuration} options={durationOptions} />
+              <TextInput label="Minimum views" value={minViews} onChange={setMinViews} placeholder="Optional" />
+              <TextInput label="Max competition" value={maxCompetition} onChange={setMaxCompetition} placeholder="0-100" />
+              <TextInput label="Minimum opportunity" value={minOpportunity} onChange={setMinOpportunity} placeholder="0-100" />
+              <Select label="Local radius" value={String(radius)} onChange={value => setRadius(Number(value))} options={(filters?.local_radii_km ?? [10, 25, 50, 100]).map(value => ({ label: `${value} km`, value: String(value) }))} />
+              <label className="checkbox-row">
+                <input type="checkbox" checked={localOnly} onChange={event => setLocalOnly(event.target.checked)} />
+                <span>Local videos only</span>
+              </label>
+            </div>
+          )}
+          <div className="trend-filter-footer">
+            <span>{trendResponse?.resolved_location?.status === 'resolved' ? `Resolved locality: ${trendResponse.resolved_location.city || trendResponse.resolved_location.region || trendResponse.resolved_location.input}` : 'Enter a keyword to search trend intelligence.'}</span>
             <button type="button" className="link-button" onClick={() => setShowMore(value => !value)}>More Filters</button>
-            <button type="button" className="generate-btn idle" onClick={() => runSearch(true)}>Discover Trends</button>
-            <button type="button" className="generate-btn idle" onClick={() => runSearch(false)} disabled={!query.trim() && !exactPhrase.trim()}>Search</button>
           </div>
-        </div>
+          <div className="trend-search-actions">
+            <button type="submit" className="generate-btn idle trend-search-button" disabled={trendLoading || (!query.trim() && !exactPhrase.trim())}>Search</button>
+          </div>
+          {validationMessage && <div className="inline-error centered" role="alert">{validationMessage}</div>}
+        </form>
         {localOnly && <div className="neutral-callout">Local videos only matches supporting videos with available geographic metadata. Country-level trend geography is still used.</div>}
       </div>
 
       {trendLoading && <EmptyState tone="loading" title="Loading trend intelligence." desc="Checking current demand, recency, and public engagement signals." />}
       {!trendLoading && trendError && <EmptyState tone="error" title="Trend intelligence is temporarily unavailable." desc={trendError} />}
-      {!trendLoading && !trendError && !trendResponse && <EmptyState tone="empty" title="Enter a keyword or discover current trends." desc="Choose country, language, time window, and niche filters to rank opportunities." />}
+      {!trendLoading && !trendError && !trendResponse && <EmptyState tone="empty" title="Enter a keyword to search trend intelligence." desc="Choose country, language, time window, and niche filters to rank opportunities." />}
       {!trendLoading && !trendError && trendResponse?.message && trendResponse.results.length === 0 && (
         <EmptyState tone="empty" title={trendResponse.message} desc="Try a broader country, language, or time window." />
       )}
 
       {!trendLoading && !trendError && trendResponse && trendResponse.results.length > 0 && (
-        <div className="trend-opportunity-list">
-          {trendResponse.results.map(result => (
-            <TrendOpportunityCard
-              key={result.id}
-              result={result}
-              expanded={expandedResultId === result.id}
-              onToggle={() => setExpandedResultId(current => current === result.id ? null : result.id)}
-              generated={props.generated[result.id]}
-              generationError={props.generationErrors[result.id]}
-              generating={props.generatingID === result.id}
-              onGenerate={() => props.onGenerate(candidateFromTrendIntelligence(result, country, language))}
-              onOpenScriptStudio={props.onOpenScriptStudio}
-            />
-          ))}
-        </div>
+        <TrendOpportunityList
+          results={trendResponse.results}
+          generated={props.generated}
+          generationErrors={props.generationErrors}
+          generatingID={props.generatingID}
+          onGenerate={result => props.onGenerate(candidateFromTrendIntelligence(result, country, language))}
+          onOpenScriptStudio={props.onOpenScriptStudio}
+        />
       )}
     </>
+  );
+}
+
+function DiscoverTrendsTab(props: {
+  generated: Record<string, ReelContentPackage>;
+  generationErrors: Record<string, string>;
+  generatingID: string | null;
+  onGenerate: (candidate: TrendCandidate) => void;
+  onOpenScriptStudio?: () => void;
+}) {
+  const initialPrefs = useMemo(() => getTrendMarketPrefs(), []);
+  const [filters, setFilters] = useState<TrendFilterMetadata | null>(null);
+  const [country, setCountry] = useState(initialPrefs.country);
+  const [language, setLanguage] = useState(initialPrefs.language);
+  const [windowValue, setWindowValue] = useState(initialPrefs.windowValue);
+  const [category, setCategory] = useState(initialPrefs.category);
+  const [trendResponse, setTrendResponse] = useState<TrendIntelligenceResponse | null>(null);
+  const [trendLoading, setTrendLoading] = useState(false);
+  const [trendError, setTrendError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    getTrendFilters()
+      .then(data => {
+        if (!cancelled) setFilters(data);
+      })
+      .catch(() => {
+        if (!cancelled) setFilters(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    setTrendMarketPrefs({ country, language, windowValue, category });
+  }, [category, country, language, windowValue]);
+
+  const requestDiscovery = useCallback((values: TrendMarketPrefs, reason: 'auto' | 'manual') => {
+    void reason;
+    const controller = new AbortController();
+    setTrendLoading(true);
+    setTrendError(null);
+    searchTrendIntelligence({
+      country: values.country,
+      language: values.language,
+      window: values.windowValue,
+      category: values.category,
+      sort: 'opportunity',
+      limit: 20,
+    }, { signal: controller.signal })
+      .then(data => {
+        if (controller.signal.aborted) return;
+        setTrendResponse(data);
+        storage.updateActivity(current => ({
+          ...current,
+          trendsFoundToday: data.results.length,
+          latestTrendPulled: new Date().toISOString(),
+        }));
+      })
+      .catch(err => {
+        if (controller.signal.aborted) return;
+        setTrendError(err instanceof Error ? err.message : 'Trend intelligence is temporarily unavailable.');
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setTrendLoading(false);
+      });
+    return controller;
+  }, []);
+
+  useEffect(() => {
+    const controller = requestDiscovery(initialPrefs, 'auto');
+    return () => controller?.abort();
+  }, [initialPrefs, requestDiscovery]);
+
+  const countryOptions = filters?.countries ?? REGION_OPTIONS.filter(option => option.value !== 'custom').map(option => ({ label: option.label === 'UK' ? 'United Kingdom' : option.label, value: option.value }));
+  const languageOptions = filters?.languages ?? LANGUAGE_OPTIONS.filter(option => option.value !== 'custom').map(option => ({ label: option.label, value: option.value.split('-')[0] }));
+  const timeOptions = filters?.time_windows ?? [{ label: 'Last 24 hours', value: '24h' }];
+  const categoryOptions = filters?.categories ?? [{ label: 'All', value: 'all' }];
+
+  return (
+    <>
+      <div className="settings-card research-filter-card discover-filter-card">
+        <div className="settings-card-title">Market Filters</div>
+        <div className="form-grid four">
+          <Select label="Country" value={country} onChange={setCountry} options={countryOptions} />
+          <Select label="Language" value={language} onChange={setLanguage} options={languageOptions} />
+          <Select label="Time window" value={windowValue} onChange={setWindowValue} options={timeOptions} />
+          <Select label="Category" value={category} onChange={setCategory} options={categoryOptions} />
+        </div>
+        <div className="discover-filter-actions">
+          <button
+            type="button"
+            className="generate-btn idle secondary discover-refresh-button"
+            onClick={() => requestDiscovery({ country, language, windowValue, category }, 'manual')}
+            disabled={trendLoading}
+          >
+            Refresh
+          </button>
+        </div>
+      </div>
+
+      {trendLoading && <EmptyState tone="loading" title="Loading trend intelligence." desc="Checking current demand, recency, and public engagement signals." />}
+      {!trendLoading && trendError && <EmptyState tone="error" title="Trend intelligence is temporarily unavailable." desc={trendError} />}
+      {!trendLoading && !trendError && trendResponse?.message && trendResponse.results.length === 0 && (
+        <EmptyState tone="empty" title={trendResponse.message} desc="Try a broader country, language, or time window." />
+      )}
+      {!trendLoading && !trendError && trendResponse && trendResponse.results.length === 0 && !trendResponse.message && (
+        <EmptyState tone="empty" title="No trends found." desc="Try a broader country, language, or time window." />
+      )}
+      {!trendLoading && !trendError && trendResponse && trendResponse.results.length > 0 && (
+        <TrendOpportunityList
+          results={trendResponse.results}
+          generated={props.generated}
+          generationErrors={props.generationErrors}
+          generatingID={props.generatingID}
+          onGenerate={result => props.onGenerate(candidateFromTrendIntelligence(result, country, language))}
+          onOpenScriptStudio={props.onOpenScriptStudio}
+        />
+      )}
+    </>
+  );
+}
+
+function TrendOpportunityList({ results, generated, generationErrors, generatingID, onGenerate, onOpenScriptStudio }: {
+  results: TrendIntelligenceResult[];
+  generated: Record<string, ReelContentPackage>;
+  generationErrors: Record<string, string>;
+  generatingID: string | null;
+  onGenerate: (result: TrendIntelligenceResult) => void;
+  onOpenScriptStudio?: () => void;
+}) {
+  const [expandedResultId, setExpandedResultId] = useState<string | null>(null);
+  const resultIdsKey = useMemo(() => results.map(result => result.id).join('|'), [results]);
+
+  useEffect(() => {
+    setExpandedResultId(results[0]?.id ?? null);
+  }, [resultIdsKey, results]);
+
+  return (
+    <div className="trend-opportunity-list">
+      {results.map(result => (
+        <TrendOpportunityCard
+          key={result.id}
+          result={result}
+          expanded={expandedResultId === result.id}
+          onToggle={() => setExpandedResultId(current => current === result.id ? null : result.id)}
+          generated={generated[result.id]}
+          generationError={generationErrors[result.id]}
+          generating={generatingID === result.id}
+          onGenerate={() => onGenerate(result)}
+          onOpenScriptStudio={onOpenScriptStudio}
+        />
+      ))}
+    </div>
   );
 }
 

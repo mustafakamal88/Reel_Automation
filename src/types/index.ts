@@ -6,6 +6,7 @@ export type ApprovalStatus = 'pending' | 'approved' | 'rejected';
 
 export type View =
   | 'dashboard'
+  | 'discoverTrends'
   | 'trendingKeywords'
   | 'youtubeVideoAnalyzer'
   | 'youtubeChannelAnalyzer'

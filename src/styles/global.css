@@ -2384,6 +2384,30 @@ textarea:focus {
   margin-bottom: 18px;
 }
 
+.trend-search-actions,
+.discover-filter-actions {
+  display: flex;
+  justify-content: center;
+  margin-top: 18px;
+}
+
+.trend-search-button {
+  width: clamp(180px, 26vw, 240px);
+  min-height: 42px;
+}
+
+.discover-refresh-button {
+  width: auto;
+  min-width: 112px;
+  min-height: 36px;
+  padding-inline: 16px;
+}
+
+.inline-error.centered {
+  margin-top: 10px;
+  text-align: center;
+}
+
 .trend-candidate-card,
 .result-card {
   display: grid;
@@ -2793,6 +2817,11 @@ textarea:focus {
   .trend-secondary-actions .link-button,
   .trend-opportunity-actions .generate-btn {
     flex: 1 1 100%;
+  }
+
+  .trend-search-button {
+    width: 100%;
+    max-width: 320px;
   }
 }
 

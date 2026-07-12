@@ -15,6 +15,7 @@ import type { ReelContentPackage, TrendCandidate } from './lib/api/client';
 
 const VIEW_ROUTES: Record<View, string> = {
   dashboard: '/',
+  discoverTrends: '/ai-tools/discover-trends',
   trendingKeywords: '/ai-tools/trending-keywords',
   youtubeVideoAnalyzer: '/ai-tools/youtube-video-analyzer',
   youtubeChannelAnalyzer: '/ai-tools/youtube-channel-analyzer',
@@ -37,6 +38,7 @@ const ROUTE_VIEWS: Record<string, View> = {
   '/trend-finder': 'trendingKeywords',
   '/signals': 'trendingKeywords',
   '/ai-tools': 'trendingKeywords',
+  '/ai-tools/discover-trends': 'discoverTrends',
   '/ai-tools/trending-keywords': 'trendingKeywords',
   '/ai-tools/youtube-video-analyzer': 'youtubeVideoAnalyzer',
   '/ai-tools/youtube-channel-analyzer': 'youtubeChannelAnalyzer',
@@ -126,9 +128,9 @@ export default function App() {
         <div className="scroll-area" ref={scrollAreaRef}>
           <div key={view} className="workspace-route">
             {view === 'dashboard' && <DashboardPage latestScript={latestScript} onNavigate={navigate} />}
-            {['trendingKeywords', 'youtubeVideoAnalyzer', 'youtubeChannelAnalyzer', 'nicheFinder'].includes(view) && (
+            {['discoverTrends', 'trendingKeywords', 'youtubeVideoAnalyzer', 'youtubeChannelAnalyzer', 'nicheFinder'].includes(view) && (
               <AIToolPage
-                tool={view as 'trendingKeywords' | 'youtubeVideoAnalyzer' | 'youtubeChannelAnalyzer' | 'nicheFinder'}
+                tool={view as 'discoverTrends' | 'trendingKeywords' | 'youtubeVideoAnalyzer' | 'youtubeChannelAnalyzer' | 'nicheFinder'}
                 onScriptGenerated={handleScriptGenerated}
                 onOpenScriptStudio={() => navigate('scriptStudio')}
                 onManageDataSources={() => navigate('connections')}
