@@ -72,6 +72,46 @@ func TestNicheCacheSuccessfulFallbackAgeLimitAndFailureIsolation(t *testing.T) {
 	}
 }
 
+func TestNicheLegacyCacheVersionRejected(t *testing.T) {
+	srv := NewServer(&config.Config{}, nil, nil, nil)
+	cacheKey := "legacy-profile-key"
+	report := successfulTestNicheReport("legacy-report")
+	report.SchemaVersion = ""
+	report.Cache.SchemaVersion = ""
+	srv.nicheReports[cacheKey] = nicheReportCacheItem{report: report, storedAt: time.Now().UTC(), cacheKey: cacheKey}
+	if _, ok := srv.cachedNicheReport(cacheKey, 6*time.Hour); ok {
+		t.Fatalf("legacy cache should not be reused directly")
+	}
+}
+
+func TestNicheCurrentCachePassesFinalResponseValidation(t *testing.T) {
+	srv := NewServer(&config.Config{}, nil, nil, nil)
+	cacheKey := "current-profile-key"
+	report := successfulTestNicheReport("current-report")
+	report.Candidates[0].Dimensions.CreatorFit = research.ScoreExplanation{Score: 9, RatingBand: "high", Explanation: "Strong fit."}
+	report.Candidates[0].Scores.PersonalFit = report.Candidates[0].Dimensions.CreatorFit
+	report.Candidates[0].OverallScore = 44
+	srv.nicheReports[cacheKey] = nicheReportCacheItem{report: report, storedAt: time.Now().UTC(), cacheKey: cacheKey}
+
+	cached, ok := srv.cachedNicheReport(cacheKey, 6*time.Hour)
+	if !ok {
+		t.Fatalf("current cache should be reusable")
+	}
+	if cached.Candidates[0].Dimensions.CreatorFit.Score != 90 {
+		t.Fatalf("cached score not normalized: %#v", cached.Candidates[0].Dimensions.CreatorFit)
+	}
+	if cached.Candidates[0].OverallScore == 44 {
+		t.Fatalf("cached overall was not recalculated")
+	}
+}
+
+func TestNicheCacheKeyVersioning(t *testing.T) {
+	profile := research.CreatorNicheProfile{ProfessionalSkills: "teach code", LivedExperiences: "built apps", TeachingSubjects: "apps", TargetAudience: "students", TargetCountry: "US", TargetLanguage: "en"}
+	if research.NicheResearchCacheKey(profile, "market_estimate") == research.LegacyNicheResearchCacheKey(profile, "market_estimate") {
+		t.Fatalf("current cache key must differ from legacy key")
+	}
+}
+
 func TestNicheCacheKeyIsolation(t *testing.T) {
 	srv := NewServer(&config.Config{}, nil, nil, nil)
 	srv.nicheReports["profile-a"] = nicheReportCacheItem{report: successfulTestNicheReport("a"), storedAt: time.Now().UTC(), cacheKey: "profile-a"}
@@ -81,12 +121,32 @@ func TestNicheCacheKeyIsolation(t *testing.T) {
 }
 
 func successfulTestNicheReport(id string) research.NicheReport {
+	dimensions := research.NicheScoreDimensions{
+		CreatorFit:             research.ScoreExplanation{Score: 80, RatingBand: "very_high", Explanation: "Strong profile fit."},
+		AudienceDemand:         research.ScoreExplanation{Score: 70, RatingBand: "high", Explanation: "Supported demand."},
+		CompetitionOpportunity: research.ScoreExplanation{Score: 65, RatingBand: "high", Explanation: "Manageable competition."},
+		Sustainability:         research.ScoreExplanation{Score: 85, RatingBand: "very_high", Explanation: "Enough topic depth."},
+		Differentiation:        research.ScoreExplanation{Score: 72, RatingBand: "high", Explanation: "Distinct positioning."},
+	}
 	return research.NicheReport{
-		ID:      id,
-		Status:  research.StatusOK,
-		Message: "ok",
+		ID:            id,
+		SchemaVersion: research.NicheReportSchemaVersion,
+		Status:        research.StatusOK,
+		Message:       "ok",
+		Profile:       research.CreatorNicheProfile{WeeklyProductionCapacity: "2 videos per week"},
+		Cache:         research.NicheCacheInfo{SchemaVersion: research.NicheReportSchemaVersion},
 		Candidates: []research.NicheCandidate{{
-			ID: "candidate-1",
+			ID:         "candidate-1",
+			Name:       "Test niche",
+			Dimensions: dimensions,
+			Scores: research.NicheScores{
+				PersonalFit:    dimensions.CreatorFit,
+				Demand:         dimensions.AudienceDemand,
+				OpportunityGap: dimensions.CompetitionOpportunity,
+				Sustainability: dimensions.Sustainability,
+				Overall:        research.ScoreExplanation{Score: 75, RatingBand: "high", Explanation: "old cached overall"},
+				Confidence:     research.ScoreExplanation{Score: 75, RatingBand: "high", Explanation: "confidence"},
+			},
 		}},
 	}
 }

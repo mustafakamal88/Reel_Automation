@@ -378,6 +378,7 @@ export interface NicheResearchRequest {
 
 export interface NicheReport {
   id: string;
+  schema_version?: string;
   status: 'ok' | 'openai_unavailable' | 'invalid_model_output' | 'not_configured' | 'invalid_input' | 'insufficient_evidence' | 'no_matching_content' | 'quota_temporarily_unavailable' | 'credentials_invalid' | 'provider_temporarily_unavailable' | 'validation_timeout' | 'research_failed' | string;
   message: string;
   generated_at?: string;
@@ -390,7 +391,7 @@ export interface NicheReport {
   methodology?: string[];
   profile: CreatorNicheProfile;
   candidates: NicheCandidate[];
-  cache: { hit: boolean; cache_hit?: boolean; key?: string; stored_at?: string; ttl: string; evidence_fetched_at?: string; evidence_age?: string; freshness?: string };
+  cache: { hit: boolean; cache_hit?: boolean; schema_version?: string; key?: string; stored_at?: string; ttl: string; evidence_fetched_at?: string; evidence_age?: string; freshness?: string };
   limitations?: string[];
   created_at: string;
 }
@@ -467,6 +468,8 @@ export interface ContentRunway {
   estimated_weeks: number;
   weekly_capacity: number;
   estimated_content_runway: string;
+  heading?: string;
+  limitation?: string;
 }
 
 export interface NicheValidation {

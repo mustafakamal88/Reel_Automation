@@ -20,6 +20,8 @@ import (
 
 const publicRPMUnavailableMessage = "Currency estimate unavailable until sufficient monetization evidence is connected."
 
+const NicheReportSchemaVersion = "niche_report_v2_scores_runway_50"
+
 const (
 	NicheStatusInsufficientEvidence           = "insufficient_evidence"
 	NicheStatusNoMatchingContent              = "no_matching_content"
@@ -60,6 +62,7 @@ type NicheResearchRequest struct {
 
 type NicheReport struct {
 	ID                    string              `json:"id"`
+	SchemaVersion         string              `json:"schema_version"`
 	Status                string              `json:"status"`
 	Message               string              `json:"message"`
 	GeneratedAt           time.Time           `json:"generated_at"`
@@ -81,6 +84,7 @@ type NicheReport struct {
 type NicheCacheInfo struct {
 	Hit               bool      `json:"hit"`
 	CacheHit          bool      `json:"cache_hit"`
+	SchemaVersion     string    `json:"schema_version,omitempty"`
 	Key               string    `json:"key,omitempty"`
 	StoredAt          time.Time `json:"stored_at,omitempty"`
 	TTL               string    `json:"ttl"`
@@ -164,6 +168,8 @@ type ContentRunway struct {
 	EstimatedWeeks         int    `json:"estimated_weeks"`
 	WeeklyCapacity         int    `json:"weekly_capacity"`
 	EstimatedContentRunway string `json:"estimated_content_runway"`
+	Heading                string `json:"heading,omitempty"`
+	Limitation             string `json:"limitation,omitempty"`
 }
 
 type NicheValidation struct {
@@ -711,6 +717,7 @@ func ResearchNiches(ctx context.Context, req NicheResearchRequest, cfg NicheRese
 	generatedAt := now()
 	report := NicheReport{
 		ID:                nicheReportID(profile, generatedAt),
+		SchemaVersion:     NicheReportSchemaVersion,
 		Status:            StatusOK,
 		Message:           "Generated AI-assisted niche strategy with bounded public evidence validation where available.",
 		GeneratedAt:       generatedAt,
@@ -718,7 +725,7 @@ func ResearchNiches(ctx context.Context, req NicheResearchRequest, cfg NicheRese
 		AnalysisMode:      "ai_strategic_analysis",
 		Profile:           profile,
 		CreatedAt:         generatedAt,
-		Cache:             NicheCacheInfo{TTL: "6h", Freshness: "fresh"},
+		Cache:             NicheCacheInfo{TTL: "6h", Freshness: "fresh", SchemaVersion: NicheReportSchemaVersion},
 		Limitations: []string{
 			"OpenAI strategic analysis does not invent live YouTube numbers.",
 			"YouTube validation is optional, capped, cached, and labelled separately from AI reasoning.",
@@ -860,6 +867,7 @@ func ResearchNiches(ctx context.Context, req NicheResearchRequest, cfg NicheRese
 		report.Limitations = append(report.Limitations, "Fewer than two validated alternative candidates were available after structured output validation.")
 	}
 	report.Internal.Provenance = []string{"openai_structured_strategy", "backend_score_normalization", "optional_budgeted_youtube_validation", "current_trend_overlap"}
+	report, _, _ = FinalizeNicheReportForResponse(report)
 	return report, nil
 }
 
@@ -1815,11 +1823,11 @@ func normalizeDimensions(draft NicheDraft) NicheScoreDimensions {
 
 func normalizeDraftDimensionRatings(draft NicheDraft) NicheDraftDimensionRatings {
 	return NicheDraftDimensionRatings{
-		CreatorFit:             normalizeRatingBand(firstNonEmpty(draft.DimensionRatings.CreatorFit, inferRatingFromScore(draft.DimensionScores.CreatorFit))),
-		AudienceDemand:         normalizeRatingBand(firstNonEmpty(draft.DimensionRatings.AudienceDemand, inferRatingFromScore(draft.DimensionScores.AudienceDemand))),
-		CompetitionOpportunity: normalizeRatingBand(firstNonEmpty(draft.DimensionRatings.CompetitionOpportunity, inferRatingFromScore(draft.DimensionScores.CompetitionOpportunity))),
-		Sustainability:         normalizeRatingBand(firstNonEmpty(draft.DimensionRatings.Sustainability, inferRatingFromScore(draft.DimensionScores.Sustainability))),
-		Differentiation:        normalizeRatingBand(firstNonEmpty(draft.DimensionRatings.Differentiation, inferRatingFromScore(draft.DimensionScores.Differentiation))),
+		CreatorFit:             ratingForValidatedScore(draft.DimensionScores.CreatorFit, draft.DimensionRatings.CreatorFit),
+		AudienceDemand:         ratingForValidatedScore(draft.DimensionScores.AudienceDemand, draft.DimensionRatings.AudienceDemand),
+		CompetitionOpportunity: ratingForValidatedScore(draft.DimensionScores.CompetitionOpportunity, draft.DimensionRatings.CompetitionOpportunity),
+		Sustainability:         ratingForValidatedScore(draft.DimensionScores.Sustainability, draft.DimensionRatings.Sustainability),
+		Differentiation:        ratingForValidatedScore(draft.DimensionScores.Differentiation, draft.DimensionRatings.Differentiation),
 	}
 }
 
@@ -1868,8 +1876,8 @@ func normalizeDimensionScoreValue(field, candidate string, score float64, rating
 	}
 	if rounded > 0 && rounded <= 10 && rating != "very_low" {
 		normalized := math.Round(rounded * 10)
-		if scoreRatingConsistent(normalized, rating) {
-			*issues = append(*issues, fmt.Sprintf("%s %s normalized from %.0f/10 to %.0f/100 based on %s rating", candidate, field, rounded, normalized, rating))
+		if normalized <= 100 && (rating == "moderate" || rating == "high" || rating == "very_high" || scoreRatingConsistent(normalized, rating) || positiveRatingLanguage(rating, reasoning)) {
+			*issues = append(*issues, fmt.Sprintf("%s %s normalized from %.0f/10 to %.0f/100 based on %s rating/reasoning", candidate, field, rounded, normalized, rating))
 			return normalized, true
 		}
 	}
@@ -1877,14 +1885,27 @@ func normalizeDimensionScoreValue(field, candidate string, score float64, rating
 		*issues = append(*issues, fmt.Sprintf("%s %s rejected: single-digit score %.0f conflicts with %s rating/reasoning", candidate, field, rounded, rating))
 		return 0, false
 	}
+	if rounded > 10 && rounded <= 100 {
+		*issues = append(*issues, fmt.Sprintf("%s %s rating adjusted from %s to %s for score %.0f", candidate, field, rating, inferRatingFromScore(rounded), rounded))
+		return clampScore(rounded), true
+	}
 	*issues = append(*issues, fmt.Sprintf("%s %s rejected: score %.0f conflicts with %s rating", candidate, field, rounded, rating))
 	return 0, false
 }
 
 func scoreFromDraft(score float64, ratingBand, explanation string) ScoreExplanation {
 	score = math.Round(clampScore(score))
-	ratingBand = normalizeRatingBand(firstNonEmpty(ratingBand, inferRatingFromScore(score)))
+	ratingBand = ratingForValidatedScore(score, ratingBand)
 	return ScoreExplanation{Score: score, Label: scoreLabel(score), RatingBand: ratingBand, Explanation: firstNonEmpty(strings.TrimSpace(explanation), "Model-provided dimension reasoning was unavailable.")}
+}
+
+func ratingForValidatedScore(score float64, ratingBand string) string {
+	score = math.Round(clampScore(score))
+	rating := normalizeRatingBand(ratingBand)
+	if rating != "" && scoreRatingConsistent(score, rating) {
+		return rating
+	}
+	return inferRatingFromScore(score)
 }
 
 func calculateNicheOverallScore(d NicheScoreDimensions) float64 {
@@ -1895,6 +1916,203 @@ func calculateNicheOverallScore(d NicheScoreDimensions) float64 {
 			0.20*d.Sustainability.Score +
 			0.10*d.Differentiation.Score,
 	))
+}
+
+func FinalizeNicheReportForResponse(report NicheReport) (NicheReport, []string, bool) {
+	issues := []string{}
+	report.SchemaVersion = NicheReportSchemaVersion
+	report.Cache.SchemaVersion = NicheReportSchemaVersion
+	if report.Status != StatusOK {
+		return report, issues, true
+	}
+	if len(report.Candidates) == 0 && report.PrimaryRecommendation != nil {
+		report.Candidates = []NicheCandidate{*report.PrimaryRecommendation}
+		report.Candidates = append(report.Candidates, report.AlternativeCandidates...)
+	}
+	valid := make([]NicheCandidate, 0, len(report.Candidates))
+	for _, candidate := range report.Candidates {
+		finalized, candidateIssues, ok := finalizeNicheCandidateForResponse(candidate, report.Profile)
+		if len(candidateIssues) > 0 {
+			issues = append(issues, candidateIssues...)
+		}
+		if !ok {
+			continue
+		}
+		valid = append(valid, finalized)
+	}
+	if len(valid) == 0 {
+		report.Status = "invalid_model_output"
+		report.Message = "Niche report failed final response validation."
+		report.PrimaryRecommendation = nil
+		report.AlternativeCandidates = nil
+		report.Candidates = nil
+		report.Limitations = appendStringGroups(report.Limitations, []string{"Final response validation removed all candidates."})
+		return report, issues, false
+	}
+	report.Candidates = valid
+	report.PrimaryRecommendation = &report.Candidates[0]
+	if len(report.Candidates) > 1 {
+		report.AlternativeCandidates = append([]NicheCandidate{}, report.Candidates[1:]...)
+	} else {
+		report.AlternativeCandidates = nil
+	}
+	if len(report.AlternativeCandidates) < 2 {
+		report.Limitations = appendStringGroups(report.Limitations, []string{"Fewer than two validated alternative candidates were available after final response validation."})
+	}
+	if len(issues) > 0 {
+		report.Limitations = appendStringGroups(report.Limitations, []string{"Final response validation adjusted cached or generated report fields: " + strings.Join(topN(issues, 4), "; ")})
+	}
+	return report, issues, true
+}
+
+func finalizeNicheCandidateForResponse(candidate NicheCandidate, profile CreatorNicheProfile) (NicheCandidate, []string, bool) {
+	issues := []string{}
+	candidate.Name = firstNonEmpty(strings.TrimSpace(candidate.Name), strings.TrimSpace(candidate.NicheName), strings.TrimSpace(candidate.Level3))
+	if candidate.Name == "" {
+		return candidate, append(issues, "candidate missing name at response validation"), false
+	}
+	audience := firstNonEmpty(candidate.TargetAudience, candidate.TargetViewer, profile.TargetAudience)
+	pillars := candidate.ContentPillars
+	if len(pillars) == 0 {
+		pillars = candidate.TopicPillars
+	}
+	titles := candidate.RecommendedTitles
+	if len(titles) == 0 {
+		titles = candidate.VideoTopics
+	}
+	originalTitleCount := len(titles)
+	titles = validateVideoTitles(titles, pillars, candidate.Name, audience)
+	if len(titles) > 50 {
+		titles = titles[:50]
+	}
+	if originalTitleCount >= 50 && len(titles) < 50 {
+		titles = appendValidatedFallbackTitles(titles, candidate, pillars, 50)
+	}
+	pillars = normalizeContentPillars(pillars, titles)
+	runway := buildRunway(len(titles), firstNonEmpty(profile.WeeklyProductionCapacity, "2 videos per week"))
+	candidate.RecommendedTitles = titles
+	candidate.VideoTopics = titles
+	candidate.ContentPillars = pillars
+	candidate.TopicPillars = pillars
+	candidate.First10Titles = firstTopicTitles(titles, 10)
+	candidate.Runway = runway
+	candidate.Sustainability.ViableTopicCount = len(titles)
+	candidate.Sustainability.ContentPillarCount = len(pillars)
+	candidate.Sustainability.EstimatedContentRunway = runway.EstimatedContentRunway
+	candidate.Sustainability.TopicRepetitionRisk = repetitionRisk(len(titles), len(pillars))
+	candidate.Sustainability.Warning = runway.Limitation
+	if len(titles) < 50 {
+		issues = append(issues, fmt.Sprintf("%s has %d validated runway ideas", candidate.Name, len(titles)))
+	}
+
+	var ok bool
+	candidate.Dimensions.CreatorFit, ok = finalizeScoreExplanation("creator_fit", candidate.Name, firstScore(candidate.Dimensions.CreatorFit, candidate.Scores.PersonalFit), &issues)
+	if !ok {
+		return candidate, issues, false
+	}
+	candidate.Dimensions.AudienceDemand, ok = finalizeScoreExplanation("audience_demand", candidate.Name, firstScore(candidate.Dimensions.AudienceDemand, candidate.Scores.Demand), &issues)
+	if !ok {
+		return candidate, issues, false
+	}
+	candidate.Dimensions.CompetitionOpportunity, ok = finalizeScoreExplanation("competition_opportunity", candidate.Name, firstScore(candidate.Dimensions.CompetitionOpportunity, candidate.Scores.OpportunityGap), &issues)
+	if !ok {
+		return candidate, issues, false
+	}
+	candidate.Dimensions.Sustainability, ok = finalizeScoreExplanation("sustainability", candidate.Name, firstScore(candidate.Dimensions.Sustainability, candidate.Scores.Sustainability), &issues)
+	if !ok {
+		return candidate, issues, false
+	}
+	candidate.Dimensions.Differentiation, ok = finalizeScoreExplanation("differentiation", candidate.Name, firstScore(candidate.Dimensions.Differentiation, ScoreExplanation{Score: math.Round((candidate.Dimensions.CreatorFit.Score + candidate.Dimensions.CompetitionOpportunity.Score) / 2), Explanation: "Measures positioning, production feasibility, and creator-specific angle."}), &issues)
+	if !ok {
+		return candidate, issues, false
+	}
+	overall := calculateNicheOverallScore(candidate.Dimensions)
+	candidate.OverallScore = overall
+	candidate.Scores.PersonalFit = candidate.Dimensions.CreatorFit
+	candidate.Scores.Demand = candidate.Dimensions.AudienceDemand
+	candidate.Scores.OpportunityGap = candidate.Dimensions.CompetitionOpportunity
+	candidate.Scores.Sustainability = candidate.Dimensions.Sustainability
+	candidate.Scores.Overall = ScoreExplanation{Score: overall, Label: scoreLabel(overall), RatingBand: inferRatingFromScore(overall), Explanation: "Formula: 0.25 creator fit + 0.25 audience demand + 0.20 competition opportunity + 0.20 sustainability + 0.10 differentiation."}
+	if candidate.Scores.Confidence.Explanation == "" {
+		confidenceScore := math.Round((candidate.Dimensions.CreatorFit.Score + candidate.Dimensions.AudienceDemand.Score + candidate.Dimensions.Sustainability.Score) / 3)
+		candidate.Scores.Confidence = ScoreExplanation{Score: confidenceScore, Label: confidenceLabel(confidenceScore), RatingBand: inferRatingFromScore(confidenceScore), Explanation: "Confidence reflects profile specificity, evidence availability, and title/pillar validation."}
+	}
+	candidate.Confidence = firstNonEmpty(candidate.Confidence, candidate.Scores.Confidence.Label)
+	return candidate, issues, true
+}
+
+func appendValidatedFallbackTitles(existing []VideoTopic, candidate NicheCandidate, pillars []ContentPillar, target int) []VideoTopic {
+	if len(existing) >= target {
+		return existing[:target]
+	}
+	draft := NicheDraft{
+		Name:              candidate.Name,
+		Subcategory:       firstNonEmpty(candidate.Subcategory, candidate.Level2, candidate.Name),
+		TargetAudience:    firstNonEmpty(candidate.TargetAudience, candidate.TargetViewer),
+		ContentPillars:    pillars,
+		RecommendedTitles: existing,
+	}
+	raw := append([]VideoTopic{}, existing...)
+	intents := []string{"tutorial", "comparison", "mistake", "experiment", "case study", "practical workflow", "beginner guide", "tool breakdown", "analysis", "checklist"}
+	for i := 0; i < target*4 && len(validateVideoTitles(raw, pillars, candidate.Name, draft.TargetAudience)) < target; i++ {
+		intent := intents[i%len(intents)]
+		pillar := "Core videos"
+		if len(pillars) > 0 {
+			pillar = pillars[len(raw)%len(pillars)].Name
+		}
+		raw = append(raw, VideoTopic{Title: naturalTitleVariant(intent, draft, len(raw)+i), Pillar: pillar, Intent: intent, Difficulty: "medium", Source: "backend_response_validation", EvidenceStatus: "ai_strategic_analysis"})
+	}
+	validated := validateVideoTitles(raw, pillars, candidate.Name, draft.TargetAudience)
+	if len(validated) > target {
+		return validated[:target]
+	}
+	return validated
+}
+
+func firstScore(primary, fallback ScoreExplanation) ScoreExplanation {
+	if primary.Explanation != "" || primary.RatingBand != "" || primary.Score != 0 {
+		return primary
+	}
+	return fallback
+}
+
+func finalizeScoreExplanation(field, candidate string, score ScoreExplanation, issues *[]string) (ScoreExplanation, bool) {
+	value := score.Score
+	if math.IsNaN(value) || math.IsInf(value, 0) {
+		*issues = append(*issues, fmt.Sprintf("%s %s score is not numeric", candidate, field))
+		return ScoreExplanation{}, false
+	}
+	value = math.Round(clampScore(value))
+	rating := normalizeRatingBand(score.RatingBand)
+	explanation := firstNonEmpty(strings.TrimSpace(score.Explanation), "Score explanation was unavailable.")
+	if value > 0 && value <= 10 {
+		if rating == "very_low" && !positiveRatingLanguage(rating, explanation) {
+			score.Score = value
+			score.RatingBand = "very_low"
+			score.Label = scoreLabel(value)
+			score.Explanation = explanation
+			return score, true
+		}
+		if rating == "low" {
+			normalized := math.Round(value * 10)
+			if scoreRatingConsistent(normalized, rating) {
+				*issues = append(*issues, fmt.Sprintf("%s %s normalized from %.0f/10 to %.0f/100", candidate, field, value, normalized))
+				value = normalized
+			} else {
+				*issues = append(*issues, fmt.Sprintf("%s %s rejected: single-digit score %.0f conflicts with low rating", candidate, field, value))
+				return ScoreExplanation{}, false
+			}
+		} else if rating == "moderate" || rating == "high" || rating == "very_high" || positiveRatingLanguage(rating, explanation) {
+			normalized := math.Round(value * 10)
+			*issues = append(*issues, fmt.Sprintf("%s %s normalized from %.0f/10 to %.0f/100", candidate, field, value, normalized))
+			value = normalized
+		}
+	}
+	score.Score = math.Round(clampScore(value))
+	score.RatingBand = ratingForValidatedScore(score.Score, rating)
+	score.Label = scoreLabel(score.Score)
+	score.Explanation = explanation
+	return score, true
 }
 
 func normalizeRatingBand(value string) string {
@@ -2233,7 +2451,14 @@ func buildRunway(topicCount int, capacity string) ContentRunway {
 		weekly = 2
 	}
 	weeks := int(math.Ceil(float64(topicCount) / float64(weekly)))
-	return ContentRunway{ViableTopicCount: topicCount, WeeklyCapacity: weekly, EstimatedWeeks: weeks, EstimatedContentRunway: estimateRunway(topicCount, capacity)}
+	heading := "Initial content runway"
+	limitation := ""
+	if topicCount == 50 {
+		heading = "50-video runway"
+	} else {
+		limitation = fmt.Sprintf("Only %d validated unique ideas are available after final title validation; regenerate or broaden the niche to complete the 50-video runway.", topicCount)
+	}
+	return ContentRunway{ViableTopicCount: topicCount, WeeklyCapacity: weekly, EstimatedWeeks: weeks, EstimatedContentRunway: estimateRunway(topicCount, capacity), Heading: heading, Limitation: limitation}
 }
 
 func weeklyCapacity(value string) int {
@@ -2474,6 +2699,14 @@ func nicheReportID(profile CreatorNicheProfile, now time.Time) string {
 }
 
 func NicheResearchCacheKey(profile CreatorNicheProfile, mode string) string {
+	return nicheResearchCacheKey(profile, mode, NicheReportSchemaVersion)
+}
+
+func LegacyNicheResearchCacheKey(profile CreatorNicheProfile, mode string) string {
+	return nicheResearchCacheKey(profile, mode, "")
+}
+
+func nicheResearchCacheKey(profile CreatorNicheProfile, mode, schemaVersion string) string {
 	profile = normalizeCreatorNicheProfile(profile)
 	parts := []string{
 		profile.ProfessionalSkills,
@@ -2490,6 +2723,9 @@ func NicheResearchCacheKey(profile CreatorNicheProfile, mode string) string {
 		profile.OptionalBroadTopic,
 		profile.WeeklyProductionCapacity,
 		mode,
+	}
+	if schemaVersion != "" {
+		parts = append(parts, schemaVersion)
 	}
 	return stableNicheID(parts...)
 }

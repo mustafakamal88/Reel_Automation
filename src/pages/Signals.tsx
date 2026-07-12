@@ -1217,8 +1217,9 @@ function NicheCandidateDashboard({ candidate, showTopics, onToggleTopics }: { ca
   const dimensions = dimensionRows(candidate);
   const pillars = candidate.content_pillars?.length ? candidate.content_pillars : candidate.topic_pillars ?? [];
   const titles = candidate.recommended_titles?.length ? candidate.recommended_titles : candidate.video_topics ?? [];
-  const isCompleteRunway = titles.length === 50 && (candidate.runway?.viable_topic_count ?? candidate.sustainability.viable_topic_count) === 50;
-  const runwayTitle = isCompleteRunway ? '50-video runway' : 'Initial content runway';
+  const runwayCount = candidate.runway?.viable_topic_count ?? candidate.sustainability.viable_topic_count ?? titles.length;
+  const isCompleteRunway = titles.length === 50 && runwayCount === 50;
+  const runwayTitle = candidate.runway?.heading ?? (isCompleteRunway ? '50-video runway' : 'Initial content runway');
   return (
     <div className="niche-dashboard-grid">
       <div className="niche-score-card-grid">
@@ -1399,7 +1400,7 @@ function PillarChart({ pillars }: { pillars: ContentPillar[] }) {
 
 function RunwayCard({ candidate, pillars }: { candidate: NicheCandidate; pillars: ContentPillar[] }) {
   const topicCount = candidate.runway?.viable_topic_count ?? candidate.sustainability.viable_topic_count;
-  return <div className="runway-card"><ScoreGauge value={topicCount} max={50} label={`${topicCount} ideas`} accent="cyan" /><MetricGrid values={{ Ideas: topicCount, 'Production weeks': candidate.runway?.estimated_weeks, 'Weekly capacity': candidate.runway?.weekly_capacity, Runway: candidate.runway?.estimated_content_runway ?? candidate.sustainability.estimated_content_runway }} /><PillarChart pillars={pillars} /></div>;
+  return <div className="runway-card"><ScoreGauge value={topicCount} max={50} label={`${topicCount} ideas`} accent="cyan" /><MetricGrid values={{ Ideas: topicCount, 'Production weeks': candidate.runway?.estimated_weeks, 'Weekly capacity': candidate.runway?.weekly_capacity, Runway: candidate.runway?.estimated_content_runway ?? candidate.sustainability.estimated_content_runway }} />{candidate.runway?.limitation && <div className="muted-note">{candidate.runway.limitation}</div>}<PillarChart pillars={pillars} /></div>;
 }
 
 function DemandEvidence({ candidate }: { candidate: NicheCandidate }) {

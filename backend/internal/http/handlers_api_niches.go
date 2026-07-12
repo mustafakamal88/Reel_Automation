@@ -47,15 +47,23 @@ func (s *Server) handleCreateNicheResearch(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	cacheKey := research.NicheResearchCacheKey(req.Profile, "market_estimate")
+	legacyCacheKey := research.LegacyNicheResearchCacheKey(req.Profile, "market_estimate")
 	ttl := 6 * time.Hour
 	maxStale := 24 * time.Hour
 	if !req.Refresh {
 		if report, ok := s.cachedNicheReport(cacheKey, ttl); ok {
 			report = markNicheCache(report, cacheKey, report.Cache.StoredAt, ttl, "fresh_cache")
+			log.Printf("niche_cache_decision=current_version_cache_hit cache_key=%s schema_version=%s", cacheKey, research.NicheReportSchemaVersion)
 			jsonOK(w, report)
 			return
 		}
+		if legacyCacheKey != cacheKey {
+			if _, ok := s.cachedNicheReport(legacyCacheKey, ttl); ok {
+				log.Printf("niche_cache_decision=legacy_cache_rejected legacy_cache_key=%s schema_version=%s", legacyCacheKey, research.NicheReportSchemaVersion)
+			}
+		}
 	}
+	log.Printf("niche_cache_decision=fresh_report cache_key=%s schema_version=%s", cacheKey, research.NicheReportSchemaVersion)
 
 	timeout, err := time.ParseDuration(s.cfg.TrendDiscoveryTimeout)
 	if err != nil {
@@ -74,7 +82,8 @@ func (s *Server) handleCreateNicheResearch(w http.ResponseWriter, r *http.Reques
 		DailyYouTubeSearchLimit:      80,
 	}
 	report, researchErr := research.ResearchNiches(r.Context(), req, cfg)
-	report.Cache = research.NicheCacheInfo{Hit: false, CacheHit: false, Key: cacheKey, StoredAt: time.Now().UTC(), EvidenceFetchedAt: time.Now().UTC(), TTL: ttl.String(), Freshness: "fresh"}
+	report, _, _ = research.FinalizeNicheReportForResponse(report)
+	report.Cache = research.NicheCacheInfo{Hit: false, CacheHit: false, SchemaVersion: research.NicheReportSchemaVersion, Key: cacheKey, StoredAt: time.Now().UTC(), EvidenceFetchedAt: time.Now().UTC(), TTL: ttl.String(), Freshness: "fresh"}
 	report.Internal.CacheKey = cacheKey
 	if researchErr != nil {
 		var typed *research.NicheResearchError
@@ -85,6 +94,7 @@ func (s *Server) handleCreateNicheResearch(w http.ResponseWriter, r *http.Reques
 					cached = markNicheCache(cached, cacheKey, cached.Cache.StoredAt, maxStale, "stale")
 					cached.Message = "Showing the most recent verified evidence. Fresh validation is temporarily unavailable."
 					cached.Limitations = append(cached.Limitations, "This report is cached and may not reflect the latest public evidence.")
+					log.Printf("niche_cache_decision=current_version_cache_hit_stale cache_key=%s schema_version=%s", cacheKey, research.NicheReportSchemaVersion)
 					jsonOK(w, cached)
 					return
 				}
@@ -117,6 +127,7 @@ func (s *Server) handleGetNicheResearch(w http.ResponseWriter, r *http.Request) 
 	for _, item := range s.nicheReports {
 		if item.report.ID == id {
 			report := item.report
+			report, _, _ = research.FinalizeNicheReportForResponse(report)
 			report = markNicheCache(report, item.cacheKey, item.storedAt, 6*time.Hour, "fresh_cache")
 			jsonOK(w, report)
 			return
@@ -144,6 +155,7 @@ func (s *Server) handleAnalyseNicheGaps(w http.ResponseWriter, r *http.Request) 
 		item.report = report
 		item.storedAt = time.Now().UTC()
 		s.nicheReports[key] = item
+		report, _, _ = research.FinalizeNicheReportForResponse(report)
 		jsonOK(w, report)
 		return
 	}
@@ -180,6 +192,16 @@ func (s *Server) cachedNicheReport(cacheKey string, ttl time.Duration) (research
 		return research.NicheReport{}, false
 	}
 	report := item.report
+	if report.SchemaVersion != research.NicheReportSchemaVersion && report.Cache.SchemaVersion != research.NicheReportSchemaVersion {
+		log.Printf("niche_cache_decision=legacy_cache_rejected cache_key=%s schema_version=%s", cacheKey, firstNonEmpty(report.SchemaVersion, report.Cache.SchemaVersion, "legacy"))
+		return research.NicheReport{}, false
+	}
+	var okFinal bool
+	report, _, okFinal = research.FinalizeNicheReportForResponse(report)
+	if !okFinal || report.Status != research.StatusOK || len(report.Candidates) == 0 {
+		log.Printf("niche_cache_decision=regeneration_required cache_key=%s reason=final_validation_failed", cacheKey)
+		return research.NicheReport{}, false
+	}
 	report.Cache.StoredAt = item.storedAt
 	report.Cache.TTL = ttl.String()
 	return report, true
@@ -193,6 +215,16 @@ func (s *Server) cachedSuccessfulNicheReport(cacheKey string, maxAge time.Durati
 		return research.NicheReport{}, false
 	}
 	report := item.report
+	if report.SchemaVersion != research.NicheReportSchemaVersion && report.Cache.SchemaVersion != research.NicheReportSchemaVersion {
+		log.Printf("niche_cache_decision=legacy_cache_rejected cache_key=%s schema_version=%s", cacheKey, firstNonEmpty(report.SchemaVersion, report.Cache.SchemaVersion, "legacy"))
+		return research.NicheReport{}, false
+	}
+	var okFinal bool
+	report, _, okFinal = research.FinalizeNicheReportForResponse(report)
+	if !okFinal || report.Status != research.StatusOK || len(report.Candidates) == 0 {
+		log.Printf("niche_cache_decision=regeneration_required cache_key=%s reason=final_validation_failed", cacheKey)
+		return research.NicheReport{}, false
+	}
 	report.Cache.StoredAt = item.storedAt
 	report.Cache.TTL = maxAge.String()
 	return report, true
@@ -201,6 +233,8 @@ func (s *Server) cachedSuccessfulNicheReport(cacheKey string, maxAge time.Durati
 func (s *Server) storeNicheReport(cacheKey string, report research.NicheReport) {
 	s.nicheMu.Lock()
 	defer s.nicheMu.Unlock()
+	report, _, _ = research.FinalizeNicheReportForResponse(report)
+	report.Cache.SchemaVersion = research.NicheReportSchemaVersion
 	s.nicheReports[cacheKey] = nicheReportCacheItem{report: report, storedAt: time.Now().UTC(), cacheKey: cacheKey}
 }
 
@@ -208,6 +242,7 @@ func markNicheCache(report research.NicheReport, cacheKey string, storedAt time.
 	now := time.Now().UTC()
 	report.Cache.Hit = true
 	report.Cache.CacheHit = true
+	report.Cache.SchemaVersion = research.NicheReportSchemaVersion
 	report.Cache.Key = cacheKey
 	report.Cache.StoredAt = storedAt
 	report.Cache.EvidenceFetchedAt = storedAt
