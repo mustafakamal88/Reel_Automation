@@ -27,7 +27,7 @@ func ExtractKeywordIntelligence(in KeywordExtractionInput) KeywordIntelligence {
 	scores := map[string]float64{}
 	rejected := map[string]bool{}
 	addText := func(text string, weight float64, phrases bool) {
-		tokens := tokenizeUseful(text, rejected)
+		tokens := tokenizeUseful(cleanMetadataText(text), rejected)
 		for _, token := range tokens {
 			scores[token] += weight
 		}
@@ -40,9 +40,19 @@ func ExtractKeywordIntelligence(in KeywordExtractionInput) KeywordIntelligence {
 			}
 		}
 	}
-	addText(in.Title, 5, true)
-	addText(in.ChannelTitle, 1.2, true)
-	addText(in.Description, 0.6, true)
+	titleWeight := 6.5
+	if len(in.RecentVideoTitles) > 0 {
+		titleWeight = 0.8
+	}
+	addText(in.Title, titleWeight, true)
+	addText(in.ChannelTitle, 0.7, false)
+	descParts := splitDescriptionForWeighting(in.Description)
+	if descParts[0] != "" {
+		addText(descParts[0], 1.2, true)
+	}
+	if descParts[1] != "" {
+		addText(descParts[1], 0.25, false)
+	}
 	for _, tag := range in.Tags {
 		addText(tag, 3.5, true)
 		if strings.HasPrefix(strings.TrimSpace(tag), "#") {
@@ -56,15 +66,15 @@ func ExtractKeywordIntelligence(in KeywordExtractionInput) KeywordIntelligence {
 		}
 		addText(title, weight, true)
 	}
-	addText(categoryName(in.Category), 1.5, true)
+	addText(categoryName(in.Category), 0.5, false)
 	for _, topic := range in.TopicDetails {
-		addText(topicLastSegment(topic), 1.8, true)
+		addText(topicLastSegment(topic), 0.6, false)
 	}
 
 	hashSeen := map[string]bool{}
 	hashtags := []string{}
 	for _, h := range regexp.MustCompile(`#([A-Za-z][A-Za-z0-9_]{1,40})`).FindAllString(in.Description+" "+strings.Join(in.Tags, " "), -1) {
-		h = strings.ToLower(h)
+		h = strings.ToLower(normalizeCamelArtifact(h))
 		if !hashSeen[h] {
 			hashSeen[h] = true
 			hashtags = append(hashtags, h)
@@ -91,28 +101,36 @@ func ExtractKeywordIntelligence(in KeywordExtractionInput) KeywordIntelligence {
 	longTail := []string{}
 	seen := map[string]bool{}
 	for _, item := range items {
-		if seen[item.term] || overlapsSelected(item.term, primary) {
+		if seen[item.term] || nearDuplicateSelected(item.term, append(append(primary, secondary...), longTail...)) {
 			continue
 		}
 		seen[item.term] = true
 		words := strings.Fields(item.term)
 		switch {
-		case len(words) >= 3 && len(longTail) < 8:
+		case len(words) >= 3 && isNaturalSearchPhrase(item.term) && len(longTail) < 8:
 			longTail = append(longTail, item.term)
-		case len(primary) < 8:
+		case (len(words) >= 2 || item.score >= 3) && len(primary) < 6:
 			primary = append(primary, item.term)
-		case len(secondary) < 12:
+		case len(words) <= 3 && len(secondary) < 10:
 			secondary = append(secondary, item.term)
 		}
-		if len(primary) >= 8 && len(secondary) >= 12 && len(longTail) >= 8 {
+		if len(primary) >= 6 && len(secondary) >= 10 && len(longTail) >= 8 {
 			break
 		}
 	}
 	if len(longTail) < 5 {
 		for _, item := range items {
-			if len(strings.Fields(item.term)) >= 2 && !containsString(longTail, item.term) && len(longTail) < 8 {
+			if len(strings.Fields(item.term)) >= 2 && isNaturalSearchPhrase(item.term) && !containsString(longTail, item.term) && len(longTail) < 8 {
 				longTail = append(longTail, item.term)
 			}
+		}
+	}
+	if len(primary) == 0 {
+		for _, phrase := range longTail {
+			if len(primary) >= 6 {
+				break
+			}
+			primary = append(primary, phrase)
 		}
 	}
 
@@ -136,6 +154,9 @@ func ExtractKeywordIntelligence(in KeywordExtractionInput) KeywordIntelligence {
 		PrimaryKeywords:       primary,
 		SecondaryKeywords:     secondary,
 		LongTailPhrases:       longTail,
+		PrimaryTopics:         primary,
+		SupportingTerms:       secondary,
+		SearchPhrases:         longTail,
 		Hashtags:              hashtags,
 		RejectedNoiseTerms:    mapKeys(rejected, 16),
 		InferredSearchIntent:  inferSearchIntent(in.Title, primary, longTail),
@@ -146,26 +167,28 @@ func ExtractKeywordIntelligence(in KeywordExtractionInput) KeywordIntelligence {
 func ClassifyNiche(in KeywordExtractionInput, kw KeywordIntelligence) NicheAnalysis {
 	haystack := strings.ToLower(strings.Join(append(append([]string{in.Title, in.Description, in.ChannelTitle, categoryName(in.Category)}, in.Tags...), append(in.TopicDetails, append(kw.PrimaryKeywords, kw.LongTailPhrases...)...)...), " "))
 	rules := []struct {
+		broad string
 		niche string
 		terms []string
 	}{
-		{"AI tools", []string{"ai", "chatgpt", "openai", "midjourney", "automation", "agent", "llm", "prompt"}},
-		{"technology/software", []string{"software", "iphone", "android", "review", "tech", "app", "coding", "developer", "camera", "laptop"}},
-		{"finance/business", []string{"money", "finance", "business", "startup", "investing", "stock", "crypto", "sales", "marketing"}},
-		{"education/tutorial", []string{"how to", "tutorial", "learn", "course", "guide", "explained", "beginner", "lesson"}},
-		{"gaming", []string{"game", "gaming", "minecraft", "roblox", "fortnite", "ps5", "xbox", "nintendo"}},
-		{"movies/animation", []string{"movie", "film", "animation", "anime", "trailer", "scene", "disney", "pixar"}},
-		{"sports", []string{"football", "soccer", "nba", "nfl", "cricket", "match", "goal", "training"}},
-		{"health/fitness", []string{"fitness", "workout", "health", "diet", "weight loss", "gym", "muscle"}},
-		{"beauty/fashion", []string{"makeup", "beauty", "fashion", "outfit", "skincare", "style"}},
-		{"food", []string{"recipe", "food", "cooking", "restaurant", "meal", "kitchen"}},
-		{"travel", []string{"travel", "hotel", "flight", "city", "country", "tour", "trip"}},
-		{"comedy", []string{"funny", "comedy", "meme", "prank", "joke", "skit"}},
-		{"news/politics", []string{"news", "election", "politics", "government", "breaking", "president"}},
-		{"culture/lifestyle", []string{"lifestyle", "family", "daily", "vlog", "culture", "home"}},
-		{"entertainment", []string{"entertainment", "celebrity", "viral", "reaction", "challenge", "story"}},
+		{"Software education", "AI-assisted development", []string{"codex", "chatgpt", "openai", "coding", "developer", "agent", "llm", "prompt", "automation", "install"}},
+		{"Technology", "Consumer technology", []string{"software", "iphone", "android", "review", "tech", "app", "camera", "laptop", "tesla"}},
+		{"Business and finance", "Finance education", []string{"money", "finance", "business", "startup", "investing", "stock", "crypto", "sales", "marketing"}},
+		{"Education", "Practical tutorial", []string{"how to", "tutorial", "learn", "course", "guide", "explained", "beginner", "lesson"}},
+		{"Gaming", "Gaming guide or entertainment", []string{"game", "gaming", "minecraft", "roblox", "fortnite", "ps5", "xbox", "nintendo"}},
+		{"Entertainment", "Film and animation", []string{"movie", "film", "animation", "anime", "trailer", "scene", "disney", "pixar"}},
+		{"Sports", "Sports analysis or training", []string{"football", "soccer", "nba", "nfl", "cricket", "match", "goal", "training"}},
+		{"Health", "Fitness and wellness", []string{"fitness", "workout", "health", "diet", "weight loss", "gym", "muscle"}},
+		{"Lifestyle", "Beauty and fashion", []string{"makeup", "beauty", "fashion", "outfit", "skincare", "style"}},
+		{"Food", "Cooking and recipes", []string{"recipe", "food", "cooking", "restaurant", "meal", "kitchen", "grill"}},
+		{"Travel", "Travel and places", []string{"travel", "hotel", "flight", "city", "country", "tour", "trip"}},
+		{"Entertainment", "Comedy and skits", []string{"funny", "comedy", "meme", "prank", "joke", "skit"}},
+		{"News", "News and politics", []string{"news", "election", "politics", "government", "breaking", "president"}},
+		{"Lifestyle", "Personal lifestyle", []string{"lifestyle", "family", "daily", "vlog", "culture", "home"}},
+		{"Entertainment", "General entertainment", []string{"entertainment", "celebrity", "viral", "reaction", "challenge", "story"}},
 	}
-	bestNiche := "other"
+	bestBroad := "General"
+	bestNiche := "General public video"
 	bestScore := 0
 	evidence := []string{}
 	for _, rule := range rules {
@@ -179,22 +202,27 @@ func ClassifyNiche(in KeywordExtractionInput, kw KeywordIntelligence) NicheAnaly
 		}
 		if score > bestScore {
 			bestScore = score
+			bestBroad = rule.broad
 			bestNiche = rule.niche
 			evidence = found
 		}
 	}
-	if bestNiche == "other" && len(kw.PrimaryKeywords) > 0 {
+	if bestScore == 0 && len(kw.PrimaryKeywords) > 0 {
 		evidence = topN(kw.PrimaryKeywords, 4)
 	}
 	format := detectContentFormat(in.Title + " " + in.Description)
-	sub := firstNonEmpty(firstPhrase(kw.LongTailPhrases), firstPhrase(kw.PrimaryKeywords), "general")
+	specificTopic := grammaticallyMeaningfulTopic(kw, in.Title, bestNiche)
+	sub := specificTopic
 	confidence := 0.42 + float64(bestScore)*0.09
 	if confidence > 0.9 {
 		confidence = 0.9
 	}
 	return NicheAnalysis{
+		BroadCategory:        bestBroad,
 		PrimaryNiche:         bestNiche,
+		Niche:                bestNiche,
 		SubNiche:             sub,
+		SpecificTopic:        specificTopic,
 		AudienceType:         inferAudienceType(bestNiche, haystack),
 		ContentFormat:        format,
 		Confidence:           confidence,
@@ -241,6 +269,13 @@ func AnalyzeHookIntelligence(title string) HookIntelligence {
 	if strings.Contains(title, "|") || strings.Contains(title, ":") {
 		clarity += 8
 	}
+	specificity := 45
+	if regexp.MustCompile(`\b[A-Z][A-Za-z0-9]+\b`).MatchString(title) || regexp.MustCompile(`\b\d+\b`).MatchString(title) {
+		specificity += 18
+	}
+	if len(words) >= 5 {
+		specificity += 12
+	}
 	curiosity := 45 + len(triggers)*8
 	if strings.Contains(title, "?") {
 		curiosity += 15
@@ -248,7 +283,19 @@ func AnalyzeHookIntelligence(title string) HookIntelligence {
 	if curiosity > 100 {
 		curiosity = 100
 	}
-	remake := (clarity + curiosity) / 2
+	audienceSignal := 42
+	if containsAny([]string{lower}, []string{"beginners", "creators", "developers", "parents", "students", "gamers", "investors", "owners"}) {
+		audienceSignal += 28
+	}
+	valuePromise := 48
+	if containsAny([]string{lower}, []string{"how", "guide", "learn", "fix", "build", "make", "review", "explained", "setup"}) {
+		valuePromise += 24
+	}
+	clarity = clampInt(clarity)
+	specificity = clampInt(specificity)
+	audienceSignal = clampInt(audienceSignal)
+	valuePromise = clampInt(valuePromise)
+	remake := (clarity + curiosity + specificity + valuePromise) / 4
 	if hookType == "how_to" || hookType == "list" || hookType == "comparison" {
 		remake += 8
 	}
@@ -261,42 +308,47 @@ func AnalyzeHookIntelligence(title string) HookIntelligence {
 		TitlePattern:         titlePattern(title),
 		EmotionalTriggers:    triggers,
 		ClarityScore:         clarity,
+		SpecificityScore:     specificity,
 		CuriosityScore:       curiosity,
+		AudienceSignalScore:  audienceSignal,
+		ValuePromiseScore:    valuePromise,
 		RemakePotentialScore: remake,
+		Explanation:          explainHookScore(title, hookType, clarity, specificity, curiosity, audienceSignal, valuePromise),
 	}
 }
 
 func BuildCreatorOpportunities(niche NicheAnalysis, kw KeywordIntelligence, hook HookIntelligence, title string) CreatorOpportunities {
-	core := firstNonEmpty(firstPhrase(kw.PrimaryKeywords), niche.SubNiche, "the topic")
+	core := firstNonEmpty(niche.SpecificTopic, firstPhrase(kw.PrimaryTopics), firstPhrase(kw.PrimaryKeywords), "the topic")
 	format := strings.ReplaceAll(hook.HookType, "_", " ")
+	audience := firstNonEmpty(niche.TargetAudience, niche.AudienceType, "the likely audience")
 	return CreatorOpportunities{
 		SuggestedRemakeAngles: []string{
-			"Remake the premise as a faster " + format + " focused on " + core + ".",
-			"Turn the strongest claim into a before/after breakdown for " + niche.AudienceType + ".",
-			"Build a checklist version around " + core + " with one clear takeaway per beat.",
-			"Create a contrarian version: what most creators miss about " + core + ".",
-			"Localize the idea for a specific audience while keeping the same public metadata angle.",
+			"Checklist angle - change the format into a step-by-step " + format + " for " + audience + "; public evidence basis: title/topic terms around " + core + "; confidence: medium.",
+			"Comparison angle - keep the source premise but compare " + core + " with a close alternative; evidence basis: cleaned search phrases; confidence: medium.",
+			"Beginner-to-advanced angle - preserve the topic but make the difficulty level explicit for " + audience + "; evidence basis: inferred audience and title structure; confidence: medium.",
+			"Time-boxed workflow angle - turn " + core + " into a concise setup or decision workflow; evidence basis: metadata hook type and topic clarity; confidence: medium.",
+			"Contrarian angle - challenge a common assumption about " + core + " without claiming private performance data; evidence basis: public title and description terms; confidence: low-medium.",
 		},
 		TitleIdeas: []string{
-			"What Nobody Explains About " + titleCase(core),
-			"The Fastest Way to Understand " + titleCase(core),
-			"I Rebuilt This Idea for " + titleCase(niche.AudienceType),
-			"5 Signals Hidden in " + titleCase(core),
-			"Before You Copy This " + titleCase(niche.PrimaryNiche) + " Trend",
+			"How to Approach " + titleCase(core) + " Without Wasting Time",
+			titleCase(core) + ": A Practical Guide for " + titleCase(audience),
+			"Before You Try " + titleCase(core) + ", Check These Steps",
+			"The " + titleCase(core) + " Workflow I Would Use Today",
+			"Is " + titleCase(core) + " Still Worth It? A Metadata-Based Breakdown",
 		},
 		ShortFormClipIdeas: []string{
-			"Open with the biggest visible result, then explain the public signal behind it.",
+			"Adaptation idea: one clear takeaway from the public title promise about " + core + ".",
 			"Cut a 20-second myth-versus-reality version around " + core + ".",
-			"Make a three-step checklist viewers can screenshot.",
-			"Create a reaction clip focused on the title promise and whether it pays off.",
-			"Turn one long-tail phrase into a single-question short.",
+			"Adaptation idea: three-step checklist viewers can screenshot.",
+			"Adaptation idea: compare the source premise with one realistic alternative.",
+			"Adaptation idea: turn one cleaned search phrase into a single-question short.",
 		},
 		ScriptPrompts: []string{
-			"Write a 30-second " + hook.HookType + " script for " + niche.AudienceType + " about " + core + ".",
-			"Write a short script that opens with the public performance signal and then teaches one takeaway.",
-			"Write a remake script using these inferred public keywords: " + strings.Join(topN(kw.PrimaryKeywords, 4), ", ") + ".",
-			"Write a script that clearly states this is based on public metadata, not private analytics.",
-			"Write a punchier version of: " + title,
+			"Write a 30-second " + format + " script for " + audience + " about " + core + ", grounded only in public metadata.",
+			"Write a 60-second tutorial script that preserves the source premise from the title \"" + title + "\" and teaches one practical takeaway.",
+			"Write a short adaptation using these inferred public topics: " + strings.Join(topN(kw.PrimaryTopics, 4), ", ") + ". Do not mention private analytics or transcript-only moments.",
+			"Write a comparison script around " + core + " that states the analysis is based on public metadata.",
+			"Write a concise hook and outline for a truthful remake of: " + title,
 		},
 		ContentGaps:         []string{"Beginner explainer", "Comparison angle", "Mistake-led breakdown"},
 		UnderusedTopics:     topN(append(kw.SecondaryKeywords, kw.LongTailPhrases...), 5),
@@ -471,6 +523,63 @@ func PerformanceDistribution(videos []ChannelVideoSummary) map[string]any {
 	return out
 }
 
+func cleanMetadataText(text string) string {
+	text = strings.ReplaceAll(text, "&amp;", " and ")
+	text = strings.ReplaceAll(text, "&nbsp;", " ")
+	text = strings.ReplaceAll(text, "\r", "\n")
+	lines := strings.Split(text, "\n")
+	kept := []string{}
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		lower := strings.ToLower(trimmed)
+		if trimmed == "" {
+			continue
+		}
+		if isBoilerplateLine(lower) {
+			continue
+		}
+		trimmed = regexp.MustCompile(`https?://\S+|www\.\S+`).ReplaceAllString(trimmed, " ")
+		trimmed = regexp.MustCompile(`\b[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}\b`).ReplaceAllString(trimmed, " ")
+		trimmed = regexp.MustCompile(`\b\d{1,2}:\d{2}(?::\d{2})?\b`).ReplaceAllString(trimmed, " ")
+		trimmed = regexp.MustCompile(`(?i)\b(utm_source|utm_medium|utm_campaign|utm_term|utm_content|ref|fbclid|gclid|mc_cid|mc_eid)=[^\s&]+`).ReplaceAllString(trimmed, " ")
+		trimmed = normalizeCamelArtifact(trimmed)
+		kept = append(kept, trimmed)
+	}
+	return strings.Join(kept, " ")
+}
+
+func splitDescriptionForWeighting(description string) [2]string {
+	cleaned := cleanMetadataText(description)
+	tokens := strings.Fields(cleaned)
+	if len(tokens) <= 80 {
+		return [2]string{cleaned, ""}
+	}
+	return [2]string{strings.Join(tokens[:80], " "), strings.Join(tokens[80:], " ")}
+}
+
+func isBoilerplateLine(lower string) bool {
+	if strings.TrimSpace(lower) == "" {
+		return true
+	}
+	boilerplate := []string{
+		"subscribe", "follow me", "follow us", "affiliate", "sponsored", "sponsor", "use code", "discount code",
+		"shop now", "my gear", "business inquiries", "contact:",
+		"chapters", "timestamps", "all rights reserved", "thanks for watching", "like and comment", "turn on notifications",
+	}
+	for _, phrase := range boilerplate {
+		if strings.Contains(lower, phrase) {
+			return true
+		}
+	}
+	return false
+}
+
+func normalizeCamelArtifact(value string) string {
+	value = regexp.MustCompile(`([a-z])([A-Z])`).ReplaceAllString(value, `$1 $2`)
+	value = strings.ReplaceAll(value, "_", " ")
+	return value
+}
+
 func tokenizeUseful(text string, rejected map[string]bool) []string {
 	tokens := []string{}
 	for _, token := range tokensFromText(text) {
@@ -514,10 +623,13 @@ func isUsefulTerm(term string) bool {
 	if len(term) < 3 || stopWords[term] {
 		return false
 	}
-	if regexp.MustCompile(`^[a-z]$|^\d+$|^[a-f0-9]{8,}$|^[a-z0-9_-]{11,}$`).MatchString(term) {
+	if regexp.MustCompile(`^[a-z]$|^\d+$|^[a-f0-9]{8,}$|^[a-z0-9_-]{11,}$|^utm_|^[?&=]+$`).MatchString(term) {
 		return false
 	}
 	if strings.Count(term, "-")+strings.Count(term, "_") >= 3 {
+		return false
+	}
+	if lowInformationWords[term] {
 		return false
 	}
 	words := strings.Fields(term)
@@ -541,6 +653,13 @@ var stopWords = map[string]bool{
 	"lnk":     true,
 	"episode": true, "part": true, "best": true, "scenes": true, "2026": true, "2025": true, "2024": true, "like": true, "comment": true,
 	"share": true, "follow": true, "instagram": true, "tiktok": true, "facebook": true, "twitter": true, "xcom": true,
+	"utm_source": true, "utm_medium": true, "utm_campaign": true, "magicpath": true, "grill": true, "skill": true,
+}
+
+var lowInformationWords = map[string]bool{
+	"link": true, "links": true, "click": true, "here": true, "more": true, "today": true, "every": true,
+	"project": true, "projects": true, "thing": true, "things": true, "stuff": true, "watching": true,
+	"official": true, "random": true, "description": true, "below": true, "above": true, "page": true,
 }
 
 func ngrams(tokens []string, n int) []string {
@@ -564,6 +683,40 @@ func overlapsSelected(term string, selected []string) bool {
 		}
 	}
 	return false
+}
+
+func nearDuplicateSelected(term string, selected []string) bool {
+	if overlapsSelected(term, selected) {
+		return true
+	}
+	normalized := strings.ReplaceAll(strings.ToLower(term), "-", " ")
+	for _, item := range selected {
+		other := strings.ReplaceAll(strings.ToLower(item), "-", " ")
+		if normalized == other {
+			return true
+		}
+		if jaccardSimilarity(strings.Fields(normalized), strings.Fields(other)) >= 0.75 {
+			return true
+		}
+	}
+	return false
+}
+
+func isNaturalSearchPhrase(value string) bool {
+	words := strings.Fields(value)
+	if len(words) < 2 || len(words) > 6 {
+		return false
+	}
+	useful := 0
+	for _, word := range words {
+		if isUsefulTerm(word) {
+			useful++
+		}
+	}
+	if useful < 2 {
+		return false
+	}
+	return !regexp.MustCompile(`(?i)\butm|http|affiliate|sponsor|instagram|tiktok|facebook|twitter\b`).MatchString(value)
 }
 
 func inferSearchIntent(title string, primary, longTail []string) string {
@@ -656,6 +809,30 @@ func inferAudienceType(niche, haystack string) string {
 
 func inferContentAngle(format, sub, niche string) string {
 	return "A " + format + " angle for " + sub + " within " + niche + ", inferred from public metadata."
+}
+
+func grammaticallyMeaningfulTopic(kw KeywordIntelligence, title, fallback string) string {
+	candidates := append(append([]string{}, kw.SearchPhrases...), kw.PrimaryTopics...)
+	candidates = append(candidates, kw.PrimaryKeywords...)
+	for _, candidate := range candidates {
+		candidate = strings.TrimSpace(candidate)
+		if isNaturalSearchPhrase(candidate) {
+			return candidate
+		}
+	}
+	titleTokens := tokenizeUseful(title, map[string]bool{})
+	for n := minInt(4, len(titleTokens)); n >= 2; n-- {
+		for _, phrase := range ngrams(titleTokens, n) {
+			if isNaturalSearchPhrase(phrase) {
+				return phrase
+			}
+		}
+	}
+	return fallback
+}
+
+func explainHookScore(title, hookType string, clarity, specificity, curiosity, audienceSignal, valuePromise int) string {
+	return fmt.Sprintf("Title/metadata hook analysis: %q reads as a %s hook. Clarity %d, specificity %d, curiosity %d, audience signal %d, and value promise %d are based only on the public title text.", title, strings.ReplaceAll(hookType, "_", " "), clarity, specificity, curiosity, audienceSignal, valuePromise)
 }
 
 func relatedTerms(term string, kw KeywordIntelligence) []string {

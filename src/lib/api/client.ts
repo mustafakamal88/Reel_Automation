@@ -972,6 +972,13 @@ export interface YouTubeVideoAnalysisResponse {
   description_hashtag_analysis?: string;
   performance_signals?: Record<string, unknown>;
   video_snapshot?: Record<string, unknown>;
+  formatted_metadata?: FormattedVideoMetadata;
+  score_dimensions?: ScoreDimension[];
+  analysis_confidence?: ScoreDimension;
+  performance_profile?: PerformanceMetric[];
+  revenue_estimate?: RevenueEstimate;
+  evidence_basis?: EvidenceBasis[];
+  schema_version?: string;
   keyword_intelligence?: KeywordIntelligence;
   hook_intelligence?: HookIntelligence;
   niche_analysis?: NicheAnalysis;
@@ -985,10 +992,69 @@ export interface KeywordIntelligence {
   primary_keywords?: string[];
   secondary_keywords?: string[];
   long_tail_phrases?: string[];
+  primary_topics?: string[];
+  supporting_terms?: string[];
+  search_phrases?: string[];
   hashtags?: string[];
   rejected_noise_terms?: string[];
   inferred_search_intent?: string;
   metadata_strength_score?: number;
+}
+
+export interface FormattedVideoMetadata {
+  published_date?: string;
+  published_relative?: string;
+  duration?: string;
+  views?: string;
+  likes?: string;
+  comments?: string;
+  format?: string;
+  unavailable_counts?: string[];
+}
+
+export interface ScoreDimension {
+  id: string;
+  label: string;
+  score: number;
+  rating: string;
+  explanation: string;
+  evidence?: string;
+}
+
+export interface PerformanceMetric {
+  id: string;
+  label: string;
+  value: string;
+  score: number;
+  explanation: string;
+  raw_value?: number;
+}
+
+export interface RevenueEstimate {
+  source: string;
+  model_type: string;
+  currency: string;
+  low: number;
+  midpoint: number;
+  high: number;
+  formatted_range: string;
+  rpm_low: number;
+  rpm_high: number;
+  estimated_revenue_per_1000_views: string;
+  confidence: string;
+  confidence_score: number;
+  calculation_basis: string;
+  assumptions?: string[];
+  exclusions?: string[];
+  future_revenue_scenario?: string;
+  monetisation_eligibility?: string;
+  actual_analytics_unavailable?: boolean;
+}
+
+export interface EvidenceBasis {
+  field: string;
+  source: string;
+  basis: string;
 }
 
 export interface HookIntelligence {
@@ -997,13 +1063,20 @@ export interface HookIntelligence {
   title_pattern?: string;
   emotional_triggers?: string[];
   clarity_score?: number;
+  specificity_score?: number;
   curiosity_score?: number;
+  audience_signal_score?: number;
+  value_promise_score?: number;
   remake_potential_score?: number;
+  explanation?: string;
 }
 
 export interface NicheAnalysis {
+  broad_category?: string;
   primary_niche?: string;
+  niche?: string;
   sub_niche?: string;
+  specific_topic?: string;
   audience_type?: string;
   content_format?: string;
   confidence?: number;

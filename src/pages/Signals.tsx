@@ -806,38 +806,58 @@ function YouTubeVideoTab({ value, onChange, onAnalyze, loading, result, onGenera
       {!result && <div className="neutral-callout">Connect YouTube in Connections to analyze videos.</div>}
       {result && result.status !== 'ok' && <HonestResultState result={result} />}
       {result?.status === 'ok' && (
-        <div style={{ display: 'grid', gap: 10 }}>
+        <div className="video-analysis-results">
+          <ResultCard title="Result summary">
+            <div className="video-summary-grid">
+              <SummaryStat label="Opportunity score" value={`${summaryOpportunityScore(result)} / 100`} subValue="TrendCortex analysis signal" />
+              <SummaryStat label="Confidence" value={result.analysis_confidence ? `${result.analysis_confidence.score} / 100` : 'Unavailable'} subValue={result.analysis_confidence?.rating} />
+              <SummaryStat label="Format" value={formatVideoFormat(result.formatted_metadata?.format)} subValue="Inferred from URL and public duration" />
+              <SummaryStat label="Topic" value={result.niche_analysis?.specific_topic || result.niche_analysis?.niche || result.inferred_niche || 'Unavailable'} subValue={result.niche_analysis?.broad_category} />
+              <SummaryStat label="Estimated revenue potential" value={result.revenue_estimate?.formatted_range || 'Unavailable'} subValue={result.revenue_estimate?.confidence ? `${result.revenue_estimate.confidence} confidence` : 'Public estimate'} />
+            </div>
+          </ResultCard>
           <ResultCard title="Video snapshot">
             <TextBlock label="Title" value={result.title} />
-            <MetricGrid values={{ Channel: result.channel_title, Published: result.published_at, Duration: result.duration, Views: result.views, Likes: result.likes, Comments: result.comments }} />
-            <TextBlock label="Evidence" value={result.metadata?.score_reason} />
+            <MetricGrid values={{
+              Channel: result.channel_title,
+              Published: [result.formatted_metadata?.published_date, result.formatted_metadata?.published_relative].filter(Boolean).join(' · ') || result.published_at,
+              Duration: result.formatted_metadata?.duration || result.duration,
+              Views: result.formatted_metadata?.views ?? result.views,
+              Likes: result.formatted_metadata?.likes ?? result.likes,
+              Comments: result.formatted_metadata?.comments ?? result.comments,
+            }} />
+            <TextBlock label="Evidence boundary" value="Analysis uses public YouTube Data API metadata. It does not include transcript content, retention, impressions, CTR, private audience data, exact RPM, or actual revenue." />
           </ResultCard>
-          <ResultCard title="Performance indicators">
-            <MetricGrid values={result.performance_signals ?? {}} />
+          <ResultCard title="Score profile">
+            <ScoreProgressList dimensions={result.score_dimensions ?? []} />
+            {result.analysis_confidence && <ScoreProgressBar dimension={result.analysis_confidence} />}
+          </ResultCard>
+          <ResultCard title="Public performance profile">
+            <div className="video-chart-note">TrendCortex public-signal scale</div>
+            <PerformanceBarChart metrics={result.performance_profile ?? []} />
+          </ResultCard>
+          <ResultCard title="Estimated revenue potential">
+            <RevenueEstimateRange estimate={result.revenue_estimate} />
           </ResultCard>
           <ResultCard title="Keyword intelligence">
             <TextBlock label="Inferred search intent" value={result.keyword_intelligence?.inferred_search_intent} />
             <MetricGrid values={{ 'Metadata strength': result.keyword_intelligence?.metadata_strength_score }} />
-            <LabelledChips label="Primary keywords" items={result.keyword_intelligence?.primary_keywords ?? result.extracted_keywords ?? []} />
-            <LabelledChips label="Secondary keywords" items={result.keyword_intelligence?.secondary_keywords ?? []} />
-            <LabelledChips label="Long-tail phrases" items={result.keyword_intelligence?.long_tail_phrases ?? []} />
+            <LabelledChips label="Primary topics" items={result.keyword_intelligence?.primary_topics ?? result.keyword_intelligence?.primary_keywords ?? result.extracted_keywords ?? []} />
+            <LabelledChips label="Supporting terms" items={result.keyword_intelligence?.supporting_terms ?? result.keyword_intelligence?.secondary_keywords ?? []} />
+            <LabelledChips label="Search phrases" items={result.keyword_intelligence?.search_phrases ?? result.keyword_intelligence?.long_tail_phrases ?? []} />
             <LabelledChips label="Public hashtags" items={result.keyword_intelligence?.hashtags ?? []} />
           </ResultCard>
           <ResultCard title="Hook analysis">
-            <MetricGrid values={{
-              'Hook type': result.hook_intelligence?.hook_type,
-              'Title length': result.hook_intelligence?.title_length,
-              'Clarity score': result.hook_intelligence?.clarity_score,
-              'Curiosity score': result.hook_intelligence?.curiosity_score,
-              'Remake potential': result.hook_intelligence?.remake_potential_score,
-            }} />
+            <HookProfile hook={result.hook_intelligence} />
             <TextBlock label="Title pattern" value={result.hook_intelligence?.title_pattern || result.title_structure_analysis} />
+            <TextBlock label="Explanation" value={result.hook_intelligence?.explanation || result.hook_analysis} />
             <LabelledChips label="Emotional triggers" items={result.hook_intelligence?.emotional_triggers ?? []} />
           </ResultCard>
           <ResultCard title="Niche analysis">
             <MetricGrid values={{
-              'Primary niche': result.niche_analysis?.primary_niche || result.inferred_niche,
-              'Sub-niche': result.niche_analysis?.sub_niche,
+              'Broad category': result.niche_analysis?.broad_category,
+              Niche: result.niche_analysis?.niche || result.niche_analysis?.primary_niche || result.inferred_niche,
+              'Specific topic': result.niche_analysis?.specific_topic || result.niche_analysis?.sub_niche,
               'Audience': result.niche_analysis?.target_audience || result.niche_analysis?.audience_type,
               'Content format': result.niche_analysis?.content_format,
               Confidence: result.niche_analysis?.confidence,
@@ -848,7 +868,7 @@ function YouTubeVideoTab({ value, onChange, onAnalyze, loading, result, onGenera
           <ResultCard title="Creator opportunities">
             <SectionList label="Suggested remake angles" items={result.creator_opportunities?.suggested_remake_angles ?? result.suggested_remake_angles ?? []} />
             <SectionList label="Title ideas" items={result.creator_opportunities?.title_ideas ?? []} />
-            <SectionList label="Short-form clip ideas" items={result.creator_opportunities?.short_form_clip_ideas ?? []} />
+            <SectionList label="Short-form adaptation ideas" items={result.creator_opportunities?.short_form_clip_ideas ?? []} />
             <SectionList label="Script prompts" items={result.creator_opportunities?.script_prompts ?? []} />
             <ScriptAction
               label="Generate Script from this analysis"
@@ -2448,6 +2468,104 @@ function ScriptAction({ label, generating, generated, error, onGenerate, onOpenS
   );
 }
 
+function SummaryStat({ label, value, subValue }: { label: string; value: string; subValue?: string }) {
+  return (
+    <div className="video-summary-stat">
+      <span>{label}</span>
+      <strong>{value}</strong>
+      {subValue && <small>{subValue}</small>}
+    </div>
+  );
+}
+
+function ScoreProgressList({ dimensions }: { dimensions: NonNullable<YouTubeVideoAnalysisResponse['score_dimensions']> }) {
+  if (!dimensions.length) return <div className="muted-note">No score profile returned.</div>;
+  return <div className="score-progress-list">{dimensions.map(dimension => <ScoreProgressBar key={dimension.id || dimension.label} dimension={dimension} />)}</div>;
+}
+
+function ScoreProgressBar({ dimension }: { dimension: NonNullable<YouTubeVideoAnalysisResponse['analysis_confidence']> }) {
+  const score = clampScore(dimension.score);
+  return (
+    <div className="score-progress-row" aria-label={`${dimension.label}: ${score} out of 100, ${dimension.rating}`}>
+      <div className="score-progress-header">
+        <span>{dimension.label}</span>
+        <strong>{score} · {dimension.rating}</strong>
+      </div>
+      <div className="score-progress-track" role="img" aria-label={`${dimension.label} score ${score} out of 100`}>
+        <span style={{ width: `${score}%` }} />
+      </div>
+      {dimension.explanation && <p>{dimension.explanation}</p>}
+    </div>
+  );
+}
+
+function PerformanceBarChart({ metrics }: { metrics: NonNullable<YouTubeVideoAnalysisResponse['performance_profile']> }) {
+  if (!metrics.length) return <div className="muted-note">Public performance signals are unavailable for this video.</div>;
+  return (
+    <div className="metric-bar-chart">
+      {metrics.map(metric => {
+        const score = clampScore(metric.score);
+        return (
+          <div className="metric-bar-row" key={metric.id || metric.label}>
+            <div className="metric-bar-label">
+              <span>{metric.label}</span>
+              <strong>{metric.value}</strong>
+            </div>
+            <div className="metric-bar-track" role="img" aria-label={`${metric.label}: ${metric.value}; TrendCortex public-signal score ${score} out of 100`}>
+              <span style={{ width: `${score}%` }} />
+            </div>
+            <small>{metric.explanation}</small>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function RevenueEstimateRange({ estimate }: { estimate?: YouTubeVideoAnalysisResponse['revenue_estimate'] }) {
+  if (!estimate) return <div className="muted-note">Estimated revenue potential is unavailable.</div>;
+  const midpointPercent = estimate.high > estimate.low ? ((estimate.midpoint - estimate.low) / (estimate.high - estimate.low)) * 100 : 50;
+  return (
+    <div className="revenue-estimate" aria-label={`Estimated revenue potential ${estimate.formatted_range}`}>
+      <div className="revenue-headline">
+        <span>Estimated revenue potential</span>
+        <strong>{estimate.formatted_range}</strong>
+        <small>{estimate.estimated_revenue_per_1000_views} · {estimate.confidence} confidence</small>
+      </div>
+      <div className="revenue-range-track" role="img" aria-label={`Low ${formatCurrencyEstimate(estimate.low)}, midpoint ${formatCurrencyEstimate(estimate.midpoint)}, high ${formatCurrencyEstimate(estimate.high)}`}>
+        <span className="revenue-range-fill" />
+        <span className="revenue-range-midpoint" style={{ left: `${clampScore(midpointPercent)}%` }} />
+      </div>
+      <div className="revenue-range-labels">
+        <span>Low {formatCurrencyEstimate(estimate.low)}</span>
+        <span>Mid {formatCurrencyEstimate(estimate.midpoint)}</span>
+        <span>High {formatCurrencyEstimate(estimate.high)}</span>
+      </div>
+      <TextBlock label="Calculation basis" value={estimate.calculation_basis} />
+      <SectionList label="Assumptions" items={estimate.assumptions ?? []} />
+      <SectionList label="Exclusions" items={estimate.exclusions ?? []} />
+      {estimate.future_revenue_scenario && <TextBlock label="Future scenario" value={estimate.future_revenue_scenario} />}
+    </div>
+  );
+}
+
+function HookProfile({ hook }: { hook?: YouTubeVideoAnalysisResponse['hook_intelligence'] }) {
+  if (!hook) return <div className="muted-note">No title/metadata hook profile returned.</div>;
+  const dimensions = [
+    { id: 'clarity', label: 'Clarity', score: hook.clarity_score ?? 0, rating: ratingForScore(hook.clarity_score ?? 0), explanation: 'How directly the title communicates the premise.' },
+    { id: 'specificity', label: 'Specificity', score: hook.specificity_score ?? 0, rating: ratingForScore(hook.specificity_score ?? 0), explanation: 'How much concrete topic detail appears in the title.' },
+    { id: 'curiosity', label: 'Curiosity', score: hook.curiosity_score ?? 0, rating: ratingForScore(hook.curiosity_score ?? 0), explanation: 'Whether the title creates a supportable curiosity gap.' },
+    { id: 'audience', label: 'Audience signal', score: hook.audience_signal_score ?? 0, rating: ratingForScore(hook.audience_signal_score ?? 0), explanation: 'Whether the likely viewer is explicit in the title.' },
+    { id: 'value', label: 'Value promise', score: hook.value_promise_score ?? 0, rating: ratingForScore(hook.value_promise_score ?? 0), explanation: 'Whether the title promises a concrete viewer outcome.' },
+  ];
+  return (
+    <div className="score-progress-list">
+      <MetricGrid values={{ 'Hook type': hook.hook_type, 'Title length': hook.title_length, 'Remake potential': hook.remake_potential_score }} />
+      {dimensions.map(dimension => <ScoreProgressBar key={dimension.id} dimension={dimension} />)}
+    </div>
+  );
+}
+
 function ResultCard({ title, children }: { title: string; children: ReactNode }) {
   return (
     <div className="settings-card" style={{ padding: '12px 14px' }}>
@@ -2885,6 +3003,37 @@ function stableKey(value: string): string {
 function clampScore(value: number): number {
   if (!Number.isFinite(value)) return 0;
   return Math.max(0, Math.min(100, Math.round(value)));
+}
+
+function ratingForScore(value: number): string {
+  const score = clampScore(value);
+  if (score >= 85) return 'Strong';
+  if (score >= 70) return 'Good';
+  if (score >= 50) return 'Moderate';
+  if (score >= 30) return 'Limited';
+  return 'Weak';
+}
+
+function summaryOpportunityScore(result: YouTubeVideoAnalysisResponse): number {
+  const dimensions = result.score_dimensions ?? [];
+  if (!dimensions.length) return clampScore(result.metadata?.score ?? 0);
+  const weighted = dimensions.reduce((sum, dimension) => sum + clampScore(dimension.score), 0) / dimensions.length;
+  return clampScore(weighted);
+}
+
+function formatVideoFormat(value?: string): string {
+  const labels: Record<string, string> = {
+    long_form: 'Long-form',
+    short_form: 'Short-form',
+    livestream: 'Livestream',
+    unknown: 'Unknown',
+  };
+  return labels[String(value ?? '').toLowerCase()] ?? 'Unknown';
+}
+
+function formatCurrencyEstimate(value?: number): string {
+  if (value == null || !Number.isFinite(value)) return 'Unavailable';
+  return `$${Math.round(value).toLocaleString()}`;
 }
 
 function formatCompactNumber(value?: number): string {

@@ -85,6 +85,46 @@ func TestKeywordExtractorRemovesNoiseAndFindsPhrases(t *testing.T) {
 	}
 }
 
+func TestKeywordExtractorRejectsMetadataPollution(t *testing.T) {
+	got := ExtractKeywordIntelligence(KeywordExtractionInput{
+		Title: "Install Codex Skills in Every Project",
+		Description: `Learn a repeatable Codex setup workflow.
+
+https://example.com/?utm_source=youtube&utm_medium=description&magicPath=abc
+00:43 install step
+Follow me on Instagram
+Business inquiries: hello@example.com
+Affiliate link: https://shop.example.com/ref?id=123
+#CodexSkills #CodexSkills #AIWorkflow`,
+		Tags: []string{"Codex skills", "AI workflow", "utm_source"},
+	})
+	joined := strings.ToLower(strings.Join(append(append(got.PrimaryKeywords, got.SecondaryKeywords...), got.LongTailPhrases...), " "))
+	for _, noise := range []string{"utm_source", "utm_medium", "magicpath", "instagram", "affiliate", "hello", "example.com"} {
+		if strings.Contains(joined, noise) {
+			t.Fatalf("keywords include noise %q: %+v", noise, got)
+		}
+	}
+	if len(got.Hashtags) != 2 {
+		t.Fatalf("hashtags = %+v, want deduped hashtags", got.Hashtags)
+	}
+	if !strings.Contains(joined, "codex skills") && !strings.Contains(joined, "ai workflow") {
+		t.Fatalf("missing source-specific topics: %+v", got)
+	}
+}
+
+func TestKeywordExtractorUsesRecentVideoTitlesForChannelTopics(t *testing.T) {
+	got := ExtractKeywordIntelligence(KeywordExtractionInput{
+		Title:             "MKBHD",
+		Description:       "Quality tech reviews about phones, cameras, electric cars, and software.",
+		TopicDetails:      []string{"https://en.wikipedia.org/wiki/Technology"},
+		RecentVideoTitles: []string{"iPhone 20 Review: What Actually Changed", "The Best Android Phone Camera Test", "Tesla Robotaxi Tech Explained"},
+	})
+	joined := strings.ToLower(strings.Join(got.PrimaryKeywords, " "))
+	if !strings.Contains(joined, "iphone") && !strings.Contains(joined, "android") && !strings.Contains(joined, "tesla") && !strings.Contains(joined, "phone") {
+		t.Fatalf("recent titles did not drive primary topics: %+v", got)
+	}
+}
+
 func TestAnalyzeVideoReturnsStructuredIntelligence(t *testing.T) {
 	provider := NewYouTubeProvider("yt-key", &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 		return jsonResponse(`{"items":[{"id":"dQw4w9WgXcQ","snippet":{"publishedAt":"2026-07-01T00:00:00Z","channelId":"UC123","title":"How AI Video Automation Works for Creators","description":"A tutorial for creator workflows. #AIVideo","channelTitle":"Creator Lab","tags":["AI video automation","creator tools"],"categoryId":"28"},"statistics":{"viewCount":"100000","likeCount":"5000","commentCount":"200"},"contentDetails":{"duration":"PT8M"},"topicDetails":{"topicCategories":["https://en.wikipedia.org/wiki/Artificial_intelligence"]}}]}`), nil
@@ -104,7 +144,46 @@ func TestAnalyzeVideoReturnsStructuredIntelligence(t *testing.T) {
 	if _, ok := result.PerformanceSignals["views_per_day"]; !ok {
 		t.Fatalf("missing views_per_day: %+v", result.PerformanceSignals)
 	}
+	if result.SchemaVersion != videoAnalysisSchemaVersion {
+		t.Fatalf("schema version = %q", result.SchemaVersion)
+	}
+	if result.FormattedMetadata.Duration != "8m 0s" || result.FormattedMetadata.PublishedDate != "1 Jul 2026" {
+		t.Fatalf("formatted metadata = %+v", result.FormattedMetadata)
+	}
+	if len(result.ScoreDimensions) == 0 || result.AnalysisConfidence.Score <= 0 {
+		t.Fatalf("missing calibrated scores: dimensions=%+v confidence=%+v", result.ScoreDimensions, result.AnalysisConfidence)
+	}
+	if len(result.PerformanceProfile) == 0 {
+		t.Fatalf("missing performance profile")
+	}
+	if result.RevenueEstimate.Source != "public_estimate" || result.RevenueEstimate.High < result.RevenueEstimate.Low || result.RevenueEstimate.Midpoint < result.RevenueEstimate.Low || result.RevenueEstimate.Midpoint > result.RevenueEstimate.High {
+		t.Fatalf("bad revenue estimate: %+v", result.RevenueEstimate)
+	}
+	if strings.Contains(strings.ToLower(result.RevenueEstimate.CalculationBasis), "you earned") {
+		t.Fatalf("revenue estimate implies actual earnings: %+v", result.RevenueEstimate)
+	}
 	assertNoExactRankingClaim(t, result.Limitations)
+}
+
+func TestVideoFormattingHiddenCountsAndShorts(t *testing.T) {
+	provider := NewYouTubeProvider("yt-key", &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		return jsonResponse(`{"items":[{"id":"dQw4w9WgXcQ","snippet":{"publishedAt":"2026-07-09T00:00:00Z","channelId":"UC123","title":"30 Second Pasta Trick","description":"","channelTitle":"Kitchen Lab","tags":["pasta recipe"],"categoryId":"26"},"statistics":{"viewCount":"0","commentCount":"0"},"contentDetails":{"duration":"PT45S"},"topicDetails":{"topicCategories":["https://en.wikipedia.org/wiki/Cooking"]}}]}`), nil
+	})})
+	provider.now = func() time.Time { return mustTime("2026-07-10T00:00:00Z") }
+
+	result, err := provider.AnalyzeVideo(context.Background(), "https://www.youtube.com/shorts/dQw4w9WgXcQ")
+	if err != nil {
+		t.Fatalf("AnalyzeVideo: %v", err)
+	}
+	if result.FormattedMetadata.Format != "short_form" {
+		t.Fatalf("format = %q", result.FormattedMetadata.Format)
+	}
+	if result.FormattedMetadata.Views != "0" || result.FormattedMetadata.Comments != "0" || result.FormattedMetadata.Likes != "Unavailable" {
+		t.Fatalf("hidden/zero counts not distinguished: %+v", result.FormattedMetadata)
+	}
+	if result.RevenueEstimate.Source != "public_estimate" || result.RevenueEstimate.ActualAnalyticsUnavailable != true {
+		t.Fatalf("bad public revenue source: %+v", result.RevenueEstimate)
+	}
 }
 
 func TestAnalyzeChannelReturnsSpecificPillarsAndIdeas(t *testing.T) {

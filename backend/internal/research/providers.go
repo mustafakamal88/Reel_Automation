@@ -189,6 +189,13 @@ type VideoAnalysisResult struct {
 	DescriptionHashtagAnalysis string                 `json:"description_hashtag_analysis,omitempty"`
 	PerformanceSignals         map[string]any         `json:"performance_signals,omitempty"`
 	VideoSnapshot              map[string]any         `json:"video_snapshot,omitempty"`
+	FormattedMetadata          FormattedVideoMetadata `json:"formatted_metadata,omitempty"`
+	ScoreDimensions            []ScoreDimension       `json:"score_dimensions,omitempty"`
+	AnalysisConfidence         ScoreDimension         `json:"analysis_confidence,omitempty"`
+	PerformanceProfile         []PerformanceMetric    `json:"performance_profile,omitempty"`
+	RevenueEstimate            RevenueEstimate        `json:"revenue_estimate,omitempty"`
+	EvidenceBasis              []EvidenceBasis        `json:"evidence_basis,omitempty"`
+	SchemaVersion              string                 `json:"schema_version,omitempty"`
 	KeywordIntelligence        KeywordIntelligence    `json:"keyword_intelligence,omitempty"`
 	HookIntelligence           HookIntelligence       `json:"hook_intelligence,omitempty"`
 	NicheAnalysis              NicheAnalysis          `json:"niche_analysis,omitempty"`
@@ -252,6 +259,9 @@ type KeywordIntelligence struct {
 	PrimaryKeywords       []string `json:"primary_keywords,omitempty"`
 	SecondaryKeywords     []string `json:"secondary_keywords,omitempty"`
 	LongTailPhrases       []string `json:"long_tail_phrases,omitempty"`
+	PrimaryTopics         []string `json:"primary_topics,omitempty"`
+	SupportingTerms       []string `json:"supporting_terms,omitempty"`
+	SearchPhrases         []string `json:"search_phrases,omitempty"`
 	Hashtags              []string `json:"hashtags,omitempty"`
 	RejectedNoiseTerms    []string `json:"rejected_noise_terms,omitempty"`
 	InferredSearchIntent  string   `json:"inferred_search_intent,omitempty"`
@@ -259,8 +269,11 @@ type KeywordIntelligence struct {
 }
 
 type NicheAnalysis struct {
+	BroadCategory        string   `json:"broad_category,omitempty"`
 	PrimaryNiche         string   `json:"primary_niche,omitempty"`
+	Niche                string   `json:"niche,omitempty"`
 	SubNiche             string   `json:"sub_niche,omitempty"`
+	SpecificTopic        string   `json:"specific_topic,omitempty"`
 	AudienceType         string   `json:"audience_type,omitempty"`
 	ContentFormat        string   `json:"content_format,omitempty"`
 	Confidence           float64  `json:"confidence,omitempty"`
@@ -275,8 +288,12 @@ type HookIntelligence struct {
 	TitlePattern         string   `json:"title_pattern,omitempty"`
 	EmotionalTriggers    []string `json:"emotional_triggers,omitempty"`
 	ClarityScore         int      `json:"clarity_score,omitempty"`
+	SpecificityScore     int      `json:"specificity_score,omitempty"`
 	CuriosityScore       int      `json:"curiosity_score,omitempty"`
+	AudienceSignalScore  int      `json:"audience_signal_score,omitempty"`
+	ValuePromiseScore    int      `json:"value_promise_score,omitempty"`
 	RemakePotentialScore int      `json:"remake_potential_score,omitempty"`
+	Explanation          string   `json:"explanation,omitempty"`
 }
 
 type CreatorOpportunities struct {
@@ -404,6 +421,10 @@ func (p *YouTubeProvider) AnalyzeVideo(ctx context.Context, videoURL string) (Vi
 	}, keywordIntel)
 	hookIntel := AnalyzeHookIntelligence(item.Snippet.Title)
 	opps := BuildCreatorOpportunities(nicheAnalysis, keywordIntel, hookIntel, item.Snippet.Title)
+	formattedMetadata := formatVideoMetadata(item, views, likes, comments, p.now, videoURL)
+	scoreDimensions, analysisConfidence := buildScoreDimensions(item, keywordIntel, hookIntel, nicheAnalysis, views, likes, comments, p.now, videoURL)
+	performanceProfile := buildPerformanceProfile(item.Snippet.PublishedAt, views, likes, comments, p.now)
+	revenueEstimate := estimateRevenue(item, nicheAnalysis, views, p.now, videoURL)
 	niche := nicheAnalysis.PrimaryNiche
 	angle := nicheAnalysis.InferredContentAngle
 	signals := performanceSignals(item.Snippet.PublishedAt, views, likes, comments, p.now)
@@ -449,6 +470,13 @@ func (p *YouTubeProvider) AnalyzeVideo(ctx context.Context, videoURL string) (Vi
 			"likes":        likes,
 			"comments":     comments,
 		},
+		FormattedMetadata:     formattedMetadata,
+		ScoreDimensions:       scoreDimensions,
+		AnalysisConfidence:    analysisConfidence,
+		PerformanceProfile:    performanceProfile,
+		RevenueEstimate:       revenueEstimate,
+		EvidenceBasis:         evidenceBasis(),
+		SchemaVersion:         videoAnalysisSchemaVersion,
 		KeywordIntelligence:   keywordIntel,
 		HookIntelligence:      hookIntel,
 		NicheAnalysis:         nicheAnalysis,
@@ -1176,12 +1204,15 @@ func (p *YouTubeProvider) enhanceKeywordsWithOpenAI(ctx context.Context, kw Keyw
 	}
 	if len(enhanced.PrimaryKeywords) > 0 {
 		kw.PrimaryKeywords = cleanStringList(enhanced.PrimaryKeywords)
+		kw.PrimaryTopics = kw.PrimaryKeywords
 	}
 	if len(enhanced.SecondaryKeywords) > 0 {
 		kw.SecondaryKeywords = cleanStringList(enhanced.SecondaryKeywords)
+		kw.SupportingTerms = kw.SecondaryKeywords
 	}
 	if len(enhanced.LongTailPhrases) > 0 {
 		kw.LongTailPhrases = cleanStringList(enhanced.LongTailPhrases)
+		kw.SearchPhrases = kw.LongTailPhrases
 	}
 	if strings.TrimSpace(enhanced.InferredSearchIntent) != "" {
 		kw.InferredSearchIntent = strings.TrimSpace(enhanced.InferredSearchIntent)
@@ -1192,8 +1223,8 @@ func (p *YouTubeProvider) enhanceKeywordsWithOpenAI(ctx context.Context, kw Keyw
 func cleanStringList(values []string) []string {
 	out := []string{}
 	for _, value := range values {
-		value = strings.TrimSpace(value)
-		if value != "" {
+		value = strings.ToLower(strings.TrimSpace(cleanMetadataText(value)))
+		if isUsefulTerm(value) {
 			out = append(out, value)
 		}
 	}
