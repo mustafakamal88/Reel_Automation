@@ -21,7 +21,7 @@ import (
 
 const publicRPMUnavailableMessage = "Currency estimate unavailable until sufficient monetization evidence is connected."
 
-const NicheReportSchemaVersion = "niche_report_v3_relevance_confidence_alternatives"
+const NicheReportSchemaVersion = "niche_report_v4_quality_hardening"
 
 const (
 	NicheStatusInsufficientEvidence           = "insufficient_evidence"
@@ -177,10 +177,18 @@ type NicheValidation struct {
 	SearchPhrases           []string `json:"search_phrases"`
 	RecentPublicationVolume int      `json:"recent_publication_volume"`
 	SampledVideoCount       int      `json:"sampled_video_count"`
+	DistinctChannelCount    int      `json:"distinct_channel_count,omitempty"`
 	TotalSampledViews       uint64   `json:"total_sampled_views"`
 	MedianSampledViews      uint64   `json:"median_sampled_views"`
 	EngagementRate          float64  `json:"engagement_rate"`
 	NewestActivity          string   `json:"newest_activity,omitempty"`
+	RecentUploadPercentage  float64  `json:"recent_upload_percentage,omitempty"`
+	MedianEvidenceAgeDays   int      `json:"median_evidence_age_days,omitempty"`
+	NewestUploadAgeDays     int      `json:"newest_upload_age_days,omitempty"`
+	QueryCoverage           float64  `json:"query_coverage,omitempty"`
+	RelevanceStrength       float64  `json:"relevance_strength,omitempty"`
+	RejectedEvidenceCount   int      `json:"rejected_evidence_count,omitempty"`
+	RejectedEvidenceSummary []string `json:"rejected_evidence_summary,omitempty"`
 	RisingTopicOverlap      bool     `json:"rising_topic_overlap"`
 	MarketEvidenceSummary   string   `json:"market_evidence_summary"`
 	CompetitionLevel        string   `json:"competition_level"`
@@ -767,6 +775,9 @@ func nicheStrategySystemPrompt() string {
 		"You are TrendCortex's niche intelligence strategist.",
 		"Use only the supplied creator profile and trend/evidence context.",
 		"Generate one primary candidate plus at least two compact alternative candidates.",
+		"The primary candidate must be a narrow actionable positioning, not a broad category. Encode a clear target audience, audience problem, content promise, format, creator advantage, and differentiating angle.",
+		"Reject generic concepts like general tips, easy content for everyone, technology for everyone, or broad lifestyle content unless supplied evidence explicitly supports broad positioning and the limitations explain why.",
+		"The niche name must be concise but specific enough that the first action, content pillars, and first video ideas visibly belong to that same positioning.",
 		"The primary candidate must include exactly 50 concise, unique video ideas. Alternative candidates should stay compact and do not need a 50-title runway.",
 		"Every primary idea must map to one returned content pillar. Pillar topic counts must total the returned idea count.",
 		"Generate coherent creator niches, target audiences, content pillars, opportunity gaps, risks, and the primary content runway.",
@@ -1112,12 +1123,15 @@ type nicheBlueprint struct {
 }
 
 type nicheEvidence struct {
-	videos       []ChannelVideoSummary
-	channelStats map[string]NicheChannelStats
-	budgetUsed   int
-	query        string
-	mode         string
-	collectedAt  time.Time
+	videos        []ChannelVideoSummary
+	channelStats  map[string]NicheChannelStats
+	rejected      map[string]int
+	relevance     float64
+	queryCoverage float64
+	budgetUsed    int
+	query         string
+	mode          string
+	collectedAt   time.Time
 }
 
 const (
@@ -1551,6 +1565,10 @@ func validateNicheDrafts(drafts []NicheDraft, profile CreatorNicheProfile) ([]Ni
 		if draft.TargetAudience == "" {
 			draft.TargetAudience = firstNonEmpty(profile.TargetAudience, countryAudience(profile.TargetCountry))
 		}
+		if reason := genericCandidateRejectionReason(draft, profile); reason != "" {
+			issues = append(issues, draft.Name+" rejected: "+reason)
+			continue
+		}
 		var rejected []string
 		draft.RecommendedTitles, rejected = validateVideoTitlesWithContext(draft.RecommendedTitles, primaryNicheContextFromDraft(draft, profile))
 		draft.ContentPillars = normalizeContentPillars(draft.ContentPillars, draft.RecommendedTitles)
@@ -1564,6 +1582,63 @@ func validateNicheDrafts(drafts []NicheDraft, profile CreatorNicheProfile) ([]Ni
 		out = append(out, draft)
 	}
 	return out, issues
+}
+
+func genericCandidateRejectionReason(draft NicheDraft, profile CreatorNicheProfile) string {
+	title := strings.TrimSpace(draft.Name)
+	positioning := strings.TrimSpace(strings.Join([]string{draft.ConcisePositioning, draft.UniqueAngle}, " "))
+	audience := firstNonEmpty(draft.TargetAudience, profile.TargetAudience)
+	problem := strings.Join(draft.AudienceProblems, " ")
+	promiseText := strings.Join([]string{title, positioning, problem, draft.RecommendedFirstAction}, " ")
+	broadTopic := strings.TrimSpace(profile.OptionalBroadTopic)
+	if title == "" {
+		return "missing niche title"
+	}
+	titleKey := normalizeTopicKey(title)
+	if broadTopic != "" && titleKey == normalizeTopicKey(broadTopic) {
+		return "title only repeats the broad topic"
+	}
+	if audience != "" && titleKey == normalizeTopicKey(audience) {
+		return "title only repeats the audience"
+	}
+	genericPhrases := []string{"for everyone", "general tips", "lifestyle content", "technology for everyone", "easy cooking for everyone", "fitness tips", "everything you need", "ultimate guide"}
+	lowerTitle := strings.ToLower(title)
+	for _, phrase := range genericPhrases {
+		if strings.Contains(lowerTitle, phrase) {
+			return "generic title lacks a narrow audience and problem"
+		}
+	}
+	dimensions := 0
+	if len(semanticAnchors(audience)) > 0 && phraseOverlaps(promiseText, semanticAnchors(audience)) {
+		dimensions++
+	}
+	if len(semanticAnchors(problem)) > 0 {
+		dimensions++
+	}
+	if len(semanticAnchors(positioning)) >= 2 {
+		dimensions++
+	}
+	if strings.TrimSpace(draft.SearchQuery) != "" && len(semanticAnchors(draft.SearchQuery)) >= 2 {
+		dimensions++
+	}
+	if len(contentPillarNames(draft.ContentPillars)) >= 3 {
+		dimensions++
+	}
+	if dimensions < 3 {
+		return "positioning is too broad to validate"
+	}
+	marketingOnly := []string{"amazing", "viral", "high growth", "great opportunity", "best content", "valuable content"}
+	lowerPromise := strings.ToLower(promiseText)
+	marketingHits := 0
+	for _, term := range marketingOnly {
+		if strings.Contains(lowerPromise, term) {
+			marketingHits++
+		}
+	}
+	if marketingHits >= 2 && len(semanticAnchors(problem)) == 0 {
+		return "marketing language lacks an identifiable audience problem"
+	}
+	return ""
 }
 
 func buildAICandidate(draft NicheDraft, profile CreatorNicheProfile, rising []string, now time.Time) NicheCandidate {
@@ -1656,7 +1731,14 @@ func buildAICandidate(draft NicheDraft, profile CreatorNicheProfile, rising []st
 }
 
 func applyEvidenceToCandidate(candidate *NicheCandidate, evidence nicheEvidence, rising []string, now time.Time) {
+	evidence = qualifyEvidenceForCandidate(*candidate, evidence, now)
 	validation := buildNicheValidation(nicheBlueprint{CorePhrase: candidate.CorePhrase, QueryPhrases: []string{evidence.query}}, evidence.videos, rising, now)
+	validation.RejectedEvidenceCount = rejectedEvidenceTotal(evidence.rejected)
+	validation.RejectedEvidenceSummary = cleanRejectionSummary(evidence.rejected)
+	validation.RelevanceStrength = evidence.relevance
+	validation.QueryCoverage = evidence.queryCoverage
+	validation.EvidenceConfidence = evidenceConfidenceFromQuality(validation.SampledVideoCount, validation.DistinctChannelCount, validation.RecentPublicationVolume, validation.RecentUploadPercentage, validation.MedianEvidenceAgeDays, validation.NewestUploadAgeDays, validation.RelevanceStrength, validation.QueryCoverage)
+	validation.MarketEvidenceSummary = marketEvidenceSummary(validation.SampledVideoCount, validation.RecentPublicationVolume, validation.MedianSampledViews, validation.RisingTopicOverlap, validation.MedianEvidenceAgeDays)
 	outliers := detectOutliers(evidence.videos, evidence.channelStats, now)
 	candidate.Validation = validation
 	candidate.Outliers = topOutliers(outliers, 4)
@@ -1700,6 +1782,182 @@ func marketEvidenceFromValidation(v NicheValidation, ev nicheEvidence) MarketEvi
 	}
 }
 
+type evidenceRelevanceProfile struct {
+	domain   string
+	topic    []string
+	audience []string
+	problem  []string
+	format   []string
+	position []string
+	pillars  []string
+}
+
+func qualifyEvidenceForCandidate(candidate NicheCandidate, ev nicheEvidence, now time.Time) nicheEvidence {
+	profile := evidenceRelevanceProfileForCandidate(candidate)
+	rejected := map[string]int{}
+	seenVideos := map[string]bool{}
+	channelCounts := map[string]int{}
+	qualified := []ChannelVideoSummary{}
+	totalStrength := 0.0
+	for _, video := range ev.videos {
+		key := firstNonEmpty(strings.TrimSpace(video.VideoID), normalizeTopicKey(video.Title+" "+video.ChannelTitle))
+		if key == "" || seenVideos[key] {
+			rejected["duplicate_video"]++
+			continue
+		}
+		seenVideos[key] = true
+		reason, strength := evidenceRejectionReason(video, profile, now)
+		if reason != "" {
+			rejected[reason]++
+			continue
+		}
+		channelKey := firstNonEmpty(strings.TrimSpace(video.ChannelID), strings.ToLower(strings.TrimSpace(video.ChannelTitle)), "unknown")
+		if channelCounts[channelKey] >= 3 && len(qualified) < 12 {
+			rejected["duplicate_channel_concentration"]++
+			continue
+		}
+		if channelCounts[channelKey] >= maxInt(3, int(math.Ceil(float64(len(qualified)+1)*0.4))) {
+			rejected["duplicate_channel_concentration"]++
+			continue
+		}
+		channelCounts[channelKey]++
+		totalStrength += strength
+		qualified = append(qualified, video)
+	}
+	ev.videos = qualified
+	ev.rejected = rejected
+	ev.queryCoverage = 0
+	if len(qualified) > 0 {
+		ev.queryCoverage = 1
+		ev.relevance = round2(totalStrength / float64(len(qualified)))
+	}
+	return ev
+}
+
+func evidenceRelevanceProfileForCandidate(c NicheCandidate) evidenceRelevanceProfile {
+	topicText := strings.Join([]string{c.Name, c.NicheName, c.CorePhrase, c.Category, c.Subcategory, c.Level1, c.Level2, c.Level3}, " ")
+	audienceText := strings.Join([]string{c.TargetAudience, c.TargetViewer}, " ")
+	problemText := strings.Join(append([]string{c.ViewerProblem}, c.AudienceProblems...), " ")
+	positionText := strings.Join(append([]string{c.ConcisePositioning, c.UniqueAngle, c.CreatorAdvantage}, c.CreatorAdvantages...), " ")
+	pillarText := strings.Join(contentPillarNames(firstNonEmptyPillars(c.ContentPillars, c.TopicPillars)), " ")
+	formatText := c.RecommendedContentFormat
+	return evidenceRelevanceProfile{
+		domain:   classifyContentDomain(strings.Join([]string{topicText, audienceText, problemText, positionText, pillarText, formatText}, " ")),
+		topic:    semanticAnchors(topicText),
+		audience: semanticAnchors(audienceText),
+		problem:  semanticAnchors(problemText),
+		format:   semanticAnchors(formatText),
+		position: semanticAnchors(positionText),
+		pillars:  semanticAnchors(pillarText),
+	}
+}
+
+func evidenceRejectionReason(video ChannelVideoSummary, profile evidenceRelevanceProfile, now time.Time) (string, float64) {
+	if strings.TrimSpace(video.Title) == "" || strings.TrimSpace(video.PublishedAt) == "" {
+		return "unavailable_metadata", 0
+	}
+	if video.Views == nil || (video.Likes != nil && *video.Likes > 0 && *video.Views == 0) || (video.Comments != nil && *video.Comments > 0 && *video.Views == 0) {
+		return "implausible_or_malformed_metrics", 0
+	}
+	if _, err := time.Parse(time.RFC3339, video.PublishedAt); err != nil {
+		return "unavailable_metadata", 0
+	}
+	text := normalizeEvidenceText(strings.Join([]string{video.Title, video.Description, video.ChannelTitle}, " "))
+	domain := classifyContentDomain(text)
+	if profile.domain != "" && domain != "" && profile.domain != domain {
+		return "topic_mismatch", 0
+	}
+	topicHits := termHitCount(text, profile.topic)
+	audienceHits := termHitCount(text, profile.audience)
+	problemHits := termHitCount(text, profile.problem)
+	formatHits := termHitCount(text, profile.format)
+	positionHits := termHitCount(text, profile.position)
+	pillarHits := termHitCount(text, profile.pillars)
+	strength := 0.0
+	if topicHits > 0 || (profile.domain != "" && profile.domain == domain) {
+		strength += 0.32
+	}
+	if audienceHits > 0 {
+		strength += 0.18
+	}
+	if problemHits > 0 {
+		strength += 0.18
+	}
+	if formatHits > 0 || evidenceTextMatchesFormat(text, profile.format) {
+		strength += 0.12
+	}
+	if positionHits > 0 {
+		strength += 0.10
+	}
+	if pillarHits > 0 {
+		strength += 0.10
+	}
+	if corporateRecipeSource(text) {
+		strength -= 0.18
+	}
+	if profile.domain == "cooking" && strings.Contains(text, "meal prep") && !containsAnyTerm(append(profile.topic, append(profile.position, profile.pillars...)...), []string{"meal", "prep"}) {
+		strength -= 0.16
+	}
+	strength = round2(maxFloat(0, minFloat(1, strength)))
+	switch {
+	case topicHits == 0 && domain == "":
+		return "topic_mismatch", strength
+	case len(profile.audience) > 0 && audienceHits == 0 && strength < 0.30:
+		return "audience_mismatch", strength
+	case len(profile.problem) > 0 && problemHits == 0 && strength < 0.30:
+		return "intent_mismatch", strength
+	case len(profile.format) > 0 && formatHits == 0 && !evidenceTextMatchesFormat(text, profile.format) && strength < 0.62:
+		return "format_mismatch", strength
+	case strength < 0.30:
+		return "candidate_positioning_mismatch", strength
+	default:
+		return "", strength
+	}
+}
+
+func normalizeEvidenceText(value string) string {
+	value = strings.ToLower(value)
+	replacer := strings.NewReplacer("/", " ", "-", " ", "_", " ", ",", " ", ".", " ", ":", " ", ";", " ", "?", " ", "!", " ", "(", " ", ")", " ", "#", " ")
+	return strings.Join(strings.Fields(replacer.Replace(value)), " ")
+}
+
+func termHitCount(text string, terms []string) int {
+	count := 0
+	for _, term := range terms {
+		term = normalizeEvidenceText(term)
+		if len(term) >= 4 && strings.Contains(text, term) {
+			count++
+		}
+	}
+	return count
+}
+
+func evidenceTextMatchesFormat(text string, terms []string) bool {
+	joined := strings.Join(terms, " ")
+	switch {
+	case strings.Contains(joined, "faceless"):
+		return strings.Contains(text, "faceless") || strings.Contains(text, "no face") || strings.Contains(text, "voiceover")
+	case strings.Contains(joined, "short"):
+		return strings.Contains(text, "short") || strings.Contains(text, "quick")
+	case strings.Contains(joined, "long"):
+		return strings.Contains(text, "tutorial") || strings.Contains(text, "course") || strings.Contains(text, "full guide")
+	default:
+		return false
+	}
+}
+
+func corporateRecipeSource(text string) bool {
+	if !(strings.Contains(text, "recipe") || strings.Contains(text, "meal") || strings.Contains(text, "cook")) {
+		return false
+	}
+	for _, term := range []string{"tesco", "asda", "sainsbury", "waitrose", "walmart", "kroger", "supermarket", "official"} {
+		if strings.Contains(text, term) {
+			return true
+		}
+	}
+	return false
+}
+
 func evidenceStatusFromValidation(v NicheValidation, mode string) string {
 	if v.SampledVideoCount == 0 {
 		return "evidence_unavailable"
@@ -1710,7 +1968,7 @@ func evidenceStatusFromValidation(v NicheValidation, mode string) string {
 		}
 		return "limited_recent_evidence"
 	}
-	if mode == evidenceModeLiveValidated && v.RecentPublicationVolume >= 4 {
+	if mode == evidenceModeLiveValidated && v.RecentPublicationVolume >= 3 {
 		return evidenceModeLiveValidated
 	}
 	if mode == evidenceModeCacheValidated {
@@ -1734,9 +1992,14 @@ func buildNicheValidation(bp nicheBlueprint, videos []ChannelVideoSummary, risin
 	var newest time.Time
 	totalViews := uint64(0)
 	viewValues := []uint64{}
+	ageDays := []int{}
+	channelIDs := map[string]bool{}
 	likes := uint64(0)
 	comments := uint64(0)
 	for _, video := range videos {
+		if strings.TrimSpace(video.ChannelID) != "" {
+			channelIDs[video.ChannelID] = true
+		}
 		if video.Views != nil {
 			totalViews += *video.Views
 			viewValues = append(viewValues, *video.Views)
@@ -1751,12 +2014,19 @@ func buildNicheValidation(bp nicheBlueprint, videos []ChannelVideoSummary, risin
 			if newest.IsZero() || t.After(newest) {
 				newest = t
 			}
-			if now.Sub(t) <= 120*24*time.Hour {
+			age := now.Sub(t)
+			if age < 0 {
+				age = 0
+			}
+			ageDays = append(ageDays, int(math.Ceil(age.Hours()/24)))
+			if age <= 120*24*time.Hour {
 				recent++
 			}
 		}
 	}
 	median := medianUint64(viewValues)
+	medianAge := medianInt(ageDays)
+	newestAge := 0
 	engagement := 0.0
 	if totalViews > 0 {
 		engagement = round2(float64(likes+comments) / float64(totalViews) * 100)
@@ -1772,21 +2042,37 @@ func buildNicheValidation(bp nicheBlueprint, videos []ChannelVideoSummary, risin
 	}
 	newestActivity := ""
 	if !newest.IsZero() {
-		newestActivity = humanAge(now.Sub(newest)) + " ago"
+		d := now.Sub(newest)
+		if d < 0 {
+			d = 0
+		}
+		newestAge = int(math.Ceil(d.Hours() / 24))
+		newestActivity = humanAge(d) + " ago"
 	}
+	recentPct := 0.0
+	if len(videos) > 0 {
+		recentPct = round1(float64(recent) / float64(len(videos)) * 100)
+	}
+	conf = evidenceConfidenceFromQuality(len(videos), len(channelIDs), recent, recentPct, medianAge, newestAge, 0, 1)
 	return NicheValidation{
 		SearchPhrases:           topN(bp.QueryPhrases, 4),
 		RecentPublicationVolume: recent,
 		SampledVideoCount:       len(videos),
+		DistinctChannelCount:    len(channelIDs),
 		TotalSampledViews:       totalViews,
 		MedianSampledViews:      median,
 		EngagementRate:          engagement,
 		NewestActivity:          newestActivity,
+		RecentUploadPercentage:  recentPct,
+		MedianEvidenceAgeDays:   medianAge,
+		NewestUploadAgeDays:     newestAge,
+		QueryCoverage:           1,
+		RelevanceStrength:       0,
 		RisingTopicOverlap:      overlap,
 		CompetitionLevel:        comp,
 		ValidationBudgetUsed:    minInt(len(bp.QueryPhrases), 3),
 		EvidenceConfidence:      conf,
-		MarketEvidenceSummary:   marketEvidenceSummary(len(videos), recent, median, overlap),
+		MarketEvidenceSummary:   marketEvidenceSummary(len(videos), recent, median, overlap, medianAge),
 	}
 }
 
@@ -2286,6 +2572,37 @@ func finalizeNicheCandidateForResponse(candidate NicheCandidate, profile Creator
 	if !ok {
 		return candidate, issues, false
 	}
+	if candidate.Validation.SampledVideoCount == 0 && strings.EqualFold(candidate.Validation.EvidenceConfidence, "insufficient") {
+		if candidate.Dimensions.AudienceDemand.Score > 59 {
+			issues = append(issues, candidate.Name+" audience demand capped because public evidence is unavailable")
+			candidate.Dimensions.AudienceDemand.Score = 59
+			candidate.Dimensions.AudienceDemand.RatingBand = inferRatingFromScore(59)
+			candidate.Dimensions.AudienceDemand.Label = scoreLabel(59)
+			candidate.Dimensions.AudienceDemand.Explanation = appendSentence(candidate.Dimensions.AudienceDemand.Explanation, "Public evidence is unavailable, so demand remains a strategic estimate.")
+		}
+		if candidate.Dimensions.CompetitionOpportunity.Score > 59 {
+			issues = append(issues, candidate.Name+" competition opportunity capped because public evidence is unavailable")
+			candidate.Dimensions.CompetitionOpportunity.Score = 59
+			candidate.Dimensions.CompetitionOpportunity.RatingBand = inferRatingFromScore(59)
+			candidate.Dimensions.CompetitionOpportunity.Label = scoreLabel(59)
+			candidate.Dimensions.CompetitionOpportunity.Explanation = appendSentence(candidate.Dimensions.CompetitionOpportunity.Explanation, "Public evidence is unavailable, so niche opportunity requires validation.")
+		}
+	} else if candidate.Validation.SampledVideoCount > 0 {
+		cappedDemand := capEvidenceDependentScore(candidate.Dimensions.AudienceDemand.Score, candidate.Validation)
+		if cappedDemand < candidate.Dimensions.AudienceDemand.Score {
+			issues = append(issues, candidate.Name+" audience demand capped by evidence quality")
+			candidate.Dimensions.AudienceDemand.Score = math.Round(cappedDemand)
+			candidate.Dimensions.AudienceDemand.RatingBand = inferRatingFromScore(candidate.Dimensions.AudienceDemand.Score)
+			candidate.Dimensions.AudienceDemand.Label = scoreLabel(candidate.Dimensions.AudienceDemand.Score)
+		}
+		cappedOpportunity := capEvidenceDependentScore(candidate.Dimensions.CompetitionOpportunity.Score, candidate.Validation)
+		if cappedOpportunity < candidate.Dimensions.CompetitionOpportunity.Score {
+			issues = append(issues, candidate.Name+" competition opportunity capped by evidence quality")
+			candidate.Dimensions.CompetitionOpportunity.Score = math.Round(cappedOpportunity)
+			candidate.Dimensions.CompetitionOpportunity.RatingBand = inferRatingFromScore(candidate.Dimensions.CompetitionOpportunity.Score)
+			candidate.Dimensions.CompetitionOpportunity.Label = scoreLabel(candidate.Dimensions.CompetitionOpportunity.Score)
+		}
+	}
 	overall := calculateNicheOverallScore(candidate.Dimensions)
 	candidate.OverallScore = overall
 	candidate.Scores.PersonalFit = candidate.Dimensions.CreatorFit
@@ -2294,7 +2611,25 @@ func finalizeNicheCandidateForResponse(candidate NicheCandidate, profile Creator
 	candidate.Scores.Sustainability = candidate.Dimensions.Sustainability
 	candidate.Scores.Overall = ScoreExplanation{Score: overall, Label: scoreLabel(overall), RatingBand: inferRatingFromScore(overall), Explanation: "Formula: 0.25 creator fit + 0.25 audience demand + 0.20 competition opportunity + 0.20 sustainability + 0.10 differentiation."}
 	candidate = finalizeEvidenceAndConfidence(candidate)
+	candidate = removeInternalValidationLabels(candidate)
 	return candidate, issues, true
+}
+
+func removeInternalValidationLabels(candidate NicheCandidate) NicheCandidate {
+	clean := func(values []string) []string {
+		out := []string{}
+		for _, value := range values {
+			if containsInternalIdentifier(strings.ToLower(value)) {
+				continue
+			}
+			out = append(out, value)
+		}
+		return out
+	}
+	candidate.MarketEvidence.Limitations = clean(candidate.MarketEvidence.Limitations)
+	candidate.Risks = clean(candidate.Risks)
+	candidate.OpportunityGaps = clean(candidate.OpportunityGaps)
+	return candidate
 }
 
 func appendValidatedFallbackTitles(existing []VideoTopic, candidate NicheCandidate, pillars []ContentPillar, target int) []VideoTopic {
@@ -2447,11 +2782,13 @@ func validateVideoTitlesWithContext(titles []VideoTopic, ctx primaryNicheContext
 	rejected := []string{}
 	seen := map[string]bool{}
 	nearSeen := map[string]bool{}
+	conceptSeen := map[string]bool{}
 	for _, topic := range titles {
 		title := strings.Join(strings.Fields(strings.TrimSpace(topic.Title)), " ")
 		key := strings.ToLower(title)
 		nearKey := nearDuplicateTitleKey(title)
-		if title == "" || seen[key] || nearSeen[nearKey] || len([]rune(title)) > 95 || excessiveTitleRepetition(title, ctx.Niche, ctx.Audience) || malformedTitle(title) || unsupportedCurrentClaim(title) || !titleSemanticallyRelevant(title, ctx) {
+		conceptKey := semanticTitleConceptKey(title)
+		if title == "" || seen[key] || nearSeen[nearKey] || conceptSeen[conceptKey] || len([]rune(title)) > 95 || excessiveTitleRepetition(title, ctx.Niche, ctx.Audience) || malformedTitle(title) || unsupportedCurrentClaim(title) || !titleSemanticallyRelevant(title, ctx) {
 			if title != "" {
 				rejected = append(rejected, title)
 			}
@@ -2465,6 +2802,9 @@ func validateVideoTitlesWithContext(titles []VideoTopic, ctx primaryNicheContext
 		if nearKey != "" {
 			nearSeen[nearKey] = true
 		}
+		if conceptKey != "" {
+			conceptSeen[conceptKey] = true
+		}
 		topic.Title = title
 		topic.Intent = customerTopicLabel(firstNonEmpty(topic.Intent, inferTitleIntent(title)))
 		topic.Difficulty = customerTopicLabel(firstNonEmpty(topic.Difficulty, "medium"))
@@ -2473,6 +2813,29 @@ func validateVideoTitlesWithContext(titles []VideoTopic, ctx primaryNicheContext
 		out = append(out, topic)
 	}
 	return out, rejected
+}
+
+func semanticTitleConceptKey(title string) string {
+	lower := normalizeEvidenceText(title)
+	intent := inferTitleIntent(lower)
+	concept := nearDuplicateTitleKey(lower)
+	for _, marker := range []struct {
+		key   string
+		terms []string
+	}{
+		{"listicle_mistakes", []string{"mistake", "avoid", "wrong"}},
+		{"beginner_guide", []string{"beginner", "start", "starter", "first"}},
+		{"meal_prep", []string{"meal prep", "prep meals", "weekly meals"}},
+		{"checklist", []string{"checklist", "steps", "routine"}},
+		{"comparison", []string{"versus", " vs ", "compare", "best options"}},
+	} {
+		for _, term := range marker.terms {
+			if strings.Contains(lower, term) {
+				return marker.key + "|" + concept
+			}
+		}
+	}
+	return intent + "|" + concept
 }
 
 func primaryNicheContextFromDraft(draft NicheDraft, profile CreatorNicheProfile) primaryNicheContext {
@@ -2563,7 +2926,7 @@ func classifyContentDomain(text string) string {
 		name  string
 		terms []string
 	}{
-		{"software", []string{"software", "app", "apps", "app builder", "app builders", "code", "coding", "developer", "development", "login", "login flow", "login screen", "data screen", "settings page", "portfolio app", "booking flow", "dashboard", "api", "frontend", "backend", "flutter", "react native", "auth", "storage", "workflow automation", "no-code", "ai automation"}},
+		{"software", []string{"software", "app", "apps", "app builder", "app builders", "code", "coding", "developer", "development", "login", "login flow", "login screen", "data screen", "settings page", "portfolio app", "booking flow", "dashboard", "api", "frontend", "backend", "flutter", "react native", "auth", "storage", "ai tools", "automate", "automation", "workflow automation", "no-code", "ai automation"}},
 		{"fashion", []string{"fashion", "style", "styling", "outfit", "wardrobe", "makeup", "beauty", "body type", "personal styling", "budget fashion", "inclusive"}},
 		{"cooking", []string{"cooking", "recipe", "meal", "kitchen", "baking", "food prep"}},
 		{"fitness", []string{"fitness", "workout", "gym", "exercise", "training plan", "muscle"}},
@@ -2782,8 +3145,44 @@ func alternativeRejectionReason(candidate NicheCandidate, seen []NicheCandidate,
 		if jaccardSimilarity(candidateTerms, existingTerms) >= 0.72 {
 			return "too similar to primary or accepted alternative"
 		}
+		if sameStrategicAlternative(candidate, existing) {
+			return "same audience and promise"
+		}
+		if sameStrategicAlternative(candidate, existing) && samePillarSet(candidate, existing) && sameScoreProfile(candidate, existing) {
+			return "identical pillars and score profile"
+		}
 	}
 	return ""
+}
+
+func sameStrategicAlternative(a, b NicheCandidate) bool {
+	aAudience := normalizeTopicKey(firstNonEmpty(a.TargetAudience, a.TargetViewer))
+	bAudience := normalizeTopicKey(firstNonEmpty(b.TargetAudience, b.TargetViewer))
+	aPromise := semanticAnchors(strings.Join([]string{a.Name, a.ConcisePositioning, a.UniqueAngle, a.ViewerProblem}, " "))
+	bPromise := semanticAnchors(strings.Join([]string{b.Name, b.ConcisePositioning, b.UniqueAngle, b.ViewerProblem}, " "))
+	if aAudience == "" || bAudience == "" {
+		return false
+	}
+	return aAudience == bAudience && jaccardSimilarity(aPromise, bPromise) >= 0.7
+}
+
+func samePillarSet(a, b NicheCandidate) bool {
+	ap := semanticAnchors(strings.Join(contentPillarNames(firstNonEmptyPillars(a.ContentPillars, a.TopicPillars)), " "))
+	bp := semanticAnchors(strings.Join(contentPillarNames(firstNonEmptyPillars(b.ContentPillars, b.TopicPillars)), " "))
+	return len(ap) > 0 && len(bp) > 0 && jaccardSimilarity(ap, bp) >= 0.8
+}
+
+func sameScoreProfile(a, b NicheCandidate) bool {
+	av := []float64{a.Dimensions.CreatorFit.Score, a.Dimensions.AudienceDemand.Score, a.Dimensions.CompetitionOpportunity.Score, a.Dimensions.Sustainability.Score, a.Dimensions.Differentiation.Score}
+	bv := []float64{b.Dimensions.CreatorFit.Score, b.Dimensions.AudienceDemand.Score, b.Dimensions.CompetitionOpportunity.Score, b.Dimensions.Sustainability.Score, b.Dimensions.Differentiation.Score}
+	if len(av) != len(bv) {
+		return false
+	}
+	totalDelta := 0.0
+	for i := range av {
+		totalDelta += math.Abs(av[i] - bv[i])
+	}
+	return totalDelta <= 5
 }
 
 func alternativeScoresValid(candidate NicheCandidate) bool {
@@ -3389,13 +3788,20 @@ func scoreDemandValidation(v NicheValidation) float64 {
 	} else if v.RecentPublicationVolume < 4 {
 		viewComponent *= 0.75
 	}
-	score := float64(v.SampledVideoCount)*1.1 + float64(v.RecentPublicationVolume)*2.2 + viewComponent
+	coverageComponent := minFloat(18, float64(v.SampledVideoCount)*0.9) + minFloat(12, float64(v.DistinctChannelCount)*2)
+	recencyComponent := minFloat(22, float64(v.RecentPublicationVolume)*2.2)
+	relevanceComponent := v.RelevanceStrength * 18
+	if v.RelevanceStrength == 0 && v.SampledVideoCount > 0 {
+		relevanceComponent = 8
+	}
+	score := coverageComponent + recencyComponent + viewComponent + relevanceComponent
 	if v.RisingTopicOverlap {
 		score += 10
 	}
 	if v.EngagementRate >= 1.5 {
 		score += 8
 	}
+	score = capEvidenceDependentScore(score, v)
 	return math.Round(clampScore(score))
 }
 
@@ -3412,6 +3818,7 @@ func scoreOpportunityGap(v NicheValidation, outliers []OutlierEvidence, gaps []S
 	}
 	score += minFloat(18, float64(len(outliers))*6)
 	score += minFloat(15, float64(len(gaps))*4)
+	score = capEvidenceDependentScore(score, v)
 	if v.SampledVideoCount < 20 || v.RecentPublicationVolume < 6 || len(outliers) < 2 {
 		score = minFloat(score, 84)
 	}
@@ -3444,6 +3851,15 @@ func scoreConfidence(v NicheValidation, m MonetizationEstimate, s Sustainability
 	}
 	if v.SampledVideoCount < 15 || v.RecentPublicationVolume == 0 {
 		score = minFloat(score, 54)
+	}
+	switch v.EvidenceConfidence {
+	case "high":
+	case "moderate":
+		score = minFloat(score, 74)
+	case "low":
+		score = minFloat(score, 54)
+	default:
+		score = minFloat(score, 39)
 	}
 	return math.Round(clampScore(score))
 }
@@ -3496,6 +3912,15 @@ func deterministicCandidateConfidence(candidate NicheCandidate) float64 {
 	}
 	if candidate.MarketEvidence.Status == "historical_public_evidence" || candidate.MarketEvidence.Status == "limited_recent_evidence" || v.RecentPublicationVolume == 0 {
 		score = minFloat(score, 54)
+	}
+	switch v.EvidenceConfidence {
+	case "high":
+	case "moderate":
+		score = minFloat(score, 74)
+	case "low":
+		score = minFloat(score, 54)
+	case "insufficient":
+		score = minFloat(score, 39)
 	}
 	if len(candidate.RecommendedTitles) < 50 {
 		score = minFloat(score, 54)
@@ -3680,6 +4105,15 @@ func medianUint64(values []uint64) uint64 {
 	return cp[len(cp)/2]
 }
 
+func medianInt(values []int) int {
+	if len(values) == 0 {
+		return 0
+	}
+	cp := append([]int{}, values...)
+	sort.Ints(cp)
+	return cp[len(cp)/2]
+}
+
 func medianVideoViews(videos []ChannelVideoSummary) uint64 {
 	values := []uint64{}
 	for _, video := range videos {
@@ -3703,6 +4137,16 @@ func phraseOverlaps(phrase string, values []string) bool {
 	return false
 }
 
+func containsAnyTerm(values []string, needles []string) bool {
+	text := normalizeEvidenceText(strings.Join(values, " "))
+	for _, needle := range needles {
+		if strings.Contains(text, normalizeEvidenceText(needle)) {
+			return true
+		}
+	}
+	return false
+}
+
 func competitionLabel(videoCount int, medianViews uint64) string {
 	switch {
 	case videoCount >= 28 && medianViews >= 100000:
@@ -3714,21 +4158,85 @@ func competitionLabel(videoCount int, medianViews uint64) string {
 	}
 }
 
-func marketEvidenceSummary(count, recent int, median uint64, overlap bool) string {
+func marketEvidenceSummary(count, recent int, median uint64, overlap bool, medianAgeDays int) string {
 	parts := []string{
 		"Sampled public videos: " + intString(count),
 		"Recent uploads: " + intString(recent),
 		"Median sampled views: " + uintString(median),
 	}
+	if medianAgeDays > 0 {
+		parts = append(parts, "median evidence age: "+intString(medianAgeDays)+" days")
+	}
 	if overlap {
 		parts = append(parts, "overlaps current rising topics")
 	}
 	if count > 0 && recent == 0 {
-		parts = append(parts, "demand signal is based on older sampled videos, not recent upload activity")
+		parts = append(parts, "demand signal is based on older sampled videos, not recent upload activity; historical public evidence only; this does not show current momentum")
 	} else if count > 0 && count < 15 {
 		parts = append(parts, "sample is sparse, so confidence remains limited")
 	}
 	return strings.Join(parts, "; ") + "."
+}
+
+func evidenceConfidenceFromQuality(sampleSize, distinctChannels, recent int, recentPct float64, medianAgeDays, newestAgeDays int, relevance, queryCoverage float64) string {
+	if sampleSize < 6 || distinctChannels < 3 || queryCoverage == 0 || (relevance > 0 && relevance < 0.52) {
+		return "insufficient"
+	}
+	if recent == 0 || newestAgeDays > 365 || medianAgeDays > 540 {
+		return "low"
+	}
+	if sampleSize >= 20 && distinctChannels >= 8 && recent >= 6 && recentPct >= 25 && newestAgeDays <= 120 && medianAgeDays <= 240 && relevance >= 0.64 {
+		return "high"
+	}
+	if sampleSize >= 12 && distinctChannels >= 5 && recent >= 3 && newestAgeDays <= 240 && medianAgeDays <= 365 && (relevance == 0 || relevance >= 0.54) {
+		return "moderate"
+	}
+	return "low"
+}
+
+func capEvidenceDependentScore(score float64, v NicheValidation) float64 {
+	switch v.EvidenceConfidence {
+	case "high":
+		return minFloat(score, 88)
+	case "moderate":
+		return minFloat(score, 74)
+	case "low":
+		return minFloat(score, 58)
+	default:
+		return minFloat(score, 44)
+	}
+}
+
+func rejectedEvidenceTotal(values map[string]int) int {
+	total := 0
+	for _, count := range values {
+		total += count
+	}
+	return total
+}
+
+func cleanRejectionSummary(values map[string]int) []string {
+	labels := map[string]string{
+		"topic_mismatch":                   "Topic mismatch",
+		"audience_mismatch":                "Audience mismatch",
+		"intent_mismatch":                  "Intent mismatch",
+		"format_mismatch":                  "Format mismatch",
+		"candidate_positioning_mismatch":   "Positioning mismatch",
+		"duplicate_video":                  "Duplicate video",
+		"duplicate_channel_concentration":  "Channel concentration",
+		"unavailable_metadata":             "Unavailable metadata",
+		"implausible_or_malformed_metrics": "Malformed metrics",
+	}
+	parts := make([]string, 0, len(values))
+	for key, count := range values {
+		if count <= 0 {
+			continue
+		}
+		label := firstNonEmpty(labels[key], sentenceCase(strings.ReplaceAll(key, "_", " ")))
+		parts = append(parts, fmt.Sprintf("%s: %d", label, count))
+	}
+	sort.Strings(parts)
+	return parts
 }
 
 func topOutliers(items []OutlierEvidence, n int) []OutlierEvidence {
@@ -4026,6 +4534,13 @@ func cleanProfileStrings(values []string) []string {
 
 func minInt(a, b int) int {
 	if a < b {
+		return a
+	}
+	return b
+}
+
+func maxFloat(a, b float64) float64 {
+	if a > b {
 		return a
 	}
 	return b

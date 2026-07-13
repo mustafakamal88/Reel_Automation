@@ -1013,9 +1013,167 @@ func TestNicheSchemaVersionSeparatesCurrentCacheKey(t *testing.T) {
 	profile := sampleAIProfile()
 	current := NicheResearchCacheKey(profile, "market_estimate")
 	legacy := LegacyNicheResearchCacheKey(profile, "market_estimate")
-	if current == legacy || !strings.Contains(NicheReportSchemaVersion, "v3") {
+	if current == legacy || !strings.Contains(NicheReportSchemaVersion, "v4") {
 		t.Fatalf("cache versioning failed: current=%s legacy=%s version=%s", current, legacy, NicheReportSchemaVersion)
 	}
+}
+
+func TestEvidenceRelevanceRejectsBroadCookingAndKeepsSpecificMatch(t *testing.T) {
+	now := time.Date(2026, 7, 12, 12, 0, 0, 0, time.UTC)
+	candidate := buildAICandidate(specificCookingDraft(), cookingProfile(), nil, now)
+	views := uint64(50000)
+	ev := nicheEvidence{query: "faceless beginner meal prep busy adults", mode: evidenceModeLiveValidated, collectedAt: now, videos: []ChannelVideoSummary{
+		{VideoID: "generic", Title: "The best viral pasta recipe", Description: "Easy dinner recipe", ChannelID: "food1", ChannelTitle: "Big Supermarket Official", PublishedAt: now.Add(-20 * 24 * time.Hour).Format(time.RFC3339), Views: &views},
+		{VideoID: "match", Title: "Faceless 20 minute meal prep for beginner busy adults", Description: "No face beginner cooking tutorial for people who cannot cook.", ChannelID: "food2", ChannelTitle: "Beginner Kitchen", PublishedAt: now.Add(-10 * 24 * time.Hour).Format(time.RFC3339), Views: &views},
+	}}
+	applyEvidenceToCandidate(&candidate, ev, nil, now)
+	if candidate.Validation.SampledVideoCount != 1 {
+		t.Fatalf("sampled=%d rejected=%v", candidate.Validation.SampledVideoCount, candidate.Validation.RejectedEvidenceSummary)
+	}
+	if candidate.Validation.RejectedEvidenceCount == 0 {
+		t.Fatalf("expected broad evidence rejection")
+	}
+}
+
+func TestEvidenceQualityCapsStaleAndViralDemand(t *testing.T) {
+	now := time.Date(2026, 7, 12, 12, 0, 0, 0, time.UTC)
+	old := now.Add(-800 * 24 * time.Hour).Format(time.RFC3339)
+	viral := uint64(9000000)
+	normal := uint64(12000)
+	videos := []ChannelVideoSummary{}
+	for i := 0; i < 12; i++ {
+		views := normal
+		if i == 0 {
+			views = viral
+		}
+		videos = append(videos, ChannelVideoSummary{VideoID: intString(i), Title: "Faceless beginner meal prep for busy adults", Description: "20 minute beginner cooking tutorial", ChannelID: "ch" + intString(i%6), PublishedAt: old, Views: &views})
+	}
+	candidate := buildAICandidate(specificCookingDraft(), cookingProfile(), nil, now)
+	applyEvidenceToCandidate(&candidate, nicheEvidence{query: "faceless beginner meal prep busy adults", mode: evidenceModeLiveValidated, collectedAt: now, videos: videos}, nil, now)
+	if candidate.Validation.EvidenceConfidence == "high" || candidate.Scores.Confidence.Label == "high" {
+		t.Fatalf("stale evidence produced high confidence: %+v", candidate.Validation)
+	}
+	if candidate.Dimensions.AudienceDemand.Score > 58 {
+		t.Fatalf("viral stale sample inflated demand: %.1f", candidate.Dimensions.AudienceDemand.Score)
+	}
+}
+
+func TestGenericCandidateRejectedAndSpecificAccepted(t *testing.T) {
+	generic := specificCookingDraft()
+	generic.Name = "Easy Cooking for Everyone"
+	generic.ConcisePositioning = "Great cooking content for everyone."
+	if _, issues := validateNicheDrafts([]NicheDraft{generic}, cookingProfile()); len(issues) == 0 {
+		t.Fatalf("generic candidate was not rejected")
+	}
+	if drafts, issues := validateNicheDrafts([]NicheDraft{specificCookingDraft()}, cookingProfile()); len(drafts) != 1 {
+		t.Fatalf("specific candidate rejected drafts=%d issues=%v", len(drafts), issues)
+	}
+}
+
+func TestRunwaySemanticDuplicateRemoved(t *testing.T) {
+	draft := specificCookingDraft()
+	draft.RecommendedTitles = append(draft.RecommendedTitles, VideoTopic{Title: "Five beginner meal prep mistakes for busy adults", Pillar: "Beginner meals", Intent: "mistake"})
+	draft.RecommendedTitles = append(draft.RecommendedTitles, VideoTopic{Title: "Avoid these beginner meal prep mistakes for busy adults", Pillar: "Beginner meals", Intent: "mistake"})
+	valid, rejected := validateVideoTitlesWithContext(draft.RecommendedTitles, primaryNicheContextFromDraft(draft, cookingProfile()))
+	if len(rejected) == 0 || len(valid) >= len(draft.RecommendedTitles) {
+		t.Fatalf("semantic duplicate not removed valid=%d rejected=%d", len(valid), len(rejected))
+	}
+}
+
+func TestQualityEvaluationProfilesProduceSpecificConsistentResults(t *testing.T) {
+	profiles := []CreatorNicheProfile{
+		cookingProfile(),
+		qualityProfile("knife skills and sauces", "advanced cooking technique", "home cooks improving technique", "advanced cooking technique", "show repeatable technique drills"),
+		qualityProfile("personal training", "home fitness", "busy beginners training at home", "home fitness", "avoid injury and stay consistent"),
+		qualityProfile("software engineering", "software development education", "junior developers", "software development", "ship real projects"),
+		qualityProfile("strategy games", "gaming guides", "casual strategy gamers", "gaming guides", "make better tactical decisions"),
+		qualityProfile("vegetable gardening", "gardening", "new apartment gardeners", "gardening", "grow food in small spaces"),
+		qualityProfile("Spanish teaching", "language learning", "adult beginners", "language learning", "practice daily without embarrassment"),
+		qualityProfile("travel planning", "travel planning", "families planning first trips", "travel planning", "avoid expensive itinerary mistakes"),
+		qualityProfile("skincare education", "beauty education", "budget skincare beginners", "beauty education", "choose products without wasting money"),
+		qualityProfile("history research", "history storytelling", "curious adults", "history storytelling", "understand events through clear stories"),
+	}
+	now := time.Date(2026, 7, 12, 12, 0, 0, 0, time.UTC)
+	for _, profile := range profiles {
+		report, err := ResearchNiches(context.Background(), NicheResearchRequest{Profile: profile}, NicheResearchConfig{Now: func() time.Time { return now }})
+		if err != nil {
+			t.Fatalf("%s research error: %v", profile.OptionalBroadTopic, err)
+		}
+		if report.PrimaryRecommendation == nil {
+			t.Fatalf("%s missing primary: %+v", profile.OptionalBroadTopic, report)
+		}
+		primary := report.PrimaryRecommendation
+		if genericCandidateRejectionReason(NicheDraft{
+			Name:               primary.Name,
+			ConcisePositioning: primary.ConcisePositioning,
+			TargetAudience:     primary.TargetAudience,
+			AudienceProblems:   primary.AudienceProblems,
+			UniqueAngle:        primary.UniqueAngle,
+			ContentPillars:     primary.ContentPillars,
+			SearchQuery:        primary.CorePhrase,
+		}, profile) != "" {
+			t.Fatalf("%s primary is not specific enough: %s", profile.OptionalBroadTopic, primary.Name)
+		}
+		if primary.OverallScore != calculateNicheOverallScore(primary.Dimensions) || primary.Scores.Overall.Label != scoreLabel(primary.OverallScore) {
+			t.Fatalf("%s score/rating mismatch", profile.OptionalBroadTopic)
+		}
+		if len(primary.RecommendedTitles) != primary.Runway.ViableTopicCount {
+			t.Fatalf("%s runway count mismatch", profile.OptionalBroadTopic)
+		}
+	}
+}
+
+func qualityProfile(skill, hobby, audience, topic, problem string) CreatorNicheProfile {
+	return CreatorNicheProfile{
+		ProfessionalSkills:       skill,
+		Hobbies:                  hobby,
+		LivedExperiences:         "Learned " + topic + " through repeated trial and error",
+		TeachingSubjects:         topic,
+		ThreeYearsAgoAdvice:      problem,
+		TargetAudience:           audience,
+		TargetCountry:            "US",
+		TargetLanguage:           "en",
+		CreatorPresence:          "faceless",
+		ContentFormats:           []string{"long-form"},
+		OptionalBroadTopic:       topic,
+		WeeklyProductionCapacity: "2 videos per week",
+	}
+}
+
+func cookingProfile() CreatorNicheProfile {
+	return CreatorNicheProfile{
+		ProfessionalSkills:       "Home cooking and simple teaching",
+		Hobbies:                  "Meal prep",
+		LivedExperiences:         "Learned to cook as a busy adult",
+		TeachingSubjects:         "Beginner cooking",
+		ThreeYearsAgoAdvice:      "I could not cook quick healthy meals",
+		TargetAudience:           "busy adults who cannot cook",
+		TargetCountry:            "US",
+		TargetLanguage:           "en",
+		CreatorPresence:          "faceless",
+		ContentFormats:           []string{"long-form"},
+		OptionalBroadTopic:       "cooking",
+		WeeklyProductionCapacity: "2 videos per week",
+	}
+}
+
+func specificCookingDraft() NicheDraft {
+	draft := baseNicheDraft("cook-specific", "Faceless 20-minute beginner meals for busy adults", "faceless beginner meal prep busy adults")
+	draft.Category = "Cooking"
+	draft.Subcategory = "Beginner meal prep"
+	draft.TargetAudience = "busy adults who cannot cook"
+	draft.AudienceProblems = []string{"They need fast meals without cooking confidence."}
+	draft.CreatorAdvantages = []string{"Can teach beginner cooking through overhead faceless demos."}
+	draft.UniqueAngle = "Faceless overhead tutorials that show every beginner step."
+	draft.ConcisePositioning = "Faceless 20-minute beginner meals for busy adults who cannot cook."
+	draft.ContentPillars = []ContentPillar{{Name: "Beginner meals"}, {Name: "Meal prep basics"}, {Name: "Mistakes and fixes"}, {Name: "Budget ingredients"}}
+	draft.RecommendedTitles = []VideoTopic{
+		{Title: "Cook a 20 minute beginner dinner without showing your face", Pillar: "Beginner meals", Intent: "tutorial"},
+		{Title: "Meal prep basics for busy adults who cannot cook", Pillar: "Meal prep basics", Intent: "beginner guide"},
+		{Title: "Five beginner cooking mistakes that ruin quick dinners", Pillar: "Mistakes and fixes", Intent: "mistake"},
+		{Title: "Budget ingredients for a week of simple beginner meals", Pillar: "Budget ingredients", Intent: "checklist"},
+	}
+	return draft
 }
 
 func TestResearchReturnsPrimaryPlusTwoAlternativesWithoutExtraYouTubeSearches(t *testing.T) {

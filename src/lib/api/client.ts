@@ -476,10 +476,18 @@ export interface NicheValidation {
   search_phrases?: string[];
   recent_publication_volume: number;
   sampled_video_count: number;
+  distinct_channel_count?: number;
   total_sampled_views: number;
   median_sampled_views: number;
   engagement_rate: number;
   newest_activity?: string;
+  recent_upload_percentage?: number;
+  median_evidence_age_days?: number;
+  newest_upload_age_days?: number;
+  query_coverage?: number;
+  relevance_strength?: number;
+  rejected_evidence_count?: number;
+  rejected_evidence_summary?: string[];
   rising_topic_overlap: boolean;
   market_evidence_summary: string;
   competition_level: string;
