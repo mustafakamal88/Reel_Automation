@@ -70,21 +70,27 @@ func (f fakeNicheStrategist) GenerateCandidates(ctx context.Context, input Niche
 }
 
 type fakeRepairStrategist struct {
-	result          NicheStrategyResult
-	repaired        NicheStrategyResult
-	repairCalls     int
-	repairedIdeas   []VideoTopic
-	ideaRepairCalls int
-	missingCount    int
-	wantMissing     int
-	generateErr     error
-	repairErr       error
-	repairIssues    []string
+	result                   NicheStrategyResult
+	repaired                 NicheStrategyResult
+	generateCalls            int
+	repairCalls              int
+	repairedAlternatives     []NicheDraft
+	alternativeRepairCalls   int
+	alternativeMissingCount  int
+	alternativeRepairRequest NicheAlternativeRepairRequest
+	repairedIdeas            []VideoTopic
+	ideaRepairCalls          int
+	missingCount             int
+	wantMissing              int
+	generateErr              error
+	repairErr                error
+	repairIssues             []string
 }
 
 func (f *fakeRepairStrategist) GenerateCandidates(ctx context.Context, input NicheStrategyInput) (NicheStrategyResult, error) {
 	_ = ctx
 	_ = input
+	f.generateCalls++
 	return f.result, f.generateErr
 }
 
@@ -95,6 +101,15 @@ func (f *fakeRepairStrategist) RepairCandidates(ctx context.Context, input Niche
 	f.repairCalls++
 	f.repairIssues = append([]string{}, issues...)
 	return f.repaired, f.repairErr
+}
+
+func (f *fakeRepairStrategist) RepairAlternatives(ctx context.Context, input NicheStrategyInput, request NicheAlternativeRepairRequest) ([]NicheDraft, error) {
+	_ = ctx
+	_ = input
+	f.alternativeRepairCalls++
+	f.alternativeMissingCount = request.MissingCount
+	f.alternativeRepairRequest = request
+	return f.repairedAlternatives, f.repairErr
 }
 
 func (f *fakeRepairStrategist) RepairPrimaryIdeas(ctx context.Context, input NicheStrategyInput, draft NicheDraft, missingCount int, acceptedTitles []string, rejectedTitles []string) ([]VideoTopic, error) {
@@ -851,6 +866,149 @@ func TestAlternativeCandidatesRequireSemanticDistinctness(t *testing.T) {
 	}
 }
 
+func TestAlternativeValidationRejectsDuplicatesTrivialRenamesAndUnrelatedNiches(t *testing.T) {
+	profile := sampleAIProfile()
+	primary := buildAICandidate(baseNicheDraft("p", "AI automation workflows", "ai automation"), profile, nil, time.Now())
+	duplicate := buildAICandidate(baseNicheDraft("d", "AI automation workflows", "ai automation"), profile, nil, time.Now())
+	rename := buildAICandidate(baseNicheDraft("r", "AI automation workflow guides", "ai automation"), profile, nil, time.Now())
+	unrelatedDraft := baseNicheDraft("u", "Sourdough baking for home cooks", "sourdough bread")
+	unrelatedDraft.Category = "Cooking"
+	unrelatedDraft.Subcategory = "Baking"
+	unrelatedDraft.UniqueAngle = "Hands-on bread recipes for home kitchens."
+	unrelated := buildAICandidate(unrelatedDraft, profile, nil, time.Now())
+	valid := buildAICandidate(baseNicheDraft("v", "AI admin systems for local agencies", "ai admin systems"), profile, nil, time.Now())
+	kept, rejected := distinctAlternativeCandidatesWithReasons(primary, []NicheCandidate{duplicate, rename, unrelated, valid}, profile, 4)
+	if len(kept) != 1 || kept[0].Name != valid.Name {
+		t.Fatalf("kept = %#v, want only valid distinct alternative", kept)
+	}
+	summary := alternativeRejectionSummary(rejected)
+	for _, want := range []string{"duplicate_alternative=1", "too_similar_to_primary_or_accepted_alternative=1", "unrelated_niche=1"} {
+		if !strings.Contains(summary, want) {
+			t.Fatalf("summary %q missing %q; rejected=%#v", summary, want, rejected)
+		}
+	}
+}
+
+func TestOneValidAlternativeTriggersRepairForExactlyOneMissingAlternative(t *testing.T) {
+	now := time.Date(2026, 7, 12, 12, 0, 0, 0, time.UTC)
+	primaryDraft := baseNicheDraftWithIdeas("draft-primary", "AI automation workflows", "ai automation", 50)
+	validAlt := baseNicheDraft("draft-alt", "AI intake systems for service businesses", "ai intake systems")
+	strategy := NicheStrategyResult{
+		CreatorProfileSummary: "AI automation educator for UK small businesses.",
+		PrimaryRecommendation: primaryDraft.Name,
+		Candidates:            []NicheDraft{primaryDraft, validAlt},
+	}
+	strategist := &fakeRepairStrategist{
+		result:               strategy,
+		repairedAlternatives: []NicheDraft{baseNicheDraft("repair-1", "AI admin systems for local agencies", "ai admin systems")},
+	}
+	provider := &fakeNicheProvider{videos: sampleNicheVideos(now), channels: sampleNicheChannels()}
+	report, err := ResearchNiches(context.Background(), NicheResearchRequest{Profile: sampleAIProfile()}, NicheResearchConfig{
+		YouTube:                      provider,
+		Strategist:                   strategist,
+		MaxYouTubeSearchesPerRequest: 3,
+		DailyYouTubeSearchLimit:      80,
+		Now:                          func() time.Time { return now },
+	})
+	if err != nil {
+		t.Fatalf("ResearchNiches error: %v", err)
+	}
+	if strategist.alternativeRepairCalls != 1 || strategist.alternativeMissingCount != 1 {
+		t.Fatalf("alternative repair calls=%d missing=%d, want one call for one missing", strategist.alternativeRepairCalls, strategist.alternativeMissingCount)
+	}
+	if len(report.AlternativeCandidates) < 2 {
+		t.Fatalf("alternatives=%d, want repaired second alternative", len(report.AlternativeCandidates))
+	}
+	if provider.searchCalls > 2 {
+		t.Fatalf("search calls=%d, want no YouTube call for repaired alternative", provider.searchCalls)
+	}
+	if strategist.generateCalls != 1 || strategist.ideaRepairCalls != 0 {
+		t.Fatalf("generateCalls=%d ideaRepairCalls=%d, want no primary or idea regeneration", strategist.generateCalls, strategist.ideaRepairCalls)
+	}
+}
+
+func TestZeroValidAlternativesTriggersOneRepairForExactlyTwo(t *testing.T) {
+	now := time.Date(2026, 7, 12, 12, 0, 0, 0, time.UTC)
+	strategist := &fakeRepairStrategist{
+		result: NicheStrategyResult{
+			CreatorProfileSummary: "AI automation educator for UK small businesses.",
+			PrimaryRecommendation: "AI automation workflows",
+			Candidates:            []NicheDraft{baseNicheDraftWithIdeas("draft-primary", "AI automation workflows", "ai automation", 50)},
+		},
+		repairedAlternatives: []NicheDraft{
+			baseNicheDraft("repair-1", "AI admin systems for local agencies", "ai admin systems"),
+			baseNicheDraft("repair-2", "AI operations dashboards for service teams", "ai operations dashboards"),
+		},
+	}
+	report, err := ResearchNiches(context.Background(), NicheResearchRequest{Profile: sampleAIProfile()}, NicheResearchConfig{
+		Strategist: strategist,
+		Now:        func() time.Time { return now },
+	})
+	if err != nil {
+		t.Fatalf("ResearchNiches error: %v", err)
+	}
+	if strategist.alternativeRepairCalls != 1 || strategist.alternativeMissingCount != 2 {
+		t.Fatalf("alternative repair calls=%d missing=%d, want one call for two missing", strategist.alternativeRepairCalls, strategist.alternativeMissingCount)
+	}
+	if len(report.AlternativeCandidates) != 2 {
+		t.Fatalf("alternatives=%d, want two repaired alternatives", len(report.AlternativeCandidates))
+	}
+	if strategist.generateCalls != 1 || strategist.ideaRepairCalls != 0 {
+		t.Fatalf("generateCalls=%d ideaRepairCalls=%d, want no primary or idea regeneration", strategist.generateCalls, strategist.ideaRepairCalls)
+	}
+}
+
+func TestRepairedAlternativesAreRevalidatedAndNoSecondRepairOccurs(t *testing.T) {
+	now := time.Date(2026, 7, 12, 12, 0, 0, 0, time.UTC)
+	invalid := baseNicheDraft("repair-bad", "AI automation workflows", "ai automation")
+	valid := baseNicheDraft("repair-good", "AI admin systems for local agencies", "ai admin systems")
+	strategist := &fakeRepairStrategist{
+		result: NicheStrategyResult{
+			CreatorProfileSummary: "AI automation educator for UK small businesses.",
+			PrimaryRecommendation: "AI automation workflows",
+			Candidates:            []NicheDraft{baseNicheDraftWithIdeas("draft-primary", "AI automation workflows", "ai automation", 50)},
+		},
+		repairedAlternatives: []NicheDraft{invalid, valid},
+	}
+	report, err := ResearchNiches(context.Background(), NicheResearchRequest{Profile: sampleAIProfile()}, NicheResearchConfig{
+		Strategist: strategist,
+		Now:        func() time.Time { return now },
+	})
+	if err != nil {
+		t.Fatalf("ResearchNiches error: %v", err)
+	}
+	if strategist.alternativeRepairCalls != 1 {
+		t.Fatalf("alternative repair calls=%d, want exactly one", strategist.alternativeRepairCalls)
+	}
+	if len(report.AlternativeCandidates) != 1 || report.AlternativeCandidates[0].Name != valid.Name {
+		t.Fatalf("alternatives=%#v, want only revalidated distinct repaired alternative", report.AlternativeCandidates)
+	}
+	if !strings.Contains(strings.ToLower(strings.Join(report.Limitations, " ")), "alternative") {
+		t.Fatalf("repair failure should keep honest compact unavailable limitation: %v", report.Limitations)
+	}
+}
+
+func TestResponseFinalizationPreservesValidAlternativesAndFlagsFailedPath(t *testing.T) {
+	now := time.Date(2026, 7, 12, 12, 0, 0, 0, time.UTC)
+	profile := sampleAIProfile()
+	primary := buildAICandidate(baseNicheDraft("p", "AI automation workflows", "ai automation"), profile, nil, now)
+	alt1 := buildAICandidate(baseNicheDraft("a1", "AI admin systems for local agencies", "ai admin systems"), profile, nil, now)
+	alt2 := buildAICandidate(baseNicheDraft("a2", "AI operations dashboards for service teams", "ai operations dashboards"), profile, nil, now)
+	report := NicheReport{Status: StatusOK, Profile: profile, PrimaryRecommendation: &primary, Candidates: []NicheCandidate{primary, alt1, alt2}}
+	finalized, _, ok := FinalizeNicheReportForResponse(report)
+	if !ok || len(finalized.AlternativeCandidates) != 2 {
+		t.Fatalf("finalized alternatives=%d ok=%v, want two preserved", len(finalized.AlternativeCandidates), ok)
+	}
+	if NicheReportNeedsAlternativeRefresh(finalized) {
+		t.Fatalf("valid two-alternative cache should remain reusable")
+	}
+	finalized.AlternativeCandidates = nil
+	finalized.Limitations = append(finalized.Limitations, "We could not validate two sufficiently distinct alternatives from the available evidence. Broaden the topic or audience to explore more options.")
+	if !NicheReportNeedsAlternativeRefresh(finalized) {
+		t.Fatalf("failed-alternative cache should require narrow regeneration")
+	}
+}
+
 func TestNicheSchemaVersionSeparatesCurrentCacheKey(t *testing.T) {
 	profile := sampleAIProfile()
 	current := NicheResearchCacheKey(profile, "market_estimate")
@@ -1104,6 +1262,19 @@ func baseNicheDraft(id, name, query string) NicheDraft {
 		Runway:                 "50-title starter runway",
 		Reasoning:              "Structured strategy fixture.",
 	}
+}
+
+func baseNicheDraftWithIdeas(id, name, query string, count int) NicheDraft {
+	draft := baseNicheDraft(id, name, query)
+	if count <= len(draft.RecommendedTitles) {
+		draft.RecommendedTitles = draft.RecommendedTitles[:count]
+		draft.ContentPillars = normalizeContentPillars(draft.ContentPillars, draft.RecommendedTitles)
+		return draft
+	}
+	more := repairIdeas(count - len(draft.RecommendedTitles))
+	draft.RecommendedTitles = append(draft.RecommendedTitles, more...)
+	draft.ContentPillars = normalizeContentPillars(draft.ContentPillars, draft.RecommendedTitles)
+	return draft
 }
 
 func repairIdeas(count int) []VideoTopic {

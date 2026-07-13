@@ -247,3 +247,27 @@ export const nicheFinderFixtureReport: NicheReport = {
   limitations: ['This is a deterministic local fixture for Phase 1 visual approval and does not consume production OpenAI or YouTube quota.'],
   created_at: '2026-07-12T09:30:00Z',
 };
+
+const longBackendToken = `backend_limitation_token_${'x'.repeat(180)}`;
+const baseMethodology = nicheFinderFixtureReport.methodology ?? [];
+const longLimitations = [
+  `Public metadata cannot reveal private retention, traffic sources, guaranteed outcomes, or provider-specific normalization certainty. ${longBackendToken} ${'verylongbackendlimitationstring'.repeat(16)} final line must remain inside the card.`,
+];
+
+export const nicheFinderLongMethodologyFixtureReport: NicheReport = {
+  ...nicheFinderFixtureReport,
+  id: 'fixture-niche-report-long-methodology',
+  methodology: [
+    `${baseMethodology[0] ?? 'Profile inputs are mapped before scoring.'} ${longBackendToken} normalization_identifier_${'y'.repeat(140)}`,
+    ...baseMethodology.slice(1),
+  ],
+  limitations: longLimitations,
+};
+
+export const nicheFinderUnavailableFixtureReport: NicheReport = {
+  ...nicheFinderFixtureReport,
+  id: 'fixture-niche-report-unavailable-alternatives',
+  candidates: [primary],
+  alternative_candidates: [],
+  limitations: ['We could not validate two sufficiently distinct alternatives from the available evidence. Broaden the topic or audience to explore more options.'],
+};

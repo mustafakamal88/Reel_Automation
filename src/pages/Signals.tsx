@@ -1066,11 +1066,21 @@ function NicheFinderTab({ providers, region, language, audience, onGenerate, gen
 
   async function loadFixture() {
     if (!import.meta.env.DEV) return;
-    const { nicheFinderFixtureReport } = await import('../data/nicheFinderFixture');
+    const {
+      nicheFinderFixtureReport,
+      nicheFinderLongMethodologyFixtureReport,
+      nicheFinderUnavailableFixtureReport,
+    } = await import('../data/nicheFinderFixture');
+    const fixtureMode = new URLSearchParams(window.location.search).get('nicheFixture');
+    const selectedFixture = fixtureMode === 'long-methodology'
+      ? nicheFinderLongMethodologyFixtureReport
+      : fixtureMode === 'unavailable'
+        ? nicheFinderUnavailableFixtureReport
+        : nicheFinderFixtureReport;
     setError(null);
     setLoading(false);
-    setReport(nicheFinderFixtureReport);
-    setExpandedID(nicheFinderFixtureReport.primary_recommendation?.id ?? nicheFinderFixtureReport.candidates?.[0]?.id ?? null);
+    setReport(selectedFixture);
+    setExpandedID(selectedFixture.primary_recommendation?.id ?? selectedFixture.candidates?.[0]?.id ?? null);
     setLastResearchedProfileKey(stableProfileKey(profile));
     setProfileExpanded(false);
   }
@@ -1895,7 +1905,9 @@ function ScoreMethodology({ methodology, limitations }: { methodology: string[];
           </div>
         )) : <div className="muted-note">No methodology details returned.</div>}
       </div>
-      <Limitations items={limitations} />
+      <div className="score-methodology-limitations">
+        <Limitations items={limitations} />
+      </div>
     </details>
   );
 }

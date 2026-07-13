@@ -196,6 +196,10 @@ func (s *Server) cachedNicheReport(cacheKey string, ttl time.Duration) (research
 		log.Printf("niche_cache_decision=legacy_cache_rejected cache_key=%s schema_version=%s", cacheKey, firstNonEmpty(report.SchemaVersion, report.Cache.SchemaVersion, "legacy"))
 		return research.NicheReport{}, false
 	}
+	if research.NicheReportNeedsAlternativeRefresh(report) {
+		log.Printf("niche_cache_decision=regeneration_required cache_key=%s reason=alternative_generation_revision", cacheKey)
+		return research.NicheReport{}, false
+	}
 	var okFinal bool
 	report, _, okFinal = research.FinalizeNicheReportForResponse(report)
 	if !okFinal || report.Status != research.StatusOK || len(report.Candidates) == 0 {
@@ -217,6 +221,10 @@ func (s *Server) cachedSuccessfulNicheReport(cacheKey string, maxAge time.Durati
 	report := item.report
 	if report.SchemaVersion != research.NicheReportSchemaVersion && report.Cache.SchemaVersion != research.NicheReportSchemaVersion {
 		log.Printf("niche_cache_decision=legacy_cache_rejected cache_key=%s schema_version=%s", cacheKey, firstNonEmpty(report.SchemaVersion, report.Cache.SchemaVersion, "legacy"))
+		return research.NicheReport{}, false
+	}
+	if research.NicheReportNeedsAlternativeRefresh(report) {
+		log.Printf("niche_cache_decision=regeneration_required cache_key=%s reason=alternative_generation_revision", cacheKey)
 		return research.NicheReport{}, false
 	}
 	var okFinal bool

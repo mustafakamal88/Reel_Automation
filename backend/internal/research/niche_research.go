@@ -369,6 +369,10 @@ type NicheStrategyRepairer interface {
 	RepairCandidates(ctx context.Context, input NicheStrategyInput, previous NicheStrategyResult, issues []string) (NicheStrategyResult, error)
 }
 
+type NicheAlternativeRepairer interface {
+	RepairAlternatives(ctx context.Context, input NicheStrategyInput, request NicheAlternativeRepairRequest) ([]NicheDraft, error)
+}
+
 type NichePrimaryIdeaRepairer interface {
 	RepairPrimaryIdeas(ctx context.Context, input NicheStrategyInput, draft NicheDraft, missingCount int, acceptedTitles []string, rejectedTitles []string) ([]VideoTopic, error)
 }
@@ -393,6 +397,28 @@ type NicheStrategyResult struct {
 	Candidates            []NicheDraft `json:"candidates"`
 	Methodology           []string     `json:"methodology"`
 	Limitations           []string     `json:"limitations"`
+}
+
+type NicheAlternativeRepairRequest struct {
+	MissingCount          int                       `json:"missing_count"`
+	CreatorProfileSummary string                    `json:"creator_profile_summary"`
+	PrimaryNicheTitle     string                    `json:"primary_niche_title"`
+	PrimaryNicheSummary   string                    `json:"primary_niche_summary"`
+	RejectedAlternatives  []AlternativeRejection    `json:"rejected_alternatives"`
+	AcceptedAlternatives  []AlternativeCandidateRef `json:"accepted_alternatives"`
+	RequiredDistinctness  []string                  `json:"required_semantic_distinction"`
+}
+
+type AlternativeRejection struct {
+	Title   string `json:"title"`
+	Reason  string `json:"reason"`
+	Summary string `json:"summary,omitempty"`
+}
+
+type AlternativeCandidateRef struct {
+	Title    string `json:"title"`
+	Audience string `json:"audience,omitempty"`
+	Summary  string `json:"summary,omitempty"`
 }
 
 type NicheDraft struct {
@@ -527,6 +553,34 @@ func (s OpenAINicheStrategist) RepairCandidates(ctx context.Context, input Niche
 		{"role": "system", "content": nicheStrategySystemPrompt()},
 		{"role": "user", "content": mustJSON(repairPayload)},
 	})
+}
+
+func (s OpenAINicheStrategist) RepairAlternatives(ctx context.Context, input NicheStrategyInput, request NicheAlternativeRepairRequest) ([]NicheDraft, error) {
+	if request.MissingCount <= 0 {
+		return nil, nil
+	}
+	payload := map[string]any{
+		"input":          input,
+		"repair_request": request,
+		"instructions": []string{
+			"Return exactly missing_count compact alternative candidates.",
+			"Do not regenerate the primary candidate.",
+			"Do not regenerate the primary 50-title runway.",
+			"Do not request or invent YouTube evidence.",
+			"Alternatives must be related to the creator profile and primary niche, but differ meaningfully by audience, sub-niche, content angle, problem focus, format, use case, or market segment.",
+			"Do not return trivial renames of the primary, duplicates of accepted alternatives, duplicates of rejected alternatives, or unrelated niches.",
+			"Alternative recommended_titles can remain compact; include only enough titles to express the angle.",
+			"Use integer 0-100 dimension scores that agree with dimension_ratings.",
+		},
+	}
+	result, err := s.openAIRequest(ctx, []map[string]string{
+		{"role": "system", "content": nicheStrategySystemPrompt()},
+		{"role": "user", "content": mustJSON(payload)},
+	})
+	if err != nil {
+		return nil, err
+	}
+	return result.Candidates, nil
 }
 
 func (s OpenAINicheStrategist) RepairPrimaryIdeas(ctx context.Context, input NicheStrategyInput, draft NicheDraft, missingCount int, acceptedTitles []string, rejectedTitles []string) ([]VideoTopic, error) {
@@ -1008,10 +1062,31 @@ func ResearchNiches(ctx context.Context, req NicheResearchRequest, cfg NicheRese
 
 	report.Candidates = candidates
 	report.PrimaryRecommendation = &report.Candidates[0]
+	var rejections []AlternativeRejection
 	if len(report.Candidates) > 1 {
-		report.AlternativeCandidates = distinctAlternativeCandidates(report.Candidates[0], report.Candidates[1:], 4)
-		if len(report.AlternativeCandidates) != len(report.Candidates)-1 {
-			log.Printf("niche_alternatives_repaired kept=%d candidate_count=%d", len(report.AlternativeCandidates), len(report.Candidates))
+		report.AlternativeCandidates, rejections = distinctAlternativeCandidatesWithReasons(report.Candidates[0], report.Candidates[1:], profile, 4)
+	}
+	if len(report.AlternativeCandidates) != maxInt(0, len(report.Candidates)-1) {
+		log.Printf("niche_alternatives_validated kept=%d candidate_count=%d rejected=%s", len(report.AlternativeCandidates), len(report.Candidates), alternativeRejectionSummary(rejections))
+	}
+	if len(report.AlternativeCandidates) < 2 {
+		if repairer, ok := strategist.(NicheAlternativeRepairer); ok {
+			missing := 2 - len(report.AlternativeCandidates)
+			repairRequest := alternativeRepairRequest(report, rejections, missing)
+			repairedDrafts, repairErr := repairer.RepairAlternatives(ctx, strategyInput, repairRequest)
+			if repairErr != nil {
+				log.Printf("niche_alternative_repair_failed missing=%d reason=%s", missing, trimForLog([]byte(repairErr.Error())))
+			} else if len(repairedDrafts) > 0 {
+				repairedDrafts, repairIssues := validateNicheDrafts(repairedDrafts, profile)
+				if len(repairIssues) > 0 {
+					log.Printf("niche_alternative_repair_validation issues=%s", strings.Join(topN(repairIssues, 6), "; "))
+				}
+				for _, draft := range repairedDrafts {
+					report.Candidates = append(report.Candidates, buildAICandidate(draft, profile, rising, generatedAt))
+				}
+				report.AlternativeCandidates, rejections = distinctAlternativeCandidatesWithReasons(report.Candidates[0], report.Candidates[1:], profile, 4)
+				log.Printf("niche_alternative_repair_completed requested=%d returned=%d kept=%d rejected=%s", missing, len(repairedDrafts), len(report.AlternativeCandidates), alternativeRejectionSummary(rejections))
+			}
 		}
 	}
 	if len(report.AlternativeCandidates) < 2 {
@@ -2137,6 +2212,21 @@ func FinalizeNicheReportForResponse(report NicheReport) (NicheReport, []string, 
 	return report, issues, true
 }
 
+func NicheReportNeedsAlternativeRefresh(report NicheReport) bool {
+	if report.Status != StatusOK {
+		return false
+	}
+	if len(report.AlternativeCandidates) >= 2 {
+		return false
+	}
+	for _, limitation := range report.Limitations {
+		if strings.Contains(strings.ToLower(limitation), "could not validate two sufficiently distinct alternatives") {
+			return true
+		}
+	}
+	return false
+}
+
 func finalizeNicheCandidateForResponse(candidate NicheCandidate, profile CreatorNicheProfile) (NicheCandidate, []string, bool) {
 	issues := []string{}
 	candidate.Name = firstNonEmpty(strings.TrimSpace(candidate.Name), strings.TrimSpace(candidate.NicheName), strings.TrimSpace(candidate.Level3))
@@ -2632,10 +2722,21 @@ func firstNonEmptyPillars(primary, fallback []ContentPillar) []ContentPillar {
 }
 
 func distinctAlternativeCandidates(primary NicheCandidate, alternatives []NicheCandidate, limit int) []NicheCandidate {
+	out, _ := distinctAlternativeCandidatesWithReasons(primary, alternatives, CreatorNicheProfile{}, limit)
+	return out
+}
+
+func distinctAlternativeCandidatesWithReasons(primary NicheCandidate, alternatives []NicheCandidate, profile CreatorNicheProfile, limit int) ([]NicheCandidate, []AlternativeRejection) {
 	out := []NicheCandidate{}
 	seen := []NicheCandidate{primary}
+	rejections := []AlternativeRejection{}
 	for _, alt := range alternatives {
-		if !candidateMeaningfullyDistinct(alt, seen) {
+		if reason := alternativeRejectionReason(alt, seen, profile); reason != "" {
+			rejections = append(rejections, AlternativeRejection{
+				Title:   firstNonEmpty(alt.Name, alt.NicheName, alt.Level3, "untitled alternative"),
+				Reason:  reason,
+				Summary: firstNonEmpty(alt.ConcisePositioning, alt.UniqueAngle, alt.ViewerProblem),
+			})
 			continue
 		}
 		out = append(out, alt)
@@ -2644,28 +2745,157 @@ func distinctAlternativeCandidates(primary NicheCandidate, alternatives []NicheC
 			break
 		}
 	}
-	return out
+	return out, rejections
 }
 
 func candidateMeaningfullyDistinct(candidate NicheCandidate, seen []NicheCandidate) bool {
+	return alternativeRejectionReason(candidate, seen, CreatorNicheProfile{}) == ""
+}
+
+func alternativeRejectionReason(candidate NicheCandidate, seen []NicheCandidate, profile CreatorNicheProfile) string {
 	title := firstNonEmpty(candidate.Name, candidate.NicheName, candidate.Level3)
 	if strings.TrimSpace(title) == "" {
-		return false
+		return "missing title"
+	}
+	if strings.TrimSpace(firstNonEmpty(candidate.TargetAudience, candidate.TargetViewer)) == "" {
+		return "missing audience"
+	}
+	if strings.TrimSpace(firstNonEmpty(candidate.ConcisePositioning, candidate.UniqueAngle, candidate.ViewerProblem, candidate.EvidenceSummary)) == "" {
+		return "missing summary"
+	}
+	if !alternativeScoresValid(candidate) {
+		return "missing score or invalid rating band"
 	}
 	candidateTerms := semanticAnchors(strings.Join([]string{title, candidate.TargetAudience, candidate.UniqueAngle, candidate.ConcisePositioning, candidate.ViewerProblem}, " "))
 	if len(candidateTerms) < 2 {
-		return false
+		return "malformed output"
 	}
+	_ = profile
 	for _, existing := range seen {
+		if normalizeTopicKey(title) == normalizeTopicKey(firstNonEmpty(existing.Name, existing.NicheName, existing.Level3)) {
+			return "duplicate alternative"
+		}
+		if !candidateRelatedToExisting(candidate, existing) {
+			return "unrelated niche"
+		}
 		existingTerms := semanticAnchors(strings.Join([]string{firstNonEmpty(existing.Name, existing.NicheName, existing.Level3), existing.TargetAudience, existing.UniqueAngle, existing.ConcisePositioning, existing.ViewerProblem}, " "))
 		if jaccardSimilarity(candidateTerms, existingTerms) >= 0.72 {
+			return "too similar to primary or accepted alternative"
+		}
+	}
+	return ""
+}
+
+func alternativeScoresValid(candidate NicheCandidate) bool {
+	for _, score := range []ScoreExplanation{
+		candidate.Dimensions.CreatorFit,
+		candidate.Dimensions.AudienceDemand,
+		candidate.Dimensions.CompetitionOpportunity,
+		candidate.Dimensions.Sustainability,
+		candidate.Dimensions.Differentiation,
+	} {
+		if math.IsNaN(score.Score) || math.IsInf(score.Score, 0) || score.Score < 0 || score.Score > 100 {
 			return false
 		}
-		if normalizeTopicKey(title) == normalizeTopicKey(firstNonEmpty(existing.Name, existing.NicheName, existing.Level3)) {
+		if normalizeRatingBand(score.RatingBand) == "" && strings.TrimSpace(score.Label) == "" {
 			return false
 		}
 	}
 	return true
+}
+
+func candidateRelatedToExisting(candidate, existing NicheCandidate) bool {
+	candidateDomain := classifyContentDomain(strings.Join([]string{candidate.Name, candidate.Category, candidate.Subcategory, candidate.UniqueAngle, candidate.ConcisePositioning}, " "))
+	existingDomain := classifyContentDomain(strings.Join([]string{existing.Name, existing.Category, existing.Subcategory, existing.UniqueAngle, existing.ConcisePositioning}, " "))
+	if candidateDomain != "" && existingDomain != "" && candidateDomain != existingDomain {
+		return false
+	}
+	existingTerms := semanticAnchors(strings.Join([]string{existing.Name, existing.NicheName, existing.Category, existing.Subcategory, existing.TargetAudience, existing.UniqueAngle, existing.ConcisePositioning}, " "))
+	if len(existingTerms) == 0 {
+		return true
+	}
+	candidateText := strings.Join([]string{
+		candidate.Name,
+		candidate.NicheName,
+		candidate.Category,
+		candidate.Subcategory,
+		candidate.TargetAudience,
+		candidate.UniqueAngle,
+		candidate.ConcisePositioning,
+		candidate.ViewerProblem,
+		candidate.CreatorAdvantage,
+		strings.Join(candidate.CreatorAdvantages, " "),
+	}, " ")
+	candidateTerms := semanticAnchors(candidateText)
+	if len(candidateTerms) == 0 {
+		return false
+	}
+	return jaccardSimilarity(existingTerms, candidateTerms) > 0 || phraseOverlaps(candidateText, existingTerms)
+}
+
+func alternativeRepairRequest(report NicheReport, rejections []AlternativeRejection, missing int) NicheAlternativeRepairRequest {
+	accepted := make([]AlternativeCandidateRef, 0, len(report.AlternativeCandidates))
+	for _, alt := range report.AlternativeCandidates {
+		accepted = append(accepted, AlternativeCandidateRef{
+			Title:    firstNonEmpty(alt.Name, alt.NicheName, alt.Level3),
+			Audience: firstNonEmpty(alt.TargetAudience, alt.TargetViewer),
+			Summary:  firstNonEmpty(alt.ConcisePositioning, alt.UniqueAngle, alt.ViewerProblem),
+		})
+	}
+	primary := report.PrimaryRecommendation
+	title := ""
+	summary := ""
+	if primary != nil {
+		title = firstNonEmpty(primary.Name, primary.NicheName, primary.Level3)
+		summary = firstNonEmpty(primary.ConcisePositioning, primary.UniqueAngle, primary.ViewerProblem, primary.EvidenceSummary)
+	}
+	return NicheAlternativeRepairRequest{
+		MissingCount:          missing,
+		CreatorProfileSummary: report.CreatorProfileSummary,
+		PrimaryNicheTitle:     title,
+		PrimaryNicheSummary:   summary,
+		RejectedAlternatives:  topAlternativeRejections(rejections, 8),
+		AcceptedAlternatives:  accepted,
+		RequiredDistinctness: []string{
+			"different audience",
+			"different sub-niche",
+			"different content angle",
+			"different problem focus",
+			"different format",
+			"different use case",
+			"different market segment",
+		},
+	}
+}
+
+func topAlternativeRejections(items []AlternativeRejection, limit int) []AlternativeRejection {
+	if limit <= 0 || len(items) <= limit {
+		return items
+	}
+	return items[:limit]
+}
+
+func alternativeRejectionSummary(items []AlternativeRejection) string {
+	if len(items) == 0 {
+		return "none"
+	}
+	counts := map[string]int{}
+	for _, item := range items {
+		counts[item.Reason]++
+	}
+	parts := make([]string, 0, len(counts))
+	for reason, count := range counts {
+		parts = append(parts, fmt.Sprintf("%s=%d", strings.ReplaceAll(reason, " ", "_"), count))
+	}
+	sort.Strings(parts)
+	return strings.Join(parts, ",")
+}
+
+func maxInt(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }
 
 func jaccardSimilarity(a, b []string) float64 {
