@@ -27,7 +27,6 @@ import {
   type YouTubeChannelAnalysisResponse,
   type YouTubeVideoAnalysisResponse,
 } from '../lib/api/client';
-import { nicheFinderFixtureReport } from '../data/nicheFinderFixture';
 import { formatLabel, formatMetric } from '../lib/metricFormat';
 import { storage } from '../lib/storage';
 
@@ -1065,7 +1064,9 @@ function NicheFinderTab({ providers, region, language, audience, onGenerate, gen
       .finally(() => setLoading(false));
   }
 
-  function loadFixture() {
+  async function loadFixture() {
+    if (!import.meta.env.DEV) return;
+    const { nicheFinderFixtureReport } = await import('../data/nicheFinderFixture');
     setError(null);
     setLoading(false);
     setReport(nicheFinderFixtureReport);
@@ -1721,14 +1722,18 @@ function LinearProgress({ value, color, ariaLabel, className = '', displayValue,
 }
 
 function DimensionCard({ row, open, detailPanelId, onToggle }: { row: DimensionRow; open: boolean; detailPanelId: string; onToggle: () => void }) {
+  const rating = formatRatingBand(row.ratingBand ?? ratingBandForScore(row.score));
   return (
-    <div className={`niche-dimension-card accent-${row.accent}`}>
-      <SemiGauge value={row.score} accent={row.accent} ariaLabel={`${row.label} score ${Math.round(row.score)} out of 100`} />
-      <div className="niche-dimension-card-copy">
-        <strong>{row.label}</strong>
-        <span>{formatRatingBand(row.ratingBand ?? ratingBandForScore(row.score))}</span>
-        <button className="dimension-detail-toggle" type="button" onClick={onToggle} aria-expanded={open} aria-controls={open ? detailPanelId : undefined} aria-label={`${open ? 'Hide' : 'Show'} ${row.label} details`}>
-          {open ? 'Hide details' : 'View details'}
+    <div className={`niche-dimension-card accent-${row.accent}${open ? ' is-active' : ''}`}>
+      <strong className="niche-dimension-title">{row.label}</strong>
+      <div className="niche-dimension-gauge-zone">
+        <SemiGauge value={row.score} accent={row.accent} ariaLabel={`${row.label} score ${Math.round(row.score)} out of 100`} />
+      </div>
+      <span className="niche-dimension-rating">{rating}</span>
+      <div className="niche-dimension-spacer" aria-hidden="true" />
+      <div className="niche-dimension-footer">
+        <button className="dimension-detail-toggle" type="button" onClick={onToggle} aria-expanded={open} aria-controls={detailPanelId} aria-label={`${open ? 'Hide' : 'Show'} ${row.label} details`}>
+          {open ? 'Hide details ↑' : 'View details →'}
         </button>
       </div>
     </div>
@@ -1741,10 +1746,8 @@ function SemiGauge({ value, accent, max = 100, ariaLabel }: { value: number; acc
   const { ref, inView, reducedMotion } = useInViewOnce<HTMLDivElement>(0.25);
   const animatedValue = useAnimatedNumber(boundedValue, inView, reducedMotion, 820);
   const displayValue = Math.round(animatedValue);
-  const radius = 52;
-  const circumference = Math.PI * radius;
   const progress = max > 0 ? Math.max(0, Math.min(max, animatedValue)) / max : 0;
-  const dashOffset = circumference * (1 - progress);
+  const dashOffset = 100 * (1 - progress);
   return (
     <div
       ref={ref}
@@ -1755,11 +1758,11 @@ function SemiGauge({ value, accent, max = 100, ariaLabel }: { value: number; acc
       aria-valuemin={0}
       aria-valuemax={max}
     >
-      <svg viewBox="0 0 128 76" aria-hidden="true" focusable="false">
-        <path className="niche-semi-gauge-track" d="M12 64 A52 52 0 0 1 116 64" pathLength="100" />
-        <path className="niche-semi-gauge-fill" d="M12 64 A52 52 0 0 1 116 64" pathLength="100" style={{ strokeDasharray: circumference, strokeDashoffset: dashOffset }} />
+      <svg viewBox="0 0 128 82" aria-hidden="true" focusable="false">
+        <path className="niche-semi-gauge-track" d="M12 70 A52 52 0 0 1 116 70" pathLength="100" />
+        <path className="niche-semi-gauge-fill" d="M12 70 A52 52 0 0 1 116 70" pathLength="100" style={{ strokeDasharray: 100, strokeDashoffset: dashOffset }} />
       </svg>
-      <strong>{displayValue}</strong>
+      <strong className="niche-semi-gauge-score">{displayValue}</strong>
     </div>
   );
 }

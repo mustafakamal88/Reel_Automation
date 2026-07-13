@@ -7517,30 +7517,54 @@ body,
 }
 
 .niche-dimension-card {
-  min-height: 218px;
+  min-height: 263px;
   height: 100%;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-items: center;
-  padding: 14px;
-  text-align: center;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: 48px 112px 24px 1fr 44px;
+  gap: 0;
+  align-items: stretch;
+  justify-items: stretch;
+  padding: 14px 14px 0;
+  text-align: left;
   background: var(--niche-sub-bg);
+  transition: border-color 180ms ease, background 180ms ease, box-shadow 180ms ease;
+}
+
+.niche-dimension-card.is-active {
+  border-color: color-mix(in srgb, var(--accent) 62%, var(--border));
+  background: color-mix(in srgb, var(--accent) 8%, var(--niche-sub-bg));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
+.niche-dimension-title {
+  align-self: start;
+  color: var(--text-primary);
+  font-size: 15px;
+  font-weight: 800;
+  line-height: 1.22;
+  overflow-wrap: anywhere;
+}
+
+.niche-dimension-gauge-zone {
+  display: grid;
+  place-items: center;
+  min-width: 0;
 }
 
 .niche-semi-gauge {
   width: 148px;
-  height: 90px;
+  height: 92px;
+  position: relative;
   display: grid;
-  place-items: end center;
-  align-self: start;
+  place-items: center;
   color: var(--accent);
 }
 
 .niche-semi-gauge svg {
   grid-area: 1 / 1;
   width: 148px;
-  height: 88px;
+  height: 92px;
   overflow: visible;
 }
 
@@ -7560,56 +7584,67 @@ body,
   transition: stroke-dashoffset 680ms ease;
 }
 
-.niche-semi-gauge strong {
+.niche-semi-gauge-score {
   grid-area: 1 / 1;
-  align-self: end;
-  margin-bottom: 3px;
+  align-self: center;
+  justify-self: center;
+  margin-top: 30px;
   color: var(--text-primary);
   font-family: var(--font-mono);
-  font-size: 28px;
+  font-size: 34px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 800;
   line-height: 1;
 }
 
-.niche-dimension-card-copy {
-  min-width: 0;
-  width: 100%;
-  height: 100%;
-  align-self: stretch;
-  display: flex;
-  flex-direction: column;
-  gap: 7px;
-  align-items: center;
-}
-
-.niche-dimension-card-copy > strong {
-  align-self: start;
-  color: var(--text-primary);
-  font-size: 14px;
-  line-height: 1.25;
-}
-
-.niche-dimension-card-copy > span {
+.niche-dimension-rating {
+  place-self: start center;
+  min-height: 20px;
+  border: 1px solid var(--niche-border-soft);
+  border-radius: 999px;
+  padding: 3px 9px;
   color: var(--text-muted);
-  font-size: 12px;
+  background: rgba(255, 255, 255, 0.035);
+  font-size: 11px;
+  font-weight: 750;
+  letter-spacing: 0;
+  line-height: 1.1;
+  text-transform: uppercase;
+}
+
+.niche-dimension-spacer {
+  min-height: 0;
+}
+
+.niche-dimension-footer {
+  display: flex;
+  align-items: stretch;
+  margin: -1px -14px 0;
+  border-top: 1px solid var(--niche-border-soft);
 }
 
 .dimension-detail-toggle {
-  width: fit-content;
-  margin-top: auto;
-  min-height: 28px;
-  border: 1px solid var(--niche-border-soft);
-  border-radius: 999px;
-  padding: 4px 10px;
+  width: 100%;
+  height: 100%;
+  min-height: 44px;
+  border: 0;
+  border-radius: 0 0 8px 8px;
+  padding: 0 14px;
   color: var(--text-primary);
-  background: rgba(255, 255, 255, 0.045);
+  background: transparent;
   font-size: 12px;
-  font-weight: 650;
+  font-weight: 750;
+  text-align: left;
 }
 
-.dimension-detail-toggle:hover,
+.dimension-detail-toggle:hover {
+  color: var(--accent);
+  background: rgba(255, 255, 255, 0.035);
+}
+
 .dimension-detail-toggle:focus-visible {
-  border-color: var(--accent);
   outline: 0;
+  box-shadow: inset 0 0 0 2px var(--accent);
 }
 
 .dimension-detail-panel {
@@ -8092,7 +8127,7 @@ body,
   }
 
   .niche-dimension-card {
-    min-height: 214px;
+    min-height: 263px;
   }
 
   .niche-progress-circle-metric {
@@ -8260,6 +8295,18 @@ body,
   outline: 2px solid var(--accent-strong);
   outline-offset: 3px;
   box-shadow: 0 0 0 4px var(--accent-dim);
+}
+
+.niche-dimension-footer .dimension-detail-toggle:hover,
+.niche-dimension-footer .dimension-detail-toggle:active,
+.niche-dimension-footer .dimension-detail-toggle:focus-visible {
+  transform: none;
+}
+
+.niche-dimension-footer .dimension-detail-toggle:focus-visible {
+  outline: 0;
+  outline-offset: 0;
+  box-shadow: inset 0 0 0 2px var(--accent);
 }
 
 .generate-btn:disabled {
