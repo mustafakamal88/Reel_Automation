@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 
@@ -145,6 +146,7 @@ func (s *Server) handleGenerateResearchScript(w http.ResponseWriter, r *http.Req
 }
 
 func researchScriptGenerateRequest(req models.ResearchScriptGenerationRequest) (content.GenerateRequest, models.TrendCandidate, []string, string, string, error) {
+	req = sanitizeResearchScriptGenerationRequest(req)
 	sourceType := normalizeResearchSourceType(req.SourceType)
 	if sourceType == "" {
 		return content.GenerateRequest{}, models.TrendCandidate{}, nil, "", "", errors.New("source_type must be one of google_trend, youtube_video_analysis, youtube_channel_analysis, niche_idea")
@@ -206,6 +208,112 @@ func researchScriptGenerateRequest(req models.ResearchScriptGenerationRequest) (
 		return content.GenerateRequest{}, models.TrendCandidate{}, nil, "", "", err
 	}
 	return genReq, candidate, keywords, strings.TrimSpace(req.InferredNiche), firstResearchText(req.InferredAngle, req.SuggestedAngle), nil
+}
+
+func sanitizeResearchScriptGenerationRequest(req models.ResearchScriptGenerationRequest) models.ResearchScriptGenerationRequest {
+	req.Topic = sanitizeResearchPromptField(req.Topic)
+	req.Title = sanitizeResearchPromptField(req.Title)
+	req.Summary = sanitizeResearchPromptField(req.Summary)
+	req.InferredNiche = sanitizeResearchPromptField(req.InferredNiche)
+	req.InferredAngle = sanitizeResearchPromptField(req.InferredAngle)
+	req.SuggestedAngle = sanitizeResearchPromptField(req.SuggestedAngle)
+	req.ContentStyle = sanitizeResearchPromptField(req.ContentStyle)
+	req.Keywords = sanitizeResearchKeywords(req.Keywords)
+	req.Evidence = sanitizeResearchEvidenceMap(req.Evidence)
+	return req
+}
+
+func sanitizeResearchPromptField(value string) string {
+	cleaned := sanitizeResearchPromptText(value)
+	if isRejectedResearchPromptFragment(cleaned) {
+		return ""
+	}
+	return cleaned
+}
+
+func sanitizeResearchKeywords(values []string) []string {
+	out := []string{}
+	for _, value := range values {
+		cleaned := sanitizeResearchPromptText(value)
+		if cleaned == "" || isRejectedResearchPromptFragment(cleaned) {
+			continue
+		}
+		out = append(out, cleaned)
+	}
+	return uniqueStrings(out)
+}
+
+func sanitizeResearchEvidenceMap(values map[string]any) map[string]any {
+	if len(values) == 0 {
+		return values
+	}
+	out := map[string]any{}
+	for key, value := range values {
+		switch typed := value.(type) {
+		case string:
+			cleaned := sanitizeResearchPromptText(typed)
+			if cleaned != "" {
+				out[key] = cleaned
+			}
+		case []string:
+			out[key] = sanitizeResearchKeywords(typed)
+		case []any:
+			cleaned := []any{}
+			for _, item := range typed {
+				if s, ok := item.(string); ok {
+					text := sanitizeResearchPromptText(s)
+					if text != "" && !isRejectedResearchPromptFragment(text) {
+						cleaned = append(cleaned, text)
+					}
+					continue
+				}
+				cleaned = append(cleaned, item)
+			}
+			if len(cleaned) > 0 {
+				out[key] = cleaned
+			}
+		default:
+			out[key] = value
+		}
+	}
+	return out
+}
+
+func sanitizeResearchPromptText(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	value = regexp.MustCompile(`https?://\S+|www\.\S+`).ReplaceAllString(value, " ")
+	value = regexp.MustCompile(`\b[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}\b`).ReplaceAllString(value, " ")
+	patterns := []string{
+		`(?i)using\s+these\s+inferred\s+public\s+topics:\s*(financial|finance|not|own research|past performance|future results)(\s*,\s*(financial|finance|not|own research|past performance|future results))*[^.]*`,
+		`(?i)\b(not\s+financial\s+advice|do\s+your\s+own\s+research|past\s+performance[^.]*future\s+results|consult\s+(a\s+)?licensed\s+financial\s+(adviser|advisor)|for\s+educational\s+purposes\s+only|investment\s+decisions?|should\s+(buy|sell)|buy\s+or\s+sell|trading\s+involves\s+risk)\b[^.]*`,
+		`(?i)\b(affiliate\s+links?|sponsored\s+by|paid\s+promotion|use\s+code|discount\s+code|business\s+inquir(y|ies)|follow\s+(me|us)|subscribe|like\s+and\s+comment|turn\s+on\s+notifications)\b[^.]*`,
+		`(?i)\b(copyright\s+disclaimer|fair\s+use|all\s+rights\s+reserved|no\s+copyright\s+infringement)\b[^.]*`,
+	}
+	for _, pattern := range patterns {
+		value = regexp.MustCompile(pattern).ReplaceAllString(value, " ")
+	}
+	return strings.TrimSpace(regexp.MustCompile(`\s+`).ReplaceAllString(value, " "))
+}
+
+func isRejectedResearchPromptFragment(value string) bool {
+	lower := strings.ToLower(strings.TrimSpace(value))
+	if lower == "" {
+		return true
+	}
+	if regexp.MustCompile(`(?i)\b(not|own research|future results|past performance|funded days|educational purposes|licensed financial|buy sell|should buy|should sell|making any investment decisions)\b`).MatchString(lower) {
+		return true
+	}
+	words := strings.Fields(lower)
+	if len(words) == 1 {
+		switch words[0] {
+		case "not", "financial", "finance", "research", "future", "past", "results", "funded":
+			return true
+		}
+	}
+	return false
 }
 
 func enrichResearchScriptPackage(pkg *models.ReelContentPackage, candidate models.TrendCandidate, keywords []string, niche, angle string) {

@@ -411,6 +411,14 @@ func (p *YouTubeProvider) AnalyzeVideo(ctx context.Context, videoURL string) (Vi
 		TopicDetails: item.TopicDetails.TopicCategories,
 	})
 	keywordIntel = p.enhanceVideoKeywords(ctx, keywordIntel, item.Snippet.Title, item.Snippet.ChannelTitle)
+	keywordIntel = sanitizeKeywordIntelligenceOutput(keywordIntel, KeywordExtractionInput{
+		Title:        item.Snippet.Title,
+		Description:  item.Snippet.Description,
+		Tags:         item.Snippet.Tags,
+		ChannelTitle: item.Snippet.ChannelTitle,
+		Category:     item.Snippet.CategoryID,
+		TopicDetails: item.TopicDetails.TopicCategories,
+	})
 	keywords := append(append([]string{}, keywordIntel.PrimaryKeywords...), keywordIntel.SecondaryKeywords...)
 	nicheAnalysis := ClassifyNiche(KeywordExtractionInput{
 		Title:        item.Snippet.Title,

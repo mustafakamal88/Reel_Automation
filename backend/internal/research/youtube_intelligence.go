@@ -26,8 +26,20 @@ func ExtractKeywordIntelligence(in KeywordExtractionInput) KeywordIntelligence {
 	}
 	scores := map[string]float64{}
 	rejected := map[string]bool{}
+	cleanTitle := cleanMetadataText(in.Title)
+	cleanDescription := cleanMetadataText(in.Description)
+	cleanTags := make([]string, 0, len(in.Tags))
+	for _, tag := range in.Tags {
+		cleaned := cleanMetadataText(tag)
+		if cleaned != "" {
+			cleanTags = append(cleanTags, cleaned)
+		}
+	}
+	evidenceText := strings.Join(append([]string{cleanTitle, cleanDescription, categoryName(in.Category), topicLastSegment(strings.Join(in.TopicDetails, " "))}, cleanTags...), " ")
+	evidenceTokens := tokenSet(tokenizeUseful(evidenceText, map[string]bool{}))
+	titleTokens := tokenSet(tokenizeUseful(cleanTitle, map[string]bool{}))
 	addText := func(text string, weight float64, phrases bool) {
-		tokens := tokenizeUseful(cleanMetadataText(text), rejected)
+		tokens := tokenizeUseful(text, rejected)
 		for _, token := range tokens {
 			scores[token] += weight
 		}
@@ -44,8 +56,8 @@ func ExtractKeywordIntelligence(in KeywordExtractionInput) KeywordIntelligence {
 	if len(in.RecentVideoTitles) > 0 {
 		titleWeight = 0.8
 	}
-	addText(in.Title, titleWeight, true)
-	addText(in.ChannelTitle, 0.7, false)
+	addText(cleanTitle, titleWeight, true)
+	addText(cleanMetadataText(in.ChannelTitle), 0.7, false)
 	descParts := splitDescriptionForWeighting(in.Description)
 	if descParts[0] != "" {
 		addText(descParts[0], 1.2, true)
@@ -53,7 +65,7 @@ func ExtractKeywordIntelligence(in KeywordExtractionInput) KeywordIntelligence {
 	if descParts[1] != "" {
 		addText(descParts[1], 0.25, false)
 	}
-	for _, tag := range in.Tags {
+	for _, tag := range cleanTags {
 		addText(tag, 3.5, true)
 		if strings.HasPrefix(strings.TrimSpace(tag), "#") {
 			scores[strings.ToLower(strings.TrimSpace(tag))] += 4
@@ -83,7 +95,8 @@ func ExtractKeywordIntelligence(in KeywordExtractionInput) KeywordIntelligence {
 
 	items := make([]termScore, 0, len(scores))
 	for term, score := range scores {
-		if !isUsefulTerm(term) {
+		term = normalizeTopicPhrase(term)
+		if !isUsefulTerm(term) || !isRelevantPhrase(term, evidenceTokens, titleTokens, score) {
 			rejected[term] = true
 			continue
 		}
@@ -133,6 +146,9 @@ func ExtractKeywordIntelligence(in KeywordExtractionInput) KeywordIntelligence {
 			primary = append(primary, phrase)
 		}
 	}
+	primary = filterQualityPhrases(primary, evidenceTokens, titleTokens, 6)
+	secondary = filterQualityPhrases(secondary, evidenceTokens, titleTokens, 10)
+	longTail = filterQualityPhrases(longTail, evidenceTokens, titleTokens, 8)
 
 	metadataScore := 35
 	if strings.TrimSpace(in.Title) != "" {
@@ -150,7 +166,7 @@ func ExtractKeywordIntelligence(in KeywordExtractionInput) KeywordIntelligence {
 	if metadataScore > 100 {
 		metadataScore = 100
 	}
-	return KeywordIntelligence{
+	return sanitizeKeywordIntelligenceOutput(KeywordIntelligence{
 		PrimaryKeywords:       primary,
 		SecondaryKeywords:     secondary,
 		LongTailPhrases:       longTail,
@@ -161,7 +177,28 @@ func ExtractKeywordIntelligence(in KeywordExtractionInput) KeywordIntelligence {
 		RejectedNoiseTerms:    mapKeys(rejected, 16),
 		InferredSearchIntent:  inferSearchIntent(in.Title, primary, longTail),
 		MetadataStrengthScore: metadataScore,
+	}, in)
+}
+
+func sanitizeKeywordIntelligenceOutput(kw KeywordIntelligence, in KeywordExtractionInput) KeywordIntelligence {
+	cleanTitle := cleanMetadataText(in.Title)
+	cleanDescription := cleanMetadataText(in.Description)
+	cleanTags := make([]string, 0, len(in.Tags))
+	for _, tag := range in.Tags {
+		if cleaned := cleanMetadataText(tag); cleaned != "" {
+			cleanTags = append(cleanTags, cleaned)
+		}
 	}
+	evidenceText := strings.Join(append([]string{cleanTitle, cleanDescription, categoryName(in.Category), strings.Join(in.TopicDetails, " ")}, cleanTags...), " ")
+	evidenceTokens := tokenSet(tokenizeUseful(evidenceText, map[string]bool{}))
+	titleTokens := tokenSet(tokenizeUseful(cleanTitle, map[string]bool{}))
+	kw.PrimaryKeywords = filterQualityPhrases(kw.PrimaryKeywords, evidenceTokens, titleTokens, 6)
+	kw.SecondaryKeywords = filterQualityPhrases(kw.SecondaryKeywords, evidenceTokens, titleTokens, 10)
+	kw.LongTailPhrases = filterQualityPhrases(kw.LongTailPhrases, evidenceTokens, titleTokens, 8)
+	kw.PrimaryTopics = kw.PrimaryKeywords
+	kw.SupportingTerms = kw.SecondaryKeywords
+	kw.SearchPhrases = kw.LongTailPhrases
+	return kw
 }
 
 func ClassifyNiche(in KeywordExtractionInput, kw KeywordIntelligence) NicheAnalysis {
@@ -325,42 +362,56 @@ func AnalyzeHookIntelligence(title string) HookIntelligence {
 }
 
 func BuildCreatorOpportunities(niche NicheAnalysis, kw KeywordIntelligence, hook HookIntelligence, title string) CreatorOpportunities {
-	core := firstNonEmpty(niche.SpecificTopic, firstPhrase(kw.PrimaryTopics), firstPhrase(kw.PrimaryKeywords), "the topic")
+	core := bestCreatorCore(niche, kw, title)
+	cleanTitle := cleanMetadataText(title)
+	if cleanTitle == "" {
+		cleanTitle = strings.TrimSpace(title)
+	}
 	format := strings.ReplaceAll(hook.HookType, "_", " ")
 	audience := firstNonEmpty(niche.TargetAudience, niche.AudienceType, "the likely audience")
-	return CreatorOpportunities{
-		SuggestedRemakeAngles: []string{
+	if core == "" {
+		return CreatorOpportunities{}
+	}
+	opps := CreatorOpportunities{
+		SuggestedRemakeAngles: filterCreativeOutputs([]string{
 			"Checklist angle - change the format into a step-by-step " + format + " for " + audience + "; public evidence basis: title/topic terms around " + core + "; confidence: medium.",
 			"Comparison angle - keep the source premise but compare " + core + " with a close alternative; evidence basis: cleaned search phrases; confidence: medium.",
 			"Beginner-to-advanced angle - preserve the topic but make the difficulty level explicit for " + audience + "; evidence basis: inferred audience and title structure; confidence: medium.",
 			"Time-boxed workflow angle - turn " + core + " into a concise setup or decision workflow; evidence basis: metadata hook type and topic clarity; confidence: medium.",
 			"Contrarian angle - challenge a common assumption about " + core + " without claiming private performance data; evidence basis: public title and description terms; confidence: low-medium.",
-		},
-		TitleIdeas: []string{
+		}),
+		TitleIdeas: filterCreativeOutputs([]string{
 			"How to Approach " + titleCase(core) + " Without Wasting Time",
 			titleCase(core) + ": A Practical Guide for " + titleCase(audience),
 			"Before You Try " + titleCase(core) + ", Check These Steps",
 			"The " + titleCase(core) + " Workflow I Would Use Today",
 			"Is " + titleCase(core) + " Still Worth It? A Metadata-Based Breakdown",
-		},
-		ShortFormClipIdeas: []string{
+		}),
+		ShortFormClipIdeas: filterCreativeOutputs([]string{
 			"Adaptation idea: one clear takeaway from the public title promise about " + core + ".",
 			"Cut a 20-second myth-versus-reality version around " + core + ".",
 			"Adaptation idea: three-step checklist viewers can screenshot.",
 			"Adaptation idea: compare the source premise with one realistic alternative.",
 			"Adaptation idea: turn one cleaned search phrase into a single-question short.",
-		},
-		ScriptPrompts: []string{
+		}),
+		ScriptPrompts: filterCreativeOutputs([]string{
 			"Write a 30-second " + format + " script for " + audience + " about " + core + ", grounded only in public metadata.",
-			"Write a 60-second tutorial script that preserves the source premise from the title \"" + title + "\" and teaches one practical takeaway.",
+			"Write a 60-second tutorial script that preserves the source premise from the title \"" + cleanTitle + "\" and teaches one practical takeaway.",
 			"Write a short adaptation using these inferred public topics: " + strings.Join(topN(kw.PrimaryTopics, 4), ", ") + ". Do not mention private analytics or transcript-only moments.",
 			"Write a comparison script around " + core + " that states the analysis is based on public metadata.",
-			"Write a concise hook and outline for a truthful remake of: " + title,
-		},
+			"Write a concise hook and outline for a truthful remake of: " + cleanTitle,
+		}),
 		ContentGaps:         []string{"Beginner explainer", "Comparison angle", "Mistake-led breakdown"},
-		UnderusedTopics:     topN(append(kw.SecondaryKeywords, kw.LongTailPhrases...), 5),
+		UnderusedTopics:     filterQualityPhrases(append(kw.SecondaryKeywords, kw.LongTailPhrases...), tokenSet(tokenizeUseful(strings.Join(append([]string{cleanTitle}, kw.PrimaryKeywords...), " "), map[string]bool{})), map[string]bool{}, 5),
 		LocalizationOptions: []string{"Local examples for target country", "Bilingual hook", "Regional creator examples without claiming private analytics"},
 	}
+	if len(kw.PrimaryTopics) == 0 {
+		opps.ScriptPrompts = filterCreativeOutputs([]string{
+			"Write a concise short-form script about " + core + ", grounded only in public metadata.",
+			"Write a hook and outline for the public title: " + cleanTitle,
+		})
+	}
+	return opps
 }
 
 func ChannelKeywordClusters(kw KeywordIntelligence, videos []ChannelVideoSummary) []KeywordCluster {
@@ -542,6 +593,8 @@ func cleanMetadataText(text string) string {
 		if trimmed == "" {
 			continue
 		}
+		trimmed = regexp.MustCompile(`(?i)^\s*(disclaimer|risk warning|affiliate disclosure|copyright disclaimer)\s*[:\-–]\s*`).ReplaceAllString(trimmed, "")
+		lower = strings.ToLower(strings.TrimSpace(trimmed))
 		if isBoilerplateLine(lower) {
 			continue
 		}
@@ -549,8 +602,15 @@ func cleanMetadataText(text string) string {
 		trimmed = regexp.MustCompile(`\b[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}\b`).ReplaceAllString(trimmed, " ")
 		trimmed = regexp.MustCompile(`\b\d{1,2}:\d{2}(?::\d{2})?\b`).ReplaceAllString(trimmed, " ")
 		trimmed = regexp.MustCompile(`(?i)\b(utm_source|utm_medium|utm_campaign|utm_term|utm_content|ref|fbclid|gclid|mc_cid|mc_eid)=[^\s&]+`).ReplaceAllString(trimmed, " ")
+		trimmed = stripInlineBoilerplate(trimmed)
 		trimmed = normalizeCamelArtifact(trimmed)
-		kept = append(kept, trimmed)
+		for _, sentence := range splitMetadataSentences(trimmed) {
+			sentence = strings.TrimSpace(sentence)
+			if sentence == "" || isBoilerplateLine(strings.ToLower(sentence)) {
+				continue
+			}
+			kept = append(kept, sentence)
+		}
 	}
 	return strings.Join(kept, " ")
 }
@@ -568,12 +628,24 @@ func isBoilerplateLine(lower string) bool {
 	if strings.TrimSpace(lower) == "" {
 		return true
 	}
+	if disclaimerPattern().MatchString(lower) {
+		return true
+	}
+	if regexp.MustCompile(`(?i)^\s*(\d{1,2}:)?\d{1,2}:\d{2}\s+`).MatchString(lower) {
+		return true
+	}
 	boilerplate := []string{
 		"subscribe", "follow me", "follow us", "affiliate", "sponsored", "sponsor", "use code", "discount code",
 		"shop now", "my gear", "business inquiries", "contact:",
 		"chapters", "timestamps", "all rights reserved", "thanks for watching", "like and comment", "turn on notifications",
 		"clip licensing", "licensed under", "creative commons", "provided referral", "support our mission", "ted member",
 		"browse pots", "home cooks supports content", "music used", "intro cool end", "end cool end",
+		"not financial advice", "financial advice", "do your own research", "own research", "past performance",
+		"future results", "investment decisions", "licensed financial", "financial adviser", "financial advisor",
+		"educational purposes only", "for educational purposes", "should buy", "should sell", "buy or sell",
+		"risk warning", "trading involves risk", "copyright disclaimer", "fair use", "all opinions are my own",
+		"business enquiry", "business inquiries", "for business", "join my discord", "telegram", "whatsapp",
+		"disclaimer", "entertainment trade risk", "trade risk", "educational entertainment",
 	}
 	for _, phrase := range boilerplate {
 		if strings.Contains(lower, phrase) {
@@ -581,6 +653,36 @@ func isBoilerplateLine(lower string) bool {
 		}
 	}
 	return false
+}
+
+func splitMetadataSentences(value string) []string {
+	value = regexp.MustCompile(`\s+`).ReplaceAllString(strings.TrimSpace(value), " ")
+	if value == "" {
+		return nil
+	}
+	parts := regexp.MustCompile(`[.!?•]+`).Split(value, -1)
+	if len(parts) == 0 {
+		return []string{value}
+	}
+	return parts
+}
+
+func stripInlineBoilerplate(value string) string {
+	cleaned := value
+	patterns := []string{
+		`(?i)\b(not\s+financial\s+advice|financial\s+advice|do\s+your\s+own\s+research|past\s+performance\s+[^.?!]*future\s+results|consult\s+(a\s+)?licensed\s+financial\s+(adviser|advisor)|for\s+educational\s+purposes\s+only|investment\s+decisions?|should\s+(buy|sell)|buy\s+or\s+sell|trading\s+involves\s+risk)\b[^.?!]*`,
+		`(?i)\b(affiliate\s+links?|sponsored\s+by|paid\s+promotion|use\s+code|discount\s+code|business\s+inquir(y|ies)|contact\s+me|follow\s+(me|us)|subscribe|like\s+and\s+comment|turn\s+on\s+notifications)\b[^.?!]*`,
+		`(?i)\b(copyright\s+disclaimer|fair\s+use|all\s+rights\s+reserved|no\s+copyright\s+infringement)\b[^.?!]*`,
+	}
+	for _, pattern := range patterns {
+		cleaned = regexp.MustCompile(pattern).ReplaceAllString(cleaned, " ")
+	}
+	cleaned = regexp.MustCompile(`(?m)(^|\s)#[A-Za-z0-9_]{1,40}(\s|$)`).ReplaceAllString(cleaned, " ")
+	return regexp.MustCompile(`\s+`).ReplaceAllString(strings.TrimSpace(cleaned), " ")
+}
+
+func disclaimerPattern() *regexp.Regexp {
+	return regexp.MustCompile(`(?i)\b(not\s+financial\s+advice|do\s+your\s+own\s+research|past\s+performance|future\s+results|investment\s+decisions?|licensed\s+financial\s+(adviser|advisor)|educational\s+purposes\s+only|should\s+(buy|sell)|buy\s+or\s+sell|trading\s+involves\s+risk|risk\s+warning|affiliate\s+disclosure|paid\s+promotion|copyright\s+disclaimer|fair\s+use)\b`)
 }
 
 func normalizeCamelArtifact(value string) string {
@@ -625,7 +727,10 @@ func tokensFromText(text string) []string {
 }
 
 func isUsefulTerm(term string) bool {
-	term = strings.ToLower(strings.TrimSpace(term))
+	term = normalizeTopicPhrase(term)
+	if containsBoilerplateFragment(term) {
+		return false
+	}
 	if isNoisePhrase(term) {
 		return false
 	}
@@ -635,7 +740,10 @@ func isUsefulTerm(term string) bool {
 	if len(term) < 3 || stopWords[term] {
 		return false
 	}
-	if regexp.MustCompile(`^[a-z]$|^\d+$|^[a-f0-9]{8,}$|^[a-z0-9_-]{11,}$|^utm_|^[?&=]+$`).MatchString(term) {
+	if regexp.MustCompile(`^[a-z]$|^\d+$|^utm_|^[?&=]+$`).MatchString(term) {
+		return false
+	}
+	if regexp.MustCompile(`^[a-f0-9]{8,}$|^[a-z0-9_-]{11,}$`).MatchString(term) && regexp.MustCompile(`\d|_|-`).MatchString(term) {
 		return false
 	}
 	if strings.Count(term, "-")+strings.Count(term, "_") >= 3 {
@@ -647,12 +755,15 @@ func isUsefulTerm(term string) bool {
 	words := strings.Fields(term)
 	if len(words) > 1 {
 		useful := 0
+		if stopWords[words[0]] || stopWords[words[len(words)-1]] {
+			return false
+		}
 		for _, w := range words {
 			if isUsefulTerm(w) {
 				useful++
 			}
 		}
-		return useful >= 2
+		return useful >= 2 && float64(useful)/float64(len(words)) >= 0.5
 	}
 	return true
 }
@@ -665,13 +776,22 @@ var stopWords = map[string]bool{
 	"lnk":     true,
 	"episode": true, "part": true, "best": true, "scenes": true, "2026": true, "2025": true, "2024": true, "like": true, "comment": true,
 	"share": true, "follow": true, "instagram": true, "tiktok": true, "facebook": true, "twitter": true, "xcom": true,
-	"utm_source": true, "utm_medium": true, "utm_campaign": true, "magicpath": true, "grill": true, "skill": true,
+	"utm_source": true, "utm_medium": true, "utm_campaign": true, "magicpath": true, "grill": true, "short": true,
+	"not": true, "any": true, "own": true, "only": true, "should": true, "before": true, "after": true,
+	"explain": true, "explains": true, "explained": true, "learn": true, "learning": true,
+	"lecture": true, "educational": true, "entertainment": true, "minute": true, "minutes": true, "updated": true,
+	"january": true, "february": true, "march": true, "april": true, "may": true, "june": true,
+	"july": true, "august": true, "september": true, "october": true, "november": true, "december": true,
 }
 
 var lowInformationWords = map[string]bool{
 	"link": true, "links": true, "click": true, "here": true, "more": true, "today": true, "every": true,
 	"project": true, "projects": true, "thing": true, "things": true, "stuff": true, "watching": true,
 	"official": true, "random": true, "description": true, "below": true, "above": true, "page": true,
+	"financial": true, "finance": true, "results": true, "future": true, "past": true, "purposes": true,
+	"purpose": true, "research": true, "consult": true, "licensed": true, "adviser": true, "advisor": true,
+	"decisions": true, "decision": true, "guaranteed": true, "guarantee": true, "funded": true, "days": true,
+	"lecture": true, "educational": true, "entertainment": true, "minute": true, "minutes": true, "updated": true,
 }
 
 func ngrams(tokens []string, n int) []string {
@@ -715,6 +835,7 @@ func nearDuplicateSelected(term string, selected []string) bool {
 }
 
 func isNaturalSearchPhrase(value string) bool {
+	value = normalizeTopicPhrase(value)
 	if isNoisePhrase(value) {
 		return false
 	}
@@ -731,12 +852,21 @@ func isNaturalSearchPhrase(value string) bool {
 	if useful < 2 {
 		return false
 	}
-	return !regexp.MustCompile(`(?i)\butm|http|affiliate|sponsor|instagram|tiktok|facebook|twitter\b`).MatchString(value)
+	if disclaimerPattern().MatchString(value) {
+		return false
+	}
+	return !regexp.MustCompile(`(?i)\butm|http|affiliate|sponsor|instagram|tiktok|facebook|twitter|financial advice|own research|educational purposes\b`).MatchString(value)
 }
 
 func isNoisePhrase(value string) bool {
-	lower := strings.ToLower(strings.TrimSpace(value))
+	lower := normalizeTopicPhrase(value)
 	if lower == "" {
+		return true
+	}
+	if containsBoilerplateFragment(lower) {
+		return true
+	}
+	if disclaimerPattern().MatchString(lower) {
 		return true
 	}
 	noise := []string{
@@ -744,6 +874,8 @@ func isNoisePhrase(value string) bool {
 		"home cooks supports", "supports content", "browse pots", "provided referral", "referral meaning", "clip licensing",
 		"licensed under", "creative commons", "kevin mac leod", "kevin mac", "monkeys spinning", "spinning monkeys", "send clips", "funny pictures visit",
 		"clips funny pictures", "pictures visit", "mac leod", "leod artist", "matthew campen", "campen msph", "msph intro", "intro cool", "cool end", "support our mission", "ted member",
+		"always own research", "own research consult", "future results", "past performance", "funded days purposes", "making investment decisions",
+		"buy sell", "should buy", "should sell", "guaranteed past", "educational purposes", "financial adviser", "financial advisor",
 	}
 	for _, item := range noise {
 		if strings.Contains(lower, item) {
@@ -847,12 +979,21 @@ func inferContentAngle(format, sub, niche string) string {
 
 func grammaticallyMeaningfulTopic(kw KeywordIntelligence, title, fallback string) string {
 	titleTokens := tokenizeUseful(title, map[string]bool{})
+	bestTitlePhrase := ""
+	bestTitleScore := -1
 	for n := minInt(4, len(titleTokens)); n >= 2; n-- {
 		for _, phrase := range ngrams(titleTokens, n) {
 			if isNaturalSearchPhrase(phrase) {
-				return phrase
+				score := titleTopicPhraseScore(phrase)
+				if score > bestTitleScore {
+					bestTitlePhrase = phrase
+					bestTitleScore = score
+				}
 			}
 		}
+	}
+	if bestTitlePhrase != "" {
+		return bestTitlePhrase
 	}
 	candidates := append(append([]string{}, kw.PrimaryTopics...), kw.PrimaryKeywords...)
 	candidates = append(candidates, kw.SearchPhrases...)
@@ -863,6 +1004,28 @@ func grammaticallyMeaningfulTopic(kw KeywordIntelligence, title, fallback string
 		}
 	}
 	return fallback
+}
+
+func titleTopicPhraseScore(phrase string) int {
+	words := strings.Fields(normalizeTopicPhrase(phrase))
+	if len(words) == 0 {
+		return -100
+	}
+	score := len(words) * 10
+	if len(words) >= 2 && len(words) <= 4 {
+		score += 20
+	}
+	if len(words) > 5 {
+		score -= 20
+	}
+	last := words[len(words)-1]
+	if last == "true" || last == "fair" || last == "value" || last == "and" {
+		score -= 30
+	}
+	if len(words[0]) <= 3 && len(words) >= 4 {
+		score -= 8
+	}
+	return score
 }
 
 func categoryNicheOverride(categoryID, haystack string) (string, string, bool) {
@@ -938,6 +1101,226 @@ func topicLastSegment(raw string) string {
 		raw = raw[idx+1:]
 	}
 	return strings.ReplaceAll(raw, "_", " ")
+}
+
+func normalizeTopicPhrase(value string) string {
+	value = strings.ToLower(strings.TrimSpace(normalizeCamelArtifact(value)))
+	value = strings.ReplaceAll(value, "&", " and ")
+	value = regexp.MustCompile(`[^a-z0-9#+\-/\s]`).ReplaceAllString(value, " ")
+	value = strings.ReplaceAll(value, "_", " ")
+	value = regexp.MustCompile(`\s+`).ReplaceAllString(value, " ")
+	words := strings.Fields(value)
+	if len(words) == 0 {
+		return ""
+	}
+	out := make([]string, 0, len(words))
+	for _, word := range words {
+		word = strings.Trim(word, "-/ ")
+		if word == "" {
+			continue
+		}
+		if len(word) > 4 && strings.HasSuffix(word, "s") && !strings.HasSuffix(word, "ss") && !strings.HasSuffix(word, "sis") && !strings.HasSuffix(word, "us") {
+			word = strings.TrimSuffix(word, "s")
+		}
+		if len(out) == 0 || out[len(out)-1] != word {
+			out = append(out, word)
+		}
+	}
+	return strings.Join(out, " ")
+}
+
+func tokenSet(tokens []string) map[string]bool {
+	out := map[string]bool{}
+	for _, token := range tokens {
+		out[normalizeTopicPhrase(token)] = true
+	}
+	return out
+}
+
+func isRelevantPhrase(term string, evidenceTokens, titleTokens map[string]bool, score float64) bool {
+	term = normalizeTopicPhrase(term)
+	if term == "" || isNoisePhrase(term) {
+		return false
+	}
+	words := strings.Fields(term)
+	if len(words) == 1 {
+		return titleTokens[term] || score >= 3.5
+	}
+	matches := 0
+	titleMatches := 0
+	meaningful := 0
+	for _, word := range words {
+		if isUsefulTerm(word) {
+			meaningful++
+		}
+		if evidenceTokens[word] {
+			matches++
+		}
+		if titleTokens[word] {
+			titleMatches++
+		}
+	}
+	if meaningful < 2 {
+		return false
+	}
+	if titleMatches > 0 && matches >= meaningful-1 {
+		return true
+	}
+	return matches >= meaningful && score >= 1.2
+}
+
+func filterQualityPhrases(values []string, evidenceTokens, titleTokens map[string]bool, limit int) []string {
+	out := []string{}
+	for _, value := range values {
+		phrase := normalizeTopicPhrase(value)
+		if containsBoilerplateFragment(phrase) || !isUsefulTerm(phrase) || !isRelevantPhrase(phrase, evidenceTokens, titleTokens, 3.5) || nearDuplicateSelected(phrase, out) {
+			continue
+		}
+		out = append(out, phrase)
+		if limit > 0 && len(out) >= limit {
+			break
+		}
+	}
+	return out
+}
+
+func firstHighQualityPhrase(values []string) string {
+	for _, value := range values {
+		phrase := normalizeTopicPhrase(value)
+		if isUsefulTerm(phrase) && !isGenericCreativeSeed(phrase) {
+			return phrase
+		}
+	}
+	return ""
+}
+
+func bestCreatorCore(niche NicheAnalysis, kw KeywordIntelligence, title string) string {
+	candidates := append([]string{}, kw.LongTailPhrases...)
+	candidates = append(candidates, kw.PrimaryTopics...)
+	candidates = append(candidates, kw.PrimaryKeywords...)
+	candidates = append(candidates, kw.SecondaryKeywords...)
+	candidates = append(candidates, niche.SpecificTopic)
+	titleTokens := tokenSet(tokenizeUseful(cleanMetadataText(title), map[string]bool{}))
+	best := ""
+	bestScore := -1
+	for _, candidate := range candidates {
+		phrase := normalizeTopicPhrase(candidate)
+		if !isUsefulTerm(phrase) || isGenericCreativeSeed(phrase) || creativeOutputRejected(phrase) {
+			continue
+		}
+		score := creatorCoreScore(phrase, titleTokens)
+		if score > bestScore {
+			best = phrase
+			bestScore = score
+		}
+	}
+	return best
+}
+
+func creatorCoreScore(phrase string, titleTokens map[string]bool) int {
+	words := strings.Fields(normalizeTopicPhrase(phrase))
+	if len(words) == 0 {
+		return -100
+	}
+	score := len(words) * 8
+	if len(words) >= 2 && len(words) <= 4 {
+		score += 18
+	}
+	if len(words) > 5 {
+		score -= 20
+	}
+	titleMatches := 0
+	for _, word := range words {
+		if lowInformationWords[word] || stopWords[word] {
+			score -= 12
+		}
+		if titleTokens[word] {
+			titleMatches++
+		}
+	}
+	if titleMatches == len(words) {
+		score += 35
+		if len(words) == 1 {
+			score += 20
+		}
+	} else if titleMatches > 0 {
+		score += titleMatches * 8
+	}
+	if regexp.MustCompile(`(?i)\b(explain|explained|explains|learn|updated|minute|every)\b`).MatchString(phrase) {
+		score -= 10
+	}
+	return score
+}
+
+func isGenericCreativeSeed(value string) bool {
+	value = normalizeTopicPhrase(value)
+	if value == "" || isNoisePhrase(value) {
+		return true
+	}
+	words := strings.Fields(value)
+	if len(words) == 1 {
+		return lowInformationWords[value] || stopWords[value]
+	}
+	return false
+}
+
+func filterCreativeOutputs(values []string) []string {
+	out := []string{}
+	for _, value := range values {
+		cleaned := strings.TrimSpace(value)
+		if cleaned == "" || creativeOutputRejected(cleaned) || nearDuplicateSelected(cleaned, out) {
+			continue
+		}
+		out = append(out, cleaned)
+	}
+	return out
+}
+
+func creativeOutputRejected(value string) bool {
+	lower := strings.ToLower(value)
+	if containsBoilerplateFragment(lower) {
+		return true
+	}
+	if disclaimerPattern().MatchString(lower) {
+		return true
+	}
+	if regexp.MustCompile(`(?i)\b(not|own research|future results|past performance|buy sell|should buy|should sell|funded days|educational purposes only)\b`).MatchString(lower) {
+		return true
+	}
+	if regexp.MustCompile(`(?i)\b(explained in|using these inferred public topics:\s*(not|financial|finance)\b)`).MatchString(lower) {
+		return true
+	}
+	return false
+}
+
+func containsBoilerplateFragment(value string) bool {
+	lower := normalizeTopicPhrase(value)
+	fragments := []string{
+		"not financial advice",
+		"financial advice",
+		"own research",
+		"past performance",
+		"future result",
+		"investment decision",
+		"licensed financial",
+		"educational purpose",
+		"educational entertainment",
+		"education entertainment",
+		"entertainment trade risk",
+		"trade risk",
+		"should buy",
+		"should sell",
+		"buy sell",
+		"affiliate disclosure",
+		"paid promotion",
+		"copyright disclaimer",
+	}
+	for _, fragment := range fragments {
+		if strings.Contains(lower, fragment) {
+			return true
+		}
+	}
+	return false
 }
 
 func channelAge(publishedAt string, now func() time.Time) string {

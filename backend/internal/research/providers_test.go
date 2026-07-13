@@ -112,6 +112,119 @@ Affiliate link: https://shop.example.com/ref?id=123
 	}
 }
 
+func TestKeywordExtractorRemovesFinancialDisclaimerAfterTradingContent(t *testing.T) {
+	got := ExtractKeywordIntelligence(KeywordExtractionInput{
+		Title: "Every ICT Concept Explained in 20 Minutes",
+		Description: `This lesson explains ICT trading concepts: liquidity, fair value gaps, order blocks, market structure, displacement, breaker blocks, premium and discount.
+
+Disclaimer: This is not financial advice. Always do your own research and consult a licensed financial adviser before making any investment decisions. Past performance is not indicative of future results. Nothing here says you should buy or sell any asset. For educational purposes only.`,
+		Tags: []string{"ICT trading", "liquidity", "fair value gap", "order block", "market structure"},
+	})
+	joined := strings.ToLower(strings.Join(append(append(got.PrimaryKeywords, got.SecondaryKeywords...), got.LongTailPhrases...), " | "))
+	for _, want := range []string{"ict", "liquidity", "fair value gap", "order block", "market structure"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("expected trading concept %q to survive: %+v", want, got)
+		}
+	}
+	for _, noise := range []string{"not", "own research", "future results", "funded days", "investment decisions", "licensed financial", "should buy", "buy sell", "educational purposes"} {
+		if strings.Contains(joined, noise) {
+			t.Fatalf("keywords include disclaimer noise %q: %+v", noise, got)
+		}
+	}
+}
+
+func TestKeywordExtractorPreservesNonFinancialEducationalThemes(t *testing.T) {
+	got := ExtractKeywordIntelligence(KeywordExtractionInput{
+		Title:       "Photosynthesis Explained for Beginners",
+		Description: "A biology lesson about chlorophyll, sunlight, carbon dioxide, glucose, oxygen, and plant cells. Includes a simple classroom experiment.",
+		Tags:        []string{"biology", "photosynthesis", "plant cells", "science lesson"},
+		Category:    "27",
+	})
+	joined := strings.ToLower(strings.Join(append(append(got.PrimaryKeywords, got.SecondaryKeywords...), got.LongTailPhrases...), " | "))
+	for _, want := range []string{"photosynthesis", "biology", "plant cell"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("expected educational theme %q to survive: %+v", want, got)
+		}
+	}
+	if strings.Contains(joined, "financial") {
+		t.Fatalf("unexpected finance leakage in non-financial video: %+v", got)
+	}
+}
+
+func TestKeywordExtractorUsesTitleAndTagsWhenDescriptionIsPromotional(t *testing.T) {
+	got := ExtractKeywordIntelligence(KeywordExtractionInput{
+		Title: "Beginner Python Decorators Explained",
+		Description: `Subscribe for more videos!
+Follow me on Instagram and TikTok.
+Business inquiries: hello@example.com
+Affiliate links: https://example.com/gear
+Use code SAVE20 and join my Discord.`,
+		Tags: []string{"python decorators", "python tutorial", "programming"},
+	})
+	joined := strings.ToLower(strings.Join(append(append(got.PrimaryKeywords, got.SecondaryKeywords...), got.LongTailPhrases...), " | "))
+	for _, noise := range []string{"subscribe", "instagram", "business inquiries", "affiliate", "save20", "discord"} {
+		if strings.Contains(joined, noise) {
+			t.Fatalf("keywords include promotional noise %q: %+v", noise, got)
+		}
+	}
+	if !strings.Contains(joined, "python decorator") {
+		t.Fatalf("title/tags did not produce useful topic intelligence: %+v", got)
+	}
+}
+
+func TestKeywordExtractorSparseMetadataDoesNotPadNoise(t *testing.T) {
+	got := ExtractKeywordIntelligence(KeywordExtractionInput{
+		Title: "ICT Basics",
+	})
+	joined := strings.ToLower(strings.Join(append(append(got.PrimaryKeywords, got.SecondaryKeywords...), got.LongTailPhrases...), " | "))
+	if strings.Contains(joined, "not") || strings.Contains(joined, "financial") {
+		t.Fatalf("sparse metadata produced contaminated topics: %+v", got)
+	}
+	if len(got.PrimaryKeywords) > 2 || len(got.LongTailPhrases) > 2 {
+		t.Fatalf("sparse metadata should not be padded: %+v", got)
+	}
+}
+
+func TestKeywordExtractorMergesNearDuplicatePhrases(t *testing.T) {
+	got := ExtractKeywordIntelligence(KeywordExtractionInput{
+		Title:       "Fair Value Gap Trading Explained",
+		Description: "Fair value gaps, fair value gap setups, and FVG trading examples for ICT traders.",
+		Tags:        []string{"fair value gaps", "fair value gap", "FVG trading"},
+	})
+	all := append(append(got.PrimaryKeywords, got.SecondaryKeywords...), got.LongTailPhrases...)
+	count := 0
+	for _, phrase := range all {
+		if strings.Contains(strings.ToLower(phrase), "fair value gap") {
+			count++
+		}
+	}
+	if count > 2 {
+		t.Fatalf("near duplicate fair value gap phrases were not merged enough: %+v", got)
+	}
+}
+
+func TestCreativeOpportunitiesUseOnlySanitizedTopicIntelligence(t *testing.T) {
+	kw := ExtractKeywordIntelligence(KeywordExtractionInput{
+		Title:       "Every ICT Concept Explained in 20 Minutes",
+		Description: "ICT trading concepts include liquidity, fair value gaps, order blocks, and market structure. Not financial advice. Always do your own research and consult a licensed financial adviser.",
+		Tags:        []string{"ICT trading", "liquidity", "fair value gap", "order block"},
+	})
+	niche := ClassifyNiche(KeywordExtractionInput{Title: "Every ICT Concept Explained in 20 Minutes"}, kw)
+	if strings.Contains(niche.SpecificTopic, "explained in") {
+		t.Fatalf("specific topic uses incomplete title fragment: %+v", niche)
+	}
+	opps := BuildCreatorOpportunities(niche, kw, AnalyzeHookIntelligence("Every ICT Concept Explained in 20 Minutes"), "Every ICT Concept Explained in 20 Minutes")
+	creative := strings.ToLower(strings.Join(append(append(append(opps.TitleIdeas, opps.ScriptPrompts...), opps.ShortFormClipIdeas...), opps.SuggestedRemakeAngles...), " | "))
+	for _, noise := range []string{"not financial", "own research", "licensed financial", "future results", "funded days", "using these inferred public topics: financial", "using these inferred public topics: not"} {
+		if strings.Contains(creative, noise) {
+			t.Fatalf("creative outputs include rejected phrase %q: %+v", noise, opps)
+		}
+	}
+	if !strings.Contains(creative, "ict") && !strings.Contains(creative, "liquidity") && !strings.Contains(creative, "fair value gap") {
+		t.Fatalf("creative outputs lost legitimate trading topics: %+v", opps)
+	}
+}
+
 func TestKeywordExtractorUsesRecentVideoTitlesForChannelTopics(t *testing.T) {
 	got := ExtractKeywordIntelligence(KeywordExtractionInput{
 		Title:             "MKBHD",

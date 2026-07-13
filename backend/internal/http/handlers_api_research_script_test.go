@@ -117,6 +117,31 @@ func TestHandleGenerateResearchScriptPreservesMetadataAndLimitations(t *testing.
 	}
 }
 
+func TestResearchScriptRequestSanitizesContaminatedCreativeContext(t *testing.T) {
+	req := validResearchScriptRequest()
+	req.Topic = "not"
+	req.Keywords = []string{"ICT trading", "not", "own research consult licensed", "fair value gap"}
+	req.Summary = "Write a short adaptation using these inferred public topics: financial, not. Always do your own research and consult a licensed financial adviser."
+	req.SuggestedAngle = "Comparison angle around fair value gap. Not financial advice."
+	req.Evidence = map[string]any{
+		"script_prompts": []any{"Write about liquidity", "Write about own research consult licensed"},
+	}
+
+	genReq, candidate, keywords, _, angle, err := researchScriptGenerateRequest(req)
+	if err != nil {
+		t.Fatalf("researchScriptGenerateRequest: %v", err)
+	}
+	joined := strings.ToLower(strings.Join(append([]string{candidate.Title, candidate.Keyword, candidate.Evidence, angle, genReq.Candidate.Evidence}, keywords...), " | "))
+	for _, noise := range []string{"own research", "licensed financial", "not financial advice", "financial, not", "own research consult"} {
+		if strings.Contains(joined, noise) {
+			t.Fatalf("script generation context includes rejected phrase %q: %s", noise, joined)
+		}
+	}
+	if !strings.Contains(joined, "ict trading") || !strings.Contains(joined, "fair value gap") || !strings.Contains(joined, "liquidity") {
+		t.Fatalf("script generation context lost legitimate topics: %s", joined)
+	}
+}
+
 func validResearchScriptRequest() models.ResearchScriptGenerationRequest {
 	return models.ResearchScriptGenerationRequest{
 		SourceType:      "youtube_video_analysis",
