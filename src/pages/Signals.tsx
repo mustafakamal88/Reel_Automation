@@ -892,7 +892,7 @@ function VideoAnalysisHero({ result, onGenerate, generating }: { result: YouTube
           </div>
           <div className="video-revenue-card">
             <span>Revenue potential</span>
-            <strong>{result.revenue_estimate?.formatted_range || 'Unavailable'}</strong>
+            <strong>{displayRevenueRange(result.revenue_estimate)}</strong>
             <small>{result.revenue_estimate?.confidence ? `${result.revenue_estimate.confidence} confidence` : 'Public estimate'}</small>
           </div>
         </div>
@@ -1009,7 +1009,7 @@ function RevenuePotentialCard({ estimate }: { estimate?: YouTubeVideoAnalysisRes
     <section className="video-section revenue-potential-card" aria-labelledby="revenue-title">
       <div className="video-section-heading">
         <span>Revenue potential</span>
-        <h3 id="revenue-title">{estimate.formatted_range}</h3>
+        <h3 id="revenue-title">{displayRevenueRange(estimate)}</h3>
       </div>
       <div className="revenue-premium-grid">
         <div className="revenue-range-visual">
@@ -3472,6 +3472,14 @@ function formatVideoFormat(value?: string): string {
 function formatCurrencyEstimate(value?: number): string {
   if (value == null || !Number.isFinite(value)) return 'Unavailable';
   return `$${Math.round(value).toLocaleString()}`;
+}
+
+function displayRevenueRange(estimate?: YouTubeVideoAnalysisResponse['revenue_estimate']): string {
+  if (!estimate) return 'Unavailable';
+  if (Number.isFinite(estimate.low) && Number.isFinite(estimate.high)) {
+    return `${formatCurrencyEstimate(estimate.low)}-${formatCurrencyEstimate(estimate.high)}`;
+  }
+  return estimate.formatted_range || 'Unavailable';
 }
 
 function formatCompactNumber(value?: number): string {
