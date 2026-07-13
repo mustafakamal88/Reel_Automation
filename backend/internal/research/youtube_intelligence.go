@@ -210,6 +210,13 @@ func ClassifyNiche(in KeywordExtractionInput, kw KeywordIntelligence) NicheAnaly
 	if bestScore == 0 && len(kw.PrimaryKeywords) > 0 {
 		evidence = topN(kw.PrimaryKeywords, 4)
 	}
+	if broad, niche, ok := categoryNicheOverride(in.Category, haystack); ok {
+		bestBroad = broad
+		bestNiche = niche
+		if len(evidence) == 0 {
+			evidence = []string{categoryName(in.Category)}
+		}
+	}
 	format := detectContentFormat(in.Title + " " + in.Description)
 	specificTopic := grammaticallyMeaningfulTopic(kw, in.Title, bestNiche)
 	sub := specificTopic
@@ -565,6 +572,8 @@ func isBoilerplateLine(lower string) bool {
 		"subscribe", "follow me", "follow us", "affiliate", "sponsored", "sponsor", "use code", "discount code",
 		"shop now", "my gear", "business inquiries", "contact:",
 		"chapters", "timestamps", "all rights reserved", "thanks for watching", "like and comment", "turn on notifications",
+		"clip licensing", "licensed under", "creative commons", "provided referral", "support our mission", "ted member",
+		"browse pots", "home cooks supports content", "music used", "intro cool end", "end cool end",
 	}
 	for _, phrase := range boilerplate {
 		if strings.Contains(lower, phrase) {
@@ -812,14 +821,6 @@ func inferContentAngle(format, sub, niche string) string {
 }
 
 func grammaticallyMeaningfulTopic(kw KeywordIntelligence, title, fallback string) string {
-	candidates := append(append([]string{}, kw.SearchPhrases...), kw.PrimaryTopics...)
-	candidates = append(candidates, kw.PrimaryKeywords...)
-	for _, candidate := range candidates {
-		candidate = strings.TrimSpace(candidate)
-		if isNaturalSearchPhrase(candidate) {
-			return candidate
-		}
-	}
 	titleTokens := tokenizeUseful(title, map[string]bool{})
 	for n := minInt(4, len(titleTokens)); n >= 2; n-- {
 		for _, phrase := range ngrams(titleTokens, n) {
@@ -828,7 +829,46 @@ func grammaticallyMeaningfulTopic(kw KeywordIntelligence, title, fallback string
 			}
 		}
 	}
+	candidates := append(append([]string{}, kw.PrimaryTopics...), kw.PrimaryKeywords...)
+	candidates = append(candidates, kw.SearchPhrases...)
+	for _, candidate := range candidates {
+		candidate = strings.TrimSpace(candidate)
+		if isNaturalSearchPhrase(candidate) {
+			return candidate
+		}
+	}
 	return fallback
+}
+
+func categoryNicheOverride(categoryID, haystack string) (string, string, bool) {
+	switch strings.TrimSpace(categoryID) {
+	case "10":
+		return "Music", "Music video", true
+	case "15":
+		return "Pets and animals", "Animal entertainment", true
+	case "20":
+		return "Gaming", "Gaming guide or entertainment", true
+	case "17":
+		return "Sports", "Sports analysis or training", true
+	case "19":
+		return "Travel", "Travel and places", true
+	case "23":
+		return "Entertainment", "Comedy and skits", true
+	case "25":
+		return "News", "News and politics", true
+	case "26":
+		if strings.Contains(haystack, "makeup") || strings.Contains(haystack, "beauty") || strings.Contains(haystack, "skincare") {
+			return "Lifestyle", "Beauty and fashion", true
+		}
+		if strings.Contains(haystack, "cook") || strings.Contains(haystack, "recipe") || strings.Contains(haystack, "kitchen") {
+			return "Food", "Cooking and recipes", true
+		}
+	case "27":
+		return "Education", "Practical tutorial", true
+	case "28":
+		return "Technology", "Software and technology", true
+	}
+	return "", "", false
 }
 
 func explainHookScore(title, hookType string, clarity, specificity, curiosity, audienceSignal, valuePromise int) string {
