@@ -154,6 +154,8 @@ func estimateRevenue(item youtubeVideoItem, niche NicheAnalysis, views *uint64, 
 		rpmLow *= 0.7
 		rpmHigh *= 0.85
 	}
+	rpmLow = roundMoney(rpmLow)
+	rpmHigh = roundMoney(rpmHigh)
 	var low, high float64
 	publicViews := uint64(0)
 	if views != nil {
@@ -171,8 +173,8 @@ func estimateRevenue(item youtubeVideoItem, niche NicheAnalysis, views *uint64, 
 		Midpoint:                   roundMoney(mid),
 		High:                       roundMoney(high),
 		FormattedRange:             formatMoneyRange(low, high),
-		RPMLow:                     roundMoney(rpmLow),
-		RPMHigh:                    roundMoney(rpmHigh),
+		RPMLow:                     rpmLow,
+		RPMHigh:                    rpmHigh,
 		EstimatedRevenuePer1000:    fmt.Sprintf("$%.2f-$%.2f estimated RPM", rpmLow, rpmHigh),
 		Confidence:                 ratingForScore(confidenceScore),
 		ConfidenceScore:            confidenceScore,

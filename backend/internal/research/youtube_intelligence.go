@@ -626,6 +626,9 @@ func tokensFromText(text string) []string {
 
 func isUsefulTerm(term string) bool {
 	term = strings.ToLower(strings.TrimSpace(term))
+	if isNoisePhrase(term) {
+		return false
+	}
 	if term == "ai" {
 		return true
 	}
@@ -712,6 +715,9 @@ func nearDuplicateSelected(term string, selected []string) bool {
 }
 
 func isNaturalSearchPhrase(value string) bool {
+	if isNoisePhrase(value) {
+		return false
+	}
 	words := strings.Fields(value)
 	if len(words) < 2 || len(words) > 6 {
 		return false
@@ -726,6 +732,25 @@ func isNaturalSearchPhrase(value string) bool {
 		return false
 	}
 	return !regexp.MustCompile(`(?i)\butm|http|affiliate|sponsor|instagram|tiktok|facebook|twitter\b`).MatchString(value)
+}
+
+func isNoisePhrase(value string) bool {
+	lower := strings.ToLower(strings.TrimSpace(value))
+	if lower == "" {
+		return true
+	}
+	noise := []string{
+		"utm", "browser made possible", "made possible grant", "our friends scrimba", "scrimba contents", "dub track", "melt labs",
+		"home cooks supports", "supports content", "browse pots", "provided referral", "referral meaning", "clip licensing",
+		"licensed under", "creative commons", "kevin mac leod", "monkeys spinning", "send clips", "funny pictures visit",
+		"matthew campen", "msph intro", "intro cool", "cool end", "support our mission", "ted member",
+	}
+	for _, item := range noise {
+		if strings.Contains(lower, item) {
+			return true
+		}
+	}
+	return false
 }
 
 func inferSearchIntent(title string, primary, longTail []string) string {
@@ -864,6 +889,9 @@ func categoryNicheOverride(categoryID, haystack string) (string, string, bool) {
 			return "Food", "Cooking and recipes", true
 		}
 	case "27":
+		if strings.Contains(haystack, "finance") || strings.Contains(haystack, "investing") || strings.Contains(haystack, "money") || strings.Contains(haystack, "budget") || strings.Contains(haystack, "stock") {
+			return "Business and finance", "Finance education", true
+		}
 		return "Education", "Practical tutorial", true
 	case "28":
 		return "Technology", "Software and technology", true
