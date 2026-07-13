@@ -740,10 +740,10 @@ func isNoisePhrase(value string) bool {
 		return true
 	}
 	noise := []string{
-		"utm", "browser made possible", "made possible grant", "our friends scrimba", "scrimba contents", "dub track", "melt labs",
+		"utm", "browser made possible", "made possible", "possible grant", "friends scrimba", "our friends scrimba", "scrimba", "scrimba contents", "dub track", "change dub", "hindi dubbed", "melt labs",
 		"home cooks supports", "supports content", "browse pots", "provided referral", "referral meaning", "clip licensing",
 		"licensed under", "creative commons", "kevin mac leod", "monkeys spinning", "send clips", "funny pictures visit",
-		"matthew campen", "msph intro", "intro cool", "cool end", "support our mission", "ted member",
+		"pictures visit", "mac leod", "leod artist", "matthew campen", "campen msph", "msph intro", "intro cool", "cool end", "support our mission", "ted member",
 	}
 	for _, item := range noise {
 		if strings.Contains(lower, item) {
