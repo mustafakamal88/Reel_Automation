@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useMemo, useState, type KeyboardEvent, type ReactNode } from 'react';
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type MutableRefObject, type ReactNode, type RefObject } from 'react';
 import type { Platform, View } from '../types';
 import {
   ApiError,
@@ -12,11 +12,13 @@ import {
   type ContentPillar,
   type CreatorNicheProfile,
   type NicheCandidate,
+  type OutlierEvidence,
   type NicheReport,
   type ReelContentPackage,
   type ResearchScriptGenerationRequest,
   type ResearchScriptSourceType,
   type ResearchProviderStatus,
+  type VideoTopic,
   type TrendCandidate,
   type TrendDiscoveryResponse,
   type TrendFilterMetadata,
@@ -999,6 +1001,8 @@ function NicheFinderTab({ providers, region, language, audience, onGenerate, gen
   const [expandedID, setExpandedID] = useState<string | null>(null);
   const [showTopicsID, setShowTopicsID] = useState<string | null>(null);
   const [loadingStage, setLoadingStage] = useState(0);
+  const [profileExpanded, setProfileExpanded] = useState(false);
+  const [lastResearchedProfileKey, setLastResearchedProfileKey] = useState<string | null>(null);
   const providerMap = new Map(providers.map(provider => [provider.id, provider]));
   const meaningfulFields = [
     profile.professional_skills,
@@ -1011,6 +1015,9 @@ function NicheFinderTab({ providers, region, language, audience, onGenerate, gen
   ].filter(value => value.trim()).length;
   const hasMinimumInputs = meaningfulFields >= 3;
   const ready = hasMinimumInputs && !loading;
+  const completion = profileCompletion(profile);
+  const currentProfileKey = stableProfileKey(profile);
+  const profileDirty = Boolean(report && lastResearchedProfileKey && lastResearchedProfileKey !== currentProfileKey);
 
   useEffect(() => {
     if (!loading) {
@@ -1040,6 +1047,8 @@ function NicheFinderTab({ providers, region, language, audience, onGenerate, gen
     setLoading(true);
     setError(null);
     setReport(null);
+    setProfileExpanded(false);
+    setLastResearchedProfileKey(stableProfileKey(profile));
     researchNiches({
       profile: {
         ...profile,
@@ -1057,84 +1066,35 @@ function NicheFinderTab({ providers, region, language, audience, onGenerate, gen
 
   return (
     <div className="niche-workflow">
-      <div className="settings-card niche-form-card">
-        <div>
-          <div className="settings-card-title">Creator profile</div>
-          <div className="muted-note">Find niches where your credibility, audience demand, content runway, and differentiation overlap.</div>
-        </div>
-        <div className="niche-form-sections">
-          <div className="niche-form-section">
-            <div className="niche-section-heading">Credibility</div>
-            <div className="form-grid two">
-              <TextInput label="Professional skills" value={profile.professional_skills} onChange={value => setProfileField('professional_skills', value)} placeholder="software development, accounting, design" />
-              <TextInput label="Hobbies" value={profile.hobbies} onChange={value => setProfileField('hobbies', value)} placeholder="fitness, football, cooking, travel" />
-              <TextInput label="Lived experiences" value={profile.lived_experiences} onChange={value => setProfileField('lived_experiences', value)} placeholder="UK visa process, building a business, career switch" />
-              <TextInput label="Subjects you can teach" value={profile.teaching_subjects} onChange={value => setProfileField('teaching_subjects', value)} placeholder="AI workflows, student finance, interview prep" />
-              <TextInput label="What you wish you knew three years ago" value={profile.three_years_ago_advice} onChange={value => setProfileField('three_years_ago_advice', value)} placeholder="what would have saved you time, money, or mistakes?" />
-            </div>
-          </div>
-          <div className="niche-form-section">
-            <div className="niche-section-heading">Audience and format</div>
-            <div className="form-grid two">
-              <TextInput label="Target audience" value={profile.target_audience} onChange={value => setProfileField('target_audience', value)} placeholder="UK small businesses, international students" />
-              <Select label="Target country" value={profile.target_country} onChange={value => setProfileField('target_country', value)} options={[
-                { label: 'United Kingdom', value: 'GB' },
-                { label: 'United States', value: 'US' },
-                { label: 'Pakistan', value: 'PK' },
-                { label: 'India', value: 'IN' },
-              ]} />
-              <Select label="Target language" value={profile.target_language} onChange={value => setProfileField('target_language', value)} options={[
-                { label: 'English', value: 'en' },
-                { label: 'Urdu', value: 'ur' },
-                { label: 'Hindi', value: 'hi' },
-                { label: 'Arabic', value: 'ar' },
-              ]} />
-              <Select label="Creator presence" value={profile.creator_presence} onChange={value => setProfileField('creator_presence', value)} options={[
-                { label: 'Faceless channel', value: 'faceless channel' },
-                { label: 'Personal brand', value: 'personal brand' },
-              ]} />
-              <Select label="Content format" value={profile.content_formats[0] ?? 'long-form'} onChange={setFormat} options={[
-                { label: 'Long-form', value: 'long-form' },
-                { label: 'Shorts', value: 'shorts' },
-                { label: 'Both', value: 'both' },
-              ]} />
-              <TextInput label="Weekly production capacity" value={profile.weekly_production_capacity} onChange={value => setProfileField('weekly_production_capacity', value)} placeholder="2 videos per week" />
-            </div>
-          </div>
-          <div className="niche-form-section">
-            <div className="niche-section-heading">Topic focus</div>
-            <div className="form-grid two">
-              <TextInput label="Optional broad topic" value={profile.optional_broad_topic} onChange={value => setProfileField('optional_broad_topic', value)} placeholder="AI automation, UK visa, personal finance" />
-            </div>
-          </div>
-          <div className="niche-form-section niche-readiness-section">
-            <div className="niche-section-heading">Validation readiness</div>
-            <ReadinessPanel rows={[
-              { label: 'Profile inputs', value: `${meaningfulFields}/3 minimum`, type: 'value' },
-              { label: 'Video validation', value: providerMap.get('youtube_data_api')?.status || 'unknown', type: 'status' },
-              { label: 'Current trends', value: providerMap.get('google_trends_rss')?.status || 'unknown', type: 'status' },
-            ]} />
-          </div>
-        </div>
-        <div className="niche-action-footer">
-          <div className="niche-action-copy">
-            {loading ? NICHE_LOADING_STAGES[loadingStage] : hasMinimumInputs ? 'Ready to validate niche candidates with public demand evidence.' : 'Add at least three creator-profile inputs to create meaningful niche candidates.'}
-          </div>
-          <button className="generate-btn idle niche-primary-action" type="button" onClick={runAnalysis} disabled={!ready}>
-            {loading ? 'Researching...' : 'Research Niches'}
-          </button>
-        </div>
-      </div>
+      <CreatorProfilePanel
+        profile={profile}
+        expanded={profileExpanded || (!report && !loading)}
+        completion={completion}
+        meaningfulFields={meaningfulFields}
+        dirty={profileDirty}
+        loading={loading}
+        loadingLabel={NICHE_LOADING_STAGES[loadingStage]}
+        hasMinimumInputs={hasMinimumInputs}
+        ready={ready}
+        providerMap={providerMap}
+        onToggle={() => setProfileExpanded(current => !current)}
+        onSetField={setProfileField}
+        onSetFormat={setFormat}
+        onReset={() => setProfile(defaultNicheProfile(region, language, audience))}
+        onRun={runAnalysis}
+      />
 
       <div className="neutral-callout">
         Niche Finder separates AI strategy from verified public evidence and keeps provider measurements separate from model-derived opportunity scoring.
       </div>
 
-      {loading && <EmptyState tone="loading" title={NICHE_LOADING_STAGES[loadingStage]} desc="Your inputs are preserved while Niche Finder validates strategy, scores, evidence availability, and runway depth." />}
-      {error && <EmptyState tone="error" title="Niche analysis failed." desc={error} />}
-      {report && report.status !== 'ok' && <NicheResearchState report={report} />}
+      <div className="niche-result-anchor">
+        {loading && <EmptyState tone="loading" title={NICHE_LOADING_STAGES[loadingStage]} desc="Your inputs are preserved while Niche Finder validates strategy, scores, evidence availability, and runway depth." />}
+        {error && <EmptyState tone="error" title="Niche analysis failed." desc={error} />}
+        {report && report.status !== 'ok' && <NicheResearchState report={report} />}
+      </div>
       {report?.status === 'ok' && (
-        <div className="niche-results">
+        <div className="niche-results" key={`${report.id}-${report.primary_recommendation?.id ?? report.candidates[0]?.id ?? 'candidate'}-${report.created_at}`}>
           <NicheDashboardHeader
             report={report}
             candidate={report.primary_recommendation ?? report.candidates[0]}
@@ -1162,10 +1122,7 @@ function NicheFinderTab({ providers, region, language, audience, onGenerate, gen
             expandedID={expandedID}
             onToggle={setExpandedID}
           />
-          <NichePanel title="Score methodology">
-            <List items={report.methodology ?? []} />
-            <Limitations items={report.limitations ?? []} />
-          </NichePanel>
+          <ScoreMethodology methodology={report.methodology ?? []} limitations={report.limitations ?? []} />
         </div>
       )}
     </div>
@@ -1181,9 +1138,10 @@ function NicheDashboardHeader({ report, candidate, generating, generated, genera
   onBuildStrategy: () => void;
   onOpenScriptStudio?: () => void;
 }) {
+  const reveal = useRevealClass();
   if (!candidate) return null;
   return (
-    <section className="niche-dashboard-header">
+    <section ref={reveal.ref as RefObject<HTMLElement>} className={`niche-dashboard-header ${reveal.className}`.trim()}>
       <div className="niche-header-copy">
         <div className="niche-path">{candidate.category || candidate.level_1} / {candidate.subcategory || candidate.level_2}</div>
         <h2>{candidate.name || candidate.niche_name}</h2>
@@ -1214,58 +1172,85 @@ function NicheDashboardHeader({ report, candidate, generating, generated, genera
 }
 
 function NicheCandidateDashboard({ candidate, showTopics, onToggleTopics }: { candidate: NicheCandidate; showTopics: boolean; onToggleTopics: () => void }) {
+  const [openDimensionKey, setOpenDimensionKey] = useState<string | null>(null);
+  const detailPanelId = useId();
   const dimensions = dimensionRows(candidate);
+  const openDimension = dimensions.find(dim => dim.key === openDimensionKey);
   const pillars = candidate.content_pillars?.length ? candidate.content_pillars : candidate.topic_pillars ?? [];
   const titles = candidate.recommended_titles?.length ? candidate.recommended_titles : candidate.video_topics ?? [];
   const runwayCount = candidate.runway?.viable_topic_count ?? candidate.sustainability.viable_topic_count ?? titles.length;
   const isCompleteRunway = titles.length === 50 && runwayCount === 50;
   const runwayTitle = candidate.runway?.heading ?? (isCompleteRunway ? '50-video runway' : 'Initial content runway');
   return (
-    <div className="niche-dashboard-grid">
-      <div className="niche-score-card-grid">
-        {dimensions.map(dim => <DimensionCard key={dim.key} row={dim} />)}
-      </div>
-      <NichePanel title="Strategic scoring radar">
-        <RadarChart rows={dimensions} />
-      </NichePanel>
-      <NichePanel title="Deterministic score contribution">
-        <ContributionChart rows={dimensions} />
-      </NichePanel>
-      <NichePanel title="Content-pillar distribution">
-        <PillarChart pillars={pillars} />
-      </NichePanel>
-      <NichePanel title="Demand evidence">
-        <DemandEvidence candidate={candidate} />
-      </NichePanel>
+    <div className="niche-dashboard-flow">
+      <ScrollReveal>
+      <section className="niche-score-card-grid" aria-label="Strategic score cards">
+        {dimensions.map(dim => (
+          <DimensionCard
+            key={dim.key}
+            row={dim}
+            open={openDimensionKey === dim.key}
+            detailPanelId={detailPanelId}
+            onToggle={() => setOpenDimensionKey(current => current === dim.key ? null : dim.key)}
+          />
+        ))}
+      </section>
+      </ScrollReveal>
+      {openDimension && <DimensionDetailPanel id={detailPanelId} row={openDimension} onClose={() => setOpenDimensionKey(null)} />}
+      <ScrollReveal>
+      <section className="niche-analysis-columns" aria-label="Strategic analysis">
+        <div className="niche-analysis-stack">
+          <NichePanel title="Strategic scoring radar">
+            <RadarChart rows={dimensions} />
+          </NichePanel>
+          <NichePanel title="Content-pillar distribution">
+            <PillarChart pillars={pillars} />
+          </NichePanel>
+        </div>
+        <div className="niche-analysis-stack">
+          <NichePanel title="Deterministic score contribution">
+            <ContributionChart rows={dimensions} />
+          </NichePanel>
+          <NichePanel title="Demand evidence">
+            <DemandEvidence candidate={candidate} />
+          </NichePanel>
+        </div>
+      </section>
+      </ScrollReveal>
       <NichePanel title={runwayTitle}>
         <RunwayCard candidate={candidate} pillars={pillars} />
       </NichePanel>
-      <NichePanel title="Competition opportunity">
-        <CompetitionVisual candidate={candidate} />
-      </NichePanel>
-      <NichePanel title="Audience profile">
-        <TextBlock label="Audience" value={candidate.target_audience || candidate.target_viewer} />
-        <SectionList label="Audience problems" items={candidate.audience_problems?.length ? candidate.audience_problems : [candidate.viewer_problem].filter(Boolean)} />
-        <SectionList label="Creator advantages" items={candidate.creator_advantages?.length ? candidate.creator_advantages : [candidate.creator_advantage].filter(Boolean)} />
-        <TextBlock label="Unique positioning" value={candidate.unique_angle} />
-      </NichePanel>
-      <NichePanel title="Opportunity gaps">
-        <List items={candidate.opportunity_gaps?.length ? candidate.opportunity_gaps : (candidate.supply_gaps ?? []).map(gap => gap.statement)} />
-      </NichePanel>
+      <ScrollReveal>
+      <section className="niche-insight-layout" aria-label="Audience and opportunity insights">
+        <NichePanel title="Audience profile">
+          <TextBlock label="Audience" value={candidate.target_audience || candidate.target_viewer} />
+          <SectionList label="Audience problems" items={candidate.audience_problems?.length ? candidate.audience_problems : [candidate.viewer_problem].filter(Boolean)} />
+          <SectionList label="Creator advantages" items={candidate.creator_advantages?.length ? candidate.creator_advantages : [candidate.creator_advantage].filter(Boolean)} />
+          <TextBlock label="Unique positioning" value={candidate.unique_angle} />
+        </NichePanel>
+        <div className="niche-opportunity-stack">
+          <NichePanel title="Competition opportunity">
+            <CompetitionVisual candidate={candidate} />
+          </NichePanel>
+          <NichePanel title="Opportunity gaps">
+            <List items={candidate.opportunity_gaps?.length ? candidate.opportunity_gaps : (candidate.supply_gaps ?? []).map(gap => gap.statement)} />
+          </NichePanel>
+        </div>
+      </section>
+      </ScrollReveal>
       <NichePanel title="First 10 video ideas">
-        <List items={titles.slice(0, 10).map(topic => topic.title)} />
-        {titles.length > 10 && <button className="generate-btn secondary" type="button" onClick={onToggleTopics}>{showTopics ? 'Hide idea explorer' : `View all ${titles.length} ideas`}</button>}
-        {showTopics && <SectionList label={`Additional ${Math.max(0, titles.length - 10)} ideas`} items={titles.slice(10).map(topic => `${topic.title} · ${topic.pillar} · ${topic.intent}`)} />}
+        <IdeaPreview titles={titles} showTopics={showTopics} onToggleTopics={onToggleTopics} />
       </NichePanel>
-      <NichePanel title="Evidence and outliers">
-        <TextBlock label="Evidence summary" value={candidate.evidence_summary || candidate.validation.market_evidence_summary} />
-        <LabelledChips label="Search queries used" items={candidate.search_queries_used?.length ? candidate.search_queries_used : candidate.validation.search_phrases ?? []} />
-        {candidate.outliers?.length ? <div className="niche-outlier-list">{candidate.outliers.map(outlier => <a className="niche-outlier" href={outlier.canonical_url} target="_blank" rel="noreferrer" key={outlier.canonical_url}><span><strong>{outlier.title}</strong><small>{outlier.channel_name} · {formatCount(outlier.public_views)} views</small></span></a>)}</div> : <div className="muted-note">No validated outlier examples are available for this evidence mode.</div>}
-      </NichePanel>
-      <NichePanel title="Risks and limitations">
-        <List items={candidate.risks ?? []} />
-        <Limitations items={candidate.market_evidence?.limitations ?? []} />
-      </NichePanel>
+      <ScrollReveal>
+      <section className="niche-evidence-risk-grid">
+        <NichePanel title="Evidence and outliers">
+          <EvidenceSection candidate={candidate} />
+        </NichePanel>
+        <NichePanel title="Risks and limitations">
+          <RiskSection candidate={candidate} />
+        </NichePanel>
+      </section>
+      </ScrollReveal>
     </div>
   );
 }
@@ -1310,9 +1295,333 @@ function formatCacheTime(value?: string): string {
   return date.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
 }
 
-function NichePanel({ title, children }: { title: string; children: ReactNode }) {
+function CreatorProfilePanel({ profile, expanded, completion, meaningfulFields, dirty, loading, loadingLabel, hasMinimumInputs, ready, providerMap, onToggle, onSetField, onSetFormat, onReset, onRun }: {
+  profile: CreatorNicheProfile;
+  expanded: boolean;
+  completion: { complete: number; total: number; firstIncomplete: string };
+  meaningfulFields: number;
+  dirty: boolean;
+  loading: boolean;
+  loadingLabel: string;
+  hasMinimumInputs: boolean;
+  ready: boolean;
+  providerMap: Map<string, ResearchProviderStatus>;
+  onToggle: () => void;
+  onSetField: (field: keyof CreatorNicheProfile, value: string) => void;
+  onSetFormat: (value: string) => void;
+  onReset: () => void;
+  onRun: () => void;
+}) {
+  const panelId = useId();
+  const actionLabel = dirty ? 'Research updated profile' : 'Research Niches';
+  const reveal = useRevealClass();
   return (
-    <section className="niche-detail-panel">
+    <section ref={reveal.ref as RefObject<HTMLElement>} className={`niche-profile-shell ${reveal.className}${expanded ? ' is-expanded' : ' is-collapsed'}${dirty ? ' is-dirty' : ''}`} aria-labelledby={`${panelId}-title`}>
+      <div className="niche-profile-summary">
+        <div className="niche-profile-heading">
+          <div id={`${panelId}-title`} className="settings-card-title">Creator profile</div>
+          <StatusBadge tone={hasMinimumInputs ? 'success' : 'warning'}>
+            {hasMinimumInputs ? `Minimum met · ${meaningfulFields} qualifying inputs` : `${meaningfulFields} qualifying inputs`}
+          </StatusBadge>
+          {dirty && <StatusBadge tone="warning">Changes not researched yet</StatusBadge>}
+        </div>
+        <button className="generate-btn secondary niche-profile-toggle" type="button" onClick={onToggle} aria-expanded={expanded} aria-controls={`${panelId}-body`}>
+          {expanded ? 'Collapse profile' : 'Edit profile'}
+        </button>
+      </div>
+      <ProfileSummary profile={profile} />
+      {expanded && (
+        <div id={`${panelId}-body`} className="niche-profile-body">
+          <ProfileAccordion title="Creator credibility" defaultOpen={completion.firstIncomplete === 'credibility'}>
+            <div className="form-grid two niche-field-grid">
+              <TextInput multiline className="field-half" label="Professional skills" value={profile.professional_skills} onChange={value => onSetField('professional_skills', value)} placeholder="software development, accounting, design" />
+              <TextInput multiline className="field-half" label="Lived experiences" value={profile.lived_experiences} onChange={value => onSetField('lived_experiences', value)} placeholder="UK visa process, building a business, career switch" />
+              <TextInput multiline className="field-half" label="Subjects you can teach" value={profile.teaching_subjects} onChange={value => onSetField('teaching_subjects', value)} placeholder="AI workflows, student finance, interview prep" />
+              <TextInput multiline className="field-half" label="What you wish you knew three years ago" value={profile.three_years_ago_advice} onChange={value => onSetField('three_years_ago_advice', value)} placeholder="what would have saved you time, money, or mistakes?" />
+              <TagInput className="field-wide" label="Hobbies" value={profile.hobbies} onChange={value => onSetField('hobbies', value)} placeholder="fitness, football, cooking, travel" />
+            </div>
+          </ProfileAccordion>
+          <ProfileAccordion title="Audience and format" defaultOpen={completion.firstIncomplete === 'audience'}>
+            <div className="form-grid two niche-field-grid">
+              <TextInput multiline className="field-wide" label="Target audience" value={profile.target_audience} onChange={value => onSetField('target_audience', value)} placeholder="UK small businesses, international students" />
+              <Select label="Target country" value={profile.target_country} onChange={value => onSetField('target_country', value)} options={[
+                { label: 'United Kingdom', value: 'GB' },
+                { label: 'United States', value: 'US' },
+                { label: 'Pakistan', value: 'PK' },
+                { label: 'India', value: 'IN' },
+              ]} />
+              <Select label="Target language" value={profile.target_language} onChange={value => onSetField('target_language', value)} options={[
+                { label: 'English', value: 'en' },
+                { label: 'Urdu', value: 'ur' },
+                { label: 'Hindi', value: 'hi' },
+                { label: 'Arabic', value: 'ar' },
+              ]} />
+              <SegmentedControl className="field-half" label="Creator presence" value={profile.creator_presence} options={[
+                { label: 'Faceless', value: 'faceless channel' },
+                { label: 'On-camera', value: 'personal brand' },
+                { label: 'Mixed', value: 'mixed presence' },
+              ]} onChange={value => onSetField('creator_presence', value)} />
+              <SegmentedControl className="field-half" label="Content format" value={profile.content_formats[0] ?? 'long-form'} options={[
+                { label: 'Short-form', value: 'shorts' },
+                { label: 'Long-form', value: 'long-form' },
+                { label: 'Both', value: 'both' },
+              ]} onChange={onSetFormat} />
+              <SegmentedControl className="field-wide" label="Weekly capacity" value={capacitySegment(profile.weekly_production_capacity)} options={[
+                { label: '1', value: '1 video per week' },
+                { label: '2', value: '2 videos per week' },
+                { label: '3', value: '3 videos per week' },
+                { label: '4+', value: '4 videos per week' },
+                { label: 'Custom', value: 'custom' },
+              ]} onChange={value => {
+                if (value !== 'custom') onSetField('weekly_production_capacity', value);
+              }} />
+              {capacitySegment(profile.weekly_production_capacity) === 'custom' && <TextInput className="field-wide" label="Custom capacity" value={profile.weekly_production_capacity} onChange={value => onSetField('weekly_production_capacity', value)} placeholder="2 videos per week" />}
+            </div>
+          </ProfileAccordion>
+          <ProfileAccordion title="Topic focus" defaultOpen={completion.firstIncomplete === 'topic'}>
+            <div className="form-grid two niche-field-grid">
+              <TextInput multiline label="Optional broad topic" value={profile.optional_broad_topic} onChange={value => onSetField('optional_broad_topic', value)} placeholder="AI automation, UK visa, personal finance" />
+            </div>
+          </ProfileAccordion>
+          <ProfileAccordion title="Validation readiness" defaultOpen={false}>
+            <ReadinessPanel rows={[
+              { label: 'Qualifying inputs', value: meaningfulFields, type: 'value' },
+              { label: 'Minimum required', value: 3, type: 'value' },
+              { label: 'Video validation', value: providerMap.get('youtube_data_api')?.status || 'unknown', type: 'status' },
+              { label: 'Current trends', value: providerMap.get('google_trends_rss')?.status || 'unknown', type: 'status' },
+            ]} />
+          </ProfileAccordion>
+          <div className="niche-action-footer">
+            <div className="niche-action-copy">
+              {loading ? loadingLabel : hasMinimumInputs ? 'Ready to validate niche candidates with public demand evidence.' : 'Add at least three creator-profile inputs to create meaningful niche candidates.'}
+            </div>
+            <div className="niche-action-buttons">
+              <button className="generate-btn secondary" type="button" onClick={onReset} disabled={loading}>Reset</button>
+              <button className="generate-btn idle niche-primary-action" type="button" onClick={onRun} disabled={!ready}>
+                {loading ? 'Researching...' : actionLabel}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function ProfileSummary({ profile }: { profile: CreatorNicheProfile }) {
+  const primary = [
+    profile.professional_skills,
+    profile.target_audience,
+    countryLabel(profile.target_country),
+    languageLabel(profile.target_language),
+  ].filter(Boolean);
+  const secondary = [
+    presenceLabel(profile.creator_presence),
+    formatLabel(profile.content_formats[0] ?? ''),
+    profile.weekly_production_capacity,
+  ].filter(Boolean);
+  return (
+    <div className="niche-profile-lines" aria-label="Creator profile summary">
+      <div>{primary.join(' · ') || 'Add profile details to start research'}</div>
+      <div>{secondary.join(' · ')}</div>
+    </div>
+  );
+}
+
+function ProfileAccordion({ title, defaultOpen, children }: { title: string; defaultOpen: boolean; children: ReactNode }) {
+  const id = useId();
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <section className="profile-accordion">
+      <button className="profile-accordion-trigger" type="button" onClick={() => setOpen(current => !current)} aria-expanded={open} aria-controls={`${id}-panel`}>
+        <span>{title}</span>
+        <span aria-hidden="true">{open ? '-' : '+'}</span>
+      </button>
+      {open && <div id={`${id}-panel`} className="profile-accordion-panel">{children}</div>}
+    </section>
+  );
+}
+
+function SegmentedControl({ label, value, options, onChange, className = '' }: { label: string; value: string; options: { label: string; value: string }[]; onChange: (value: string) => void; className?: string }) {
+  return (
+    <div className={`form-group segmented-field ${className}`.trim()}>
+      <div className="form-label">{label}</div>
+      <div className="segmented-control" role="group" aria-label={label} style={{ '--segment-count': options.length } as CSSProperties}>
+        {options.map(option => (
+          <button key={option.value} type="button" className={option.value === value ? 'is-selected' : ''} onClick={() => onChange(option.value)} aria-pressed={option.value === value}>
+            {option.label}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function TagInput({ label, value, onChange, placeholder, className = '' }: { label: string; value: string; onChange: (value: string) => void; placeholder: string; className?: string }) {
+  const tags = value.split(',').map(tag => tag.trim()).filter(Boolean);
+  return (
+    <div className={`tag-input-wrap ${className}`.trim()}>
+      <TextInput label={label} value={value} onChange={onChange} placeholder={placeholder} />
+      {tags.length ? <div className="niche-tag-preview">{tags.slice(0, 5).map(tag => <span key={tag}>{tag}</span>)}</div> : null}
+    </div>
+  );
+}
+
+function profileCompletion(profile: CreatorNicheProfile): { complete: number; total: number; firstIncomplete: string } {
+  const groups = [
+    { key: 'credibility', complete: [profile.professional_skills, profile.lived_experiences, profile.teaching_subjects, profile.three_years_ago_advice].some(value => value.trim()) },
+    { key: 'audience', complete: Boolean(profile.target_audience.trim() && profile.target_country && profile.target_language && profile.creator_presence && profile.content_formats.length && profile.weekly_production_capacity.trim()) },
+    { key: 'topic', complete: Boolean(profile.optional_broad_topic.trim()) },
+  ];
+  const complete = groups.filter(group => group.complete).length;
+  return { complete, total: groups.length, firstIncomplete: groups.find(group => !group.complete)?.key ?? 'credibility' };
+}
+
+function stableProfileKey(profile: CreatorNicheProfile): string {
+  return JSON.stringify({
+    professional_skills: profile.professional_skills,
+    hobbies: profile.hobbies,
+    lived_experiences: profile.lived_experiences,
+    teaching_subjects: profile.teaching_subjects,
+    three_years_ago_advice: profile.three_years_ago_advice,
+    target_audience: profile.target_audience,
+    target_country: profile.target_country,
+    target_language: profile.target_language,
+    creator_presence: profile.creator_presence,
+    content_formats: profile.content_formats,
+    optional_broad_topic: profile.optional_broad_topic,
+    weekly_production_capacity: profile.weekly_production_capacity,
+  });
+}
+
+function capacitySegment(value: string): string {
+  const normalized = value.trim().toLowerCase();
+  if (normalized.startsWith('1 ')) return '1 video per week';
+  if (normalized.startsWith('2 ')) return '2 videos per week';
+  if (normalized.startsWith('3 ')) return '3 videos per week';
+  if (normalized.startsWith('4 ')) return '4 videos per week';
+  return 'custom';
+}
+
+function countryLabel(value: string): string {
+  return { GB: 'United Kingdom', US: 'United States', PK: 'Pakistan', IN: 'India' }[value] || value;
+}
+
+function languageLabel(value: string): string {
+  return { en: 'English', ur: 'Urdu', hi: 'Hindi', ar: 'Arabic' }[value] || value;
+}
+
+function presenceLabel(value: string): string {
+  if (value.includes('faceless')) return 'Faceless';
+  if (value.includes('mixed')) return 'Mixed';
+  if (value.includes('personal')) return 'On-camera';
+  return formatLabel(value);
+}
+
+function StatusBadge({ tone = 'neutral', children }: { tone?: 'neutral' | 'success' | 'warning' | 'info'; children: ReactNode }) {
+  return <span className={`niche-status-badge is-${tone}`}>{children}</span>;
+}
+
+function usePrefersReducedMotion(): boolean {
+  const [reduced, setReduced] = useState(false);
+  useEffect(() => {
+    const query = window.matchMedia('(prefers-reduced-motion: reduce)');
+    const update = () => setReduced(query.matches);
+    update();
+    query.addEventListener('change', update);
+    return () => query.removeEventListener('change', update);
+  }, []);
+  return reduced;
+}
+
+function useInViewOnce<T extends HTMLElement | SVGElement>(threshold = 0.25): { ref: MutableRefObject<T | null>; inView: boolean; reducedMotion: boolean } {
+  const ref = useRef<T | null>(null);
+  const [inView, setInView] = useState(false);
+  const reducedMotion = usePrefersReducedMotion();
+
+  useEffect(() => {
+    if (reducedMotion) {
+      setInView(true);
+      return undefined;
+    }
+    const element = ref.current;
+    if (!element || inView) return undefined;
+    const observer = new IntersectionObserver(([entry]) => {
+      if (entry.isIntersecting && entry.intersectionRatio >= threshold) {
+        setInView(true);
+        observer.disconnect();
+      }
+    }, { threshold: [0, threshold, 1] });
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [inView, reducedMotion, threshold]);
+
+  return { ref, inView: inView || reducedMotion, reducedMotion };
+}
+
+function useAnimatedNumber(target: number, active: boolean, reducedMotion: boolean, duration = 900): number {
+  const [value, setValue] = useState(reducedMotion ? target : 0);
+
+  useEffect(() => {
+    if (reducedMotion) {
+      setValue(target);
+      return undefined;
+    }
+    if (!active) {
+      setValue(0);
+      return undefined;
+    }
+
+    let frame = 0;
+    let start: number | null = null;
+    const animate = (timestamp: number) => {
+      if (start == null) start = timestamp;
+      const progress = Math.min((timestamp - start) / duration, 1);
+      const eased = 1 - Math.pow(1 - progress, 3);
+      setValue(target * eased);
+      if (progress < 1) frame = window.requestAnimationFrame(animate);
+    };
+
+    frame = window.requestAnimationFrame(animate);
+    return () => window.cancelAnimationFrame(frame);
+  }, [active, duration, reducedMotion, target]);
+
+  return value;
+}
+
+function useDelayedActive(active: boolean, delay: number, reducedMotion: boolean): boolean {
+  const [delayedActive, setDelayedActive] = useState(reducedMotion ? true : active && delay === 0);
+
+  useEffect(() => {
+    if (reducedMotion || delay === 0) {
+      setDelayedActive(active || reducedMotion);
+      return undefined;
+    }
+    if (!active) {
+      setDelayedActive(false);
+      return undefined;
+    }
+    const timer = window.setTimeout(() => setDelayedActive(true), delay);
+    return () => window.clearTimeout(timer);
+  }, [active, delay, reducedMotion]);
+
+  return delayedActive;
+}
+
+function useRevealClass(): { ref: MutableRefObject<HTMLElement | null>; className: string } {
+  const { ref, inView, reducedMotion } = useInViewOnce<HTMLElement>(0.22);
+  return { ref, className: `scroll-reveal${inView || reducedMotion ? ' is-visible' : ''}` };
+}
+
+function ScrollReveal({ children, className = '' }: { children: ReactNode; className?: string }) {
+  const reveal = useRevealClass();
+  return <div ref={reveal.ref as RefObject<HTMLDivElement>} className={`${reveal.className} ${className}`.trim()}>{children}</div>;
+}
+
+function NichePanel({ title, children }: { title: string; children: ReactNode }) {
+  const reveal = useRevealClass();
+  return (
+    <section ref={reveal.ref as RefObject<HTMLElement>} className={`niche-detail-panel ${reveal.className}`.trim()}>
       <div className="niche-detail-title">{title}</div>
       {children}
     </section>
@@ -1337,13 +1646,17 @@ type GaugeSize = 'overall' | 'metric' | 'runway' | 'alternative';
 function ProgressCircle({ value, label, accent, max = 100, size = 'metric', ariaLabel }: { value: number; label?: string; accent: string; max?: number; size?: GaugeSize; ariaLabel: string }) {
   const numericValue = Number.isFinite(value) ? value : 0;
   const boundedValue = Math.max(0, Math.min(max, numericValue));
-  const displayValue = Math.round(numericValue);
+  const { ref, inView, reducedMotion } = useInViewOnce<HTMLDivElement>(0.25);
+  const delayedInView = useDelayedActive(inView, 80, reducedMotion);
+  const animatedValue = useAnimatedNumber(boundedValue, delayedInView, reducedMotion, 900);
+  const displayValue = Math.round(animatedValue);
   const radius = 42;
   const circumference = 2 * Math.PI * radius;
-  const progress = max > 0 ? boundedValue / max : 0;
+  const progress = max > 0 ? Math.max(0, Math.min(max, animatedValue)) / max : 0;
   const dashOffset = circumference * (1 - progress);
   return (
     <div
+      ref={ref}
       className={`niche-progress-circle niche-progress-circle-${size} accent-${accent}`}
       role="progressbar"
       aria-label={ariaLabel}
@@ -1370,11 +1683,16 @@ function ProgressCircle({ value, label, accent, max = 100, size = 'metric', aria
   );
 }
 
-function LinearProgress({ value, color, ariaLabel, className = '', displayValue }: { value: number; color?: string; ariaLabel: string; className?: string; displayValue?: string }) {
-  const boundedValue = clampScore(value);
-  const visibleWidth = boundedValue > 0 ? Math.max(boundedValue, 2) : 0;
+function LinearProgress({ value, color, ariaLabel, className = '', displayValue, max = 100, delay = 0 }: { value: number; color?: string; ariaLabel: string; className?: string; displayValue?: string; max?: number; delay?: number }) {
+  const numericValue = Number.isFinite(value) ? value : 0;
+  const boundedValue = Math.max(0, Math.min(max, numericValue));
+  const { ref, inView, reducedMotion } = useInViewOnce<HTMLSpanElement>(0.25);
+  const delayedInView = useDelayedActive(inView, delay, reducedMotion);
+  const animatedValue = useAnimatedNumber(boundedValue, delayedInView, reducedMotion, 760);
+  const visibleWidth = max > 0 ? Math.max(0, Math.min(100, (animatedValue / max) * 100)) : 0;
   return (
     <span
+      ref={ref}
       className={`niche-linear-progress ${className}`.trim()}
       role="progressbar"
       aria-label={ariaLabel}
@@ -1392,27 +1710,129 @@ function LinearProgress({ value, color, ariaLabel, className = '', displayValue 
   );
 }
 
-function DimensionCard({ row }: { row: DimensionRow }) {
-  const summary = conciseSummary(row.explanation);
+function DimensionCard({ row, open, detailPanelId, onToggle }: { row: DimensionRow; open: boolean; detailPanelId: string; onToggle: () => void }) {
   return (
     <div className={`niche-dimension-card accent-${row.accent}`}>
       <ProgressCircle value={row.score} accent={row.accent} size="metric" ariaLabel={`${row.label} score ${Math.round(row.score)} out of 100`} />
       <div className="niche-dimension-card-copy">
         <strong>{row.label}</strong>
         <span>{formatRatingBand(row.ratingBand ?? ratingBandForScore(row.score))}</span>
-        <p>{summary}</p>
-        {row.explanation.length > summary.length && <details><summary>Details</summary><p>{row.explanation}</p></details>}
+        <p>{row.explanation}</p>
+        <button className="dimension-detail-toggle" type="button" onClick={onToggle} aria-expanded={open} aria-controls={open ? detailPanelId : undefined} aria-label={`${open ? 'Hide' : 'Show'} ${row.label} details`}>
+          {open ? 'Hide details' : 'Details'}
+        </button>
       </div>
     </div>
   );
 }
 
-function conciseSummary(value: string): string {
-  const text = value.trim();
-  if (text.length <= 92) return text;
-  const sentence = text.split(/[.!?]/).map(part => part.trim()).find(Boolean);
-  if (sentence && sentence.length <= 92) return sentence + '.';
-  return text.slice(0, 89).trimEnd() + '...';
+function DimensionDetailPanel({ id, row, onClose }: { id: string; row: DimensionRow; onClose: () => void }) {
+  return (
+    <section id={id} className={`dimension-detail-panel accent-${row.accent}`} aria-live="polite" tabIndex={-1}>
+      <div>
+        <span>{row.label}</span>
+        <strong>{Math.round(row.score)} / 100 · {formatRatingBand(row.ratingBand ?? ratingBandForScore(row.score))}</strong>
+      </div>
+      <p>{row.explanation}</p>
+      <button className="link-button" type="button" onClick={onClose}>Close details</button>
+    </section>
+  );
+}
+
+function IdeaPreview({ titles, showTopics, onToggleTopics }: { titles: VideoTopic[]; showTopics: boolean; onToggleTopics: () => void }) {
+  const preview = titles.slice(0, 10);
+  const leftColumn = preview.slice(0, 5);
+  const rightColumn = preview.slice(5, 10);
+  return (
+    <div className="idea-preview">
+      <div className="idea-preview-grid">
+        <div className="idea-preview-column">
+          {leftColumn.map((topic, index) => <CompactIdeaRow key={`${topic.title}-${index}`} index={index + 1} topic={topic} />)}
+        </div>
+        <div className="idea-preview-column">
+          {rightColumn.map((topic, index) => <CompactIdeaRow key={`${topic.title}-${index + 5}`} index={index + 6} topic={topic} />)}
+        </div>
+      </div>
+      <div className="idea-preview-footer">
+        <span>{preview.length} shown{titles.length > preview.length ? ` from ${titles.length} runway ideas` : ''}</span>
+        {titles.length > 10 && <button className="generate-btn secondary" type="button" onClick={onToggleTopics}>{showTopics ? 'Hide idea explorer' : `View all ${titles.length} ideas`}</button>}
+      </div>
+      {showTopics && <div className="idea-expanded-list">{titles.slice(10).map((topic, index) => <CompactIdeaRow key={`${topic.title}-${index + 10}`} index={index + 11} topic={topic} />)}</div>}
+    </div>
+  );
+}
+
+function CompactIdeaRow({ index, topic }: { index: number; topic: VideoTopic }) {
+  return (
+    <div className="compact-idea-row">
+      <span className="idea-number">{index}</span>
+      <span className="idea-row-copy">
+        <strong>{topic.title}</strong>
+        {(topic.pillar || topic.intent || topic.evidence_status) && <small>{[topic.pillar, topic.intent, topic.evidence_status].filter(Boolean).join(' · ')}</small>}
+      </span>
+    </div>
+  );
+}
+
+function EvidenceSection({ candidate }: { candidate: NicheCandidate }) {
+  const queries = candidate.search_queries_used?.length ? candidate.search_queries_used : candidate.validation.search_phrases ?? [];
+  return (
+    <div className="evidence-section">
+      <TextBlock label="Evidence summary" value={candidate.evidence_summary || candidate.validation.market_evidence_summary} />
+      <LabelledChips label="Search queries used" items={queries} />
+      {candidate.outliers?.length ? (
+        <div className="niche-outlier-list">{candidate.outliers.map(outlier => <EvidenceVideoRow outlier={outlier} key={outlier.canonical_url} />)}</div>
+      ) : (
+        <div className="muted-note">No validated outlier examples are available for this evidence mode.</div>
+      )}
+    </div>
+  );
+}
+
+function EvidenceVideoRow({ outlier }: { outlier: OutlierEvidence }) {
+  return (
+    <a className="niche-outlier" href={outlier.canonical_url} target="_blank" rel="noreferrer">
+      {outlier.thumbnail_url ? <img src={outlier.thumbnail_url} alt="" loading="lazy" /> : <span className="niche-outlier-icon" aria-hidden="true">▶</span>}
+      <span>
+        <strong>{outlier.title}</strong>
+        <small>{outlier.channel_name} · {formatCount(outlier.public_views)} views · {outlier.publication_age}</small>
+        <em>{outlier.outlier_reason}</em>
+      </span>
+    </a>
+  );
+}
+
+function RiskSection({ candidate }: { candidate: NicheCandidate }) {
+  return (
+    <div className="risk-section">
+      {candidate.risks?.length ? (
+        <div className="risk-list">
+          {candidate.risks.map(risk => <div className="risk-row" key={risk}><span aria-hidden="true" />{risk}</div>)}
+        </div>
+      ) : (
+        <div className="muted-note">No candidate-specific risks were returned.</div>
+      )}
+      <Limitations items={candidate.market_evidence?.limitations ?? []} />
+    </div>
+  );
+}
+
+function ScoreMethodology({ methodology, limitations }: { methodology: string[]; limitations: string[] }) {
+  const reveal = useRevealClass();
+  return (
+    <details ref={reveal.ref as RefObject<HTMLDetailsElement>} className={`score-methodology ${reveal.className}`.trim()}>
+      <summary>Score methodology</summary>
+      <div className="methodology-steps">
+        {methodology.length ? methodology.map((item, index) => (
+          <div className="methodology-step" key={item}>
+            <span>{index + 1}</span>
+            <p>{item}</p>
+          </div>
+        )) : <div className="muted-note">No methodology details returned.</div>}
+      </div>
+      <Limitations items={limitations} />
+    </details>
+  );
 }
 
 function ratingBandForScore(score: number): string {
@@ -1435,23 +1855,42 @@ function formatRatingBand(value: string): string {
 }
 
 function RadarChart({ rows }: { rows: DimensionRow[] }) {
+  const { ref, inView, reducedMotion } = useInViewOnce<SVGSVGElement>(0.25);
+  const animatedRadiusScale = useAnimatedNumber(1, inView, reducedMotion, 900);
   const points = rows.map((row, i) => {
     const angle = (-90 + i * (360 / rows.length)) * Math.PI / 180;
-    const radius = 18 + (clampScore(row.score) / 100) * 72;
+    const radius = (18 + (clampScore(row.score) / 100) * 72) * animatedRadiusScale;
     return `${100 + Math.cos(angle) * radius},${100 + Math.sin(angle) * radius}`;
   }).join(' ');
-  return <svg className="niche-radar" viewBox="0 0 200 200" role="img" aria-label="Strategic scoring radar based on model-derived dimensions and backend normalization"><polygon className="radar-grid" points="100,20 176,75 147,165 53,165 24,75" /><polygon className="radar-shape" points={points} />{rows.map((row, i) => { const angle = (-90 + i * (360 / rows.length)) * Math.PI / 180; return <text key={row.key} x={100 + Math.cos(angle) * 92} y={104 + Math.sin(angle) * 92}>{row.label.split(' ')[0]}</text>; })}</svg>;
+  const labelMap: Record<string, string> = {
+    creator_fit: 'Creator',
+    audience_demand: 'Audience',
+    competition_opportunity: 'Competition',
+    sustainability: 'Sustainability',
+    differentiation: 'Differentiation',
+  };
+  return (
+    <svg ref={ref} className="niche-radar" viewBox="-26 -14 252 228" role="img" aria-label="Strategic scoring radar: Creator Fit, Audience Demand, Competition Opportunity, Content Sustainability, and Differentiation">
+      <desc>Strategic scoring radar with full dimension labels: Creator Fit, Audience Demand, Competition Opportunity, Content Sustainability, and Differentiation.</desc>
+      <polygon className="radar-grid" points="100,20 176,75 147,165 53,165 24,75" />
+      <polygon className="radar-shape" points={points} style={{ opacity: 0.08 + (animatedRadiusScale * 0.14) }} />
+      {rows.map((row, i) => {
+        const angle = (-90 + i * (360 / rows.length)) * Math.PI / 180;
+        return <text key={row.key} x={100 + Math.cos(angle) * 112} y={104 + Math.sin(angle) * 104}>{labelMap[row.key] ?? row.label}</text>;
+      })}
+    </svg>
+  );
 }
 
 function ContributionChart({ rows }: { rows: DimensionRow[] }) {
   return (
     <div className="niche-contribution-chart" aria-label="Deterministic weighted score contribution">
-      {rows.map(row => {
+      {rows.map((row, index) => {
         const contribution = row.score * row.weight;
         return (
           <div key={row.key} className={`contribution-row accent-${row.accent}`}>
             <span>{row.label}</span>
-            <LinearProgress value={contribution} color="var(--accent)" ariaLabel={`${row.label} contribution ${contribution.toFixed(1)} points`} />
+            <LinearProgress value={contribution} max={row.weight * 100} color="var(--accent)" delay={index * 55} ariaLabel={`${row.label} contribution ${contribution.toFixed(1)} points out of ${(row.weight * 100).toFixed(0)} possible`} />
             <strong>{contribution.toFixed(1)}</strong>
           </div>
         );
@@ -1461,25 +1900,107 @@ function ContributionChart({ rows }: { rows: DimensionRow[] }) {
 }
 
 function PillarChart({ pillars }: { pillars: ContentPillar[] }) {
+  const { ref, inView, reducedMotion } = useInViewOnce<HTMLDivElement>(0.25);
   if (!pillars.length) return <div className="muted-note">No content-pillar allocation returned.</div>;
-  return <div className="pillar-chart"><div className="pillar-stack">{pillars.map(p => <span key={p.name} style={{ width: `${p.percentage ?? 0}%` }} title={`${p.name}: ${Math.round(p.percentage ?? 0)}%`} />)}</div>{pillars.map(p => <div className="pillar-row" key={p.name}><span>{p.name}</span><strong>{Math.round(p.percentage ?? 0)}% · {p.topic_count} topics</strong></div>)}</div>;
+  return (
+    <div ref={ref} className="pillar-chart">
+      <div className="pillar-stack">
+        {pillars.map((p, index) => (
+          <AnimatedPillarSegment
+            key={p.name}
+            percentage={p.percentage ?? 0}
+            title={`${p.name}: ${Math.round(p.percentage ?? 0)}%`}
+            active={inView}
+            reducedMotion={reducedMotion}
+            delay={index * 55}
+          />
+        ))}
+      </div>
+      {pillars.map((p, index) => <div className="pillar-row accent-cyan" key={p.name}><span>{p.name}</span><LinearProgress value={p.percentage ?? 0} delay={index * 55} ariaLabel={`${p.name} content-pillar distribution ${Math.round(p.percentage ?? 0)} percent`} /><strong>{Math.round(p.percentage ?? 0)}% · {p.topic_count} topics</strong></div>)}
+    </div>
+  );
+}
+
+function AnimatedPillarSegment({ percentage, title, active, reducedMotion, delay }: { percentage: number; title: string; active: boolean; reducedMotion: boolean; delay: number }) {
+  const delayedActive = useDelayedActive(active, delay, reducedMotion);
+  const animatedValue = useAnimatedNumber(Math.max(0, Math.min(100, percentage)), delayedActive, reducedMotion, 760);
+  return <span style={{ width: `${animatedValue}%` }} title={title} aria-hidden="true" />;
 }
 
 function RunwayCard({ candidate, pillars }: { candidate: NicheCandidate; pillars: ContentPillar[] }) {
   const topicCount = candidate.runway?.viable_topic_count ?? candidate.sustainability.viable_topic_count;
-  return <div className="runway-card"><ProgressCircle value={topicCount} max={50} label={`${topicCount} ideas`} accent="cyan" size="runway" ariaLabel={`Content runway ${topicCount} ideas out of 50`} /><MetricGrid values={{ Ideas: topicCount, 'Production weeks': candidate.runway?.estimated_weeks, 'Weekly capacity': candidate.runway?.weekly_capacity, Runway: candidate.runway?.estimated_content_runway ?? candidate.sustainability.estimated_content_runway }} />{candidate.runway?.limitation && <div className="muted-note">{candidate.runway.limitation}</div>}<PillarChart pillars={pillars} /></div>;
+  const weeks = candidate.runway?.estimated_weeks;
+  const capacity = candidate.runway?.weekly_capacity;
+  const statement = candidate.runway?.estimated_content_runway ?? candidate.sustainability.estimated_content_runway;
+  return (
+    <div className="runway-card">
+      <ProgressCircle value={topicCount} max={50} label={`${topicCount} ideas`} accent="cyan" size="runway" ariaLabel={`Content runway ${topicCount} ideas out of 50`} />
+      <div className="runway-copy">
+        <div className="runway-stat-strip">
+          <MetricStat label="Ideas" value={topicCount} />
+          <MetricStat label="Production weeks" value={weeks ?? 'Unavailable'} />
+          <MetricStat label="Videos per week" value={capacity ?? 'Unavailable'} />
+        </div>
+        <p className="runway-statement">{statement || 'Runway estimate unavailable.'}</p>
+        {candidate.runway?.limitation && <div className="muted-note">{candidate.runway.limitation}</div>}
+      </div>
+      <PillarChart pillars={pillars} />
+    </div>
+  );
 }
 
 function DemandEvidence({ candidate }: { candidate: NicheCandidate }) {
   const ev = candidate.market_evidence;
   if (!ev || ev.sample_size === 0) return <UnavailableChart title="No provider time series available" desc="This candidate is based on AI strategic analysis and available trend context, not fabricated historical points." />;
-  return <div className="demand-evidence-summary"><MetricGrid values={{ 'Evidence mode': evidenceModeLabel(ev.status), 'Sample size': ev.sample_size, 'Median views': ev.median_views == null ? 'Unavailable' : formatCount(ev.median_views), Engagement: ev.engagement == null ? 'Unavailable' : `${ev.engagement}%`, 'Recent activity': ev.recent_activity, Collected: ev.collected_at ? formatCacheTime(ev.collected_at) : 'Unavailable' }} /></div>;
+  return (
+    <div className="demand-evidence-summary">
+      <div className="demand-evidence-head">
+        <StatusBadge tone={ev.status === 'live_validated' ? 'success' : 'info'}>{evidenceModeLabel(ev.status)}</StatusBadge>
+      </div>
+      <div className="demand-metric-row">
+        <MetricStat label="Sample size" value={ev.sample_size} />
+        <MetricStat label="Median views" value={ev.median_views == null ? 'Unavailable' : formatCount(ev.median_views)} />
+        <MetricStat label="Engagement" value={ev.engagement == null ? 'Unavailable' : `${ev.engagement}%`} />
+      </div>
+      <div className="demand-meta-row">
+        <span><strong>Recent activity:</strong> {ev.recent_activity || 'Unavailable'}</span>
+        <span><strong>Collected:</strong> {ev.collected_at ? formatCacheTime(ev.collected_at) : 'Unavailable'}</span>
+      </div>
+    </div>
+  );
+}
+
+function MetricStat({ label, value }: { label: string; value: unknown }) {
+  return (
+    <div className="metric-stat">
+      <span>{label}</span>
+      <strong>{formatMetric(label, value)}</strong>
+    </div>
+  );
 }
 
 function CompetitionVisual({ candidate }: { candidate: NicheCandidate }) {
-  const opportunity = candidate.dimensions?.competition_opportunity?.score ?? candidate.scores.opportunity_gap.score;
-  const demand = candidate.dimensions?.audience_demand?.score ?? candidate.scores.demand.score;
-  return <div className="quadrant-chart" aria-label="Model-derived demand and opportunity position"><span style={{ left: `${clampScore(opportunity)}%`, bottom: `${clampScore(demand)}%` }} /><small>Model-derived strategic scoring, not provider measurement</small></div>;
+  const competition = candidate.dimensions?.competition_opportunity ?? candidate.scores.opportunity_gap;
+  const demand = candidate.dimensions?.audience_demand ?? candidate.scores.demand;
+  const demandSignal = candidate.market_evidence?.recent_activity || candidate.evidence_summary || candidate.validation.market_evidence_summary;
+  const competitionSignal = candidate.validation.competition_level
+    ? `${formatLabel(candidate.validation.competition_level)} competition. ${competition.explanation}`
+    : competition.explanation;
+  const interpretation = candidate.opportunity_gaps?.[0] || candidate.supply_gaps?.[0]?.statement || candidate.recommended_first_action;
+  return (
+    <div className="competition-insight-panel" aria-label="Competition opportunity insight">
+      <div className="competition-insight-score">
+        <strong>{Math.round(competition.score)} / 100</strong>
+        <span>{formatRatingBand(competition.rating_band ?? ratingBandForScore(competition.score))}</span>
+      </div>
+      <TextBlock label="Strategic explanation" value={competition.explanation} />
+      <div className="competition-signal-grid">
+        <TextBlock label="Demand signal" value={demandSignal || demand.explanation} />
+        <TextBlock label="Competition signal" value={competitionSignal} />
+      </div>
+      <TextBlock label="Interpretation" value={interpretation} />
+    </div>
+  );
 }
 
 function UnavailableChart({ title, desc }: { title: string; desc: string }) {
@@ -1487,9 +2008,10 @@ function UnavailableChart({ title, desc }: { title: string; desc: string }) {
 }
 
 function AlternativeCandidates({ candidates, unavailableReason, expandedID, onToggle }: { candidates: NicheCandidate[]; unavailableReason?: string; expandedID: string | null; onToggle: (id: string | null) => void }) {
-  if (!candidates.length) return <section className="alternative-candidates"><div className="settings-card-title">Alternative candidates</div><UnavailableChart title="Alternatives unavailable" desc={unavailableReason || 'No validated alternative candidates were returned after structured output validation.'} /></section>;
+  const reveal = useRevealClass();
+  if (!candidates.length) return <section ref={reveal.ref as RefObject<HTMLElement>} className={`alternative-candidates ${reveal.className}`.trim()}><div className="settings-card-title">Alternative candidates</div><UnavailableChart title="Alternatives unavailable" desc={unavailableReason || 'No validated alternative candidates were returned after structured output validation.'} /></section>;
   return (
-    <section className="alternative-candidates">
+    <section ref={reveal.ref as RefObject<HTMLElement>} className={`alternative-candidates ${reveal.className}`.trim()}>
       <div className="settings-card-title">Alternative candidates</div>
       {candidates.map(candidate => {
         const isExpanded = expandedID === candidate.id;
@@ -1526,10 +2048,10 @@ function AlternativeCandidates({ candidates, unavailableReason, expandedID, onTo
 function DimensionBars({ rows }: { rows: DimensionRow[] }) {
   return (
     <span className="dimension-bars" aria-label="Strategic dimension scores">
-      {rows.map(row => (
-        <span className={`dimension-bar-row accent-${row.accent}`} key={row.key}>
+      {rows.map((row, index) => (
+        <span className={`dimension-bar-row accent-${row.accent}`} key={row.key} data-score={Math.round(row.score)}>
           <span className="dimension-bar-label">{row.label}</span>
-          <LinearProgress value={row.score} color="var(--accent)" ariaLabel={`${row.label} score ${Math.round(row.score)} out of 100`} />
+          <LinearProgress value={row.score} color="var(--accent)" delay={index * 55} ariaLabel={`${row.label} score ${Math.round(row.score)} out of 100`} />
         </span>
       ))}
     </span>
@@ -1831,12 +2353,16 @@ function Select({ label, value, onChange, options }: { label: string; value: str
   );
 }
 
-function TextInput({ label, value, onChange, placeholder }: { label: string; value: string; onChange: (value: string) => void; placeholder: string }) {
+function TextInput({ label, value, onChange, placeholder, className = '', multiline = false }: { label: string; value: string; onChange: (value: string) => void; placeholder: string; className?: string; multiline?: boolean }) {
   const id = useId();
   return (
-    <div className="form-group">
+    <div className={`form-group ${className}`.trim()}>
       <label className="form-label" htmlFor={id}>{label}</label>
-      <input id={id} className="form-input" value={value} onChange={event => onChange(event.target.value)} placeholder={placeholder} />
+      {multiline ? (
+        <textarea id={id} className="form-input niche-textarea" value={value} onChange={event => onChange(event.target.value)} placeholder={placeholder} rows={2} />
+      ) : (
+        <input id={id} className="form-input" value={value} onChange={event => onChange(event.target.value)} placeholder={placeholder} />
+      )}
     </div>
   );
 }

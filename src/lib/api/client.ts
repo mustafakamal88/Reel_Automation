@@ -917,6 +917,15 @@ export async function analyzeNicheOpportunities(body: NicheOpportunityRequest): 
 }
 
 export async function researchNiches(body: NicheResearchRequest): Promise<NicheReport> {
+  if (import.meta.env.DEV && import.meta.env.VITE_NICHE_FIXTURE === '1') {
+    const { nicheFinderFixtureReport } = await import('../../data/nicheFinderFixture');
+    return {
+      ...nicheFinderFixtureReport,
+      profile: body.profile,
+      created_at: new Date().toISOString(),
+      generated_at: new Date().toISOString(),
+    };
+  }
   return apiFetch('/api/niches/research', {
     method: 'POST',
     body: JSON.stringify(body),
