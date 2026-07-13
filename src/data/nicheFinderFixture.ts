@@ -87,7 +87,7 @@ function candidate(id: string, name: string, score: number, scoreSet: [number, n
     ],
     unique_angle: 'Calm, evidence-led AI automation tutorials for UK service businesses, focused on durable workflows and operational safeguards.',
     overall_score: score,
-    confidence: 'High',
+    confidence: 'medium',
     dimensions: dimensions(scoreSet),
     content_pillars: pillars,
     recommended_titles: recommendedTitles,
@@ -203,7 +203,7 @@ const primary = candidate('fixture-primary', 'AI Automation Systems for UK Servi
 
 export const nicheFinderFixtureReport: NicheReport = {
   id: 'fixture-niche-report',
-  schema_version: 'niche_report_v2_scores_runway_50',
+  schema_version: 'niche_report_v3_relevance_confidence_alternatives',
   status: 'ok',
   message: 'Fixture response for local visual QA.',
   generated_at: '2026-07-12T09:30:00Z',
@@ -236,7 +236,7 @@ export const nicheFinderFixtureReport: NicheReport = {
   cache: {
     hit: false,
     cache_hit: false,
-    schema_version: 'niche_report_v2_scores_runway_50',
+    schema_version: 'niche_report_v3_relevance_confidence_alternatives',
     key: 'fixture',
     stored_at: '2026-07-12T09:30:00Z',
     ttl: '6h',

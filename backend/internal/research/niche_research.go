@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"math"
 	"net/http"
 	"sort"
@@ -20,7 +21,7 @@ import (
 
 const publicRPMUnavailableMessage = "Currency estimate unavailable until sufficient monetization evidence is connected."
 
-const NicheReportSchemaVersion = "niche_report_v2_scores_runway_50"
+const NicheReportSchemaVersion = "niche_report_v3_relevance_confidence_alternatives"
 
 const (
 	NicheStatusInsufficientEvidence           = "insufficient_evidence"
@@ -368,6 +369,10 @@ type NicheStrategyRepairer interface {
 	RepairCandidates(ctx context.Context, input NicheStrategyInput, previous NicheStrategyResult, issues []string) (NicheStrategyResult, error)
 }
 
+type NichePrimaryIdeaRepairer interface {
+	RepairPrimaryIdeas(ctx context.Context, input NicheStrategyInput, draft NicheDraft, missingCount int, acceptedTitles []string, rejectedTitles []string) ([]VideoTopic, error)
+}
+
 type NicheStrategyInput struct {
 	Profile          CreatorNicheProfile      `json:"profile"`
 	RisingSignals    []string                 `json:"rising_signals"`
@@ -522,6 +527,125 @@ func (s OpenAINicheStrategist) RepairCandidates(ctx context.Context, input Niche
 		{"role": "system", "content": nicheStrategySystemPrompt()},
 		{"role": "user", "content": mustJSON(repairPayload)},
 	})
+}
+
+func (s OpenAINicheStrategist) RepairPrimaryIdeas(ctx context.Context, input NicheStrategyInput, draft NicheDraft, missingCount int, acceptedTitles []string, rejectedTitles []string) ([]VideoTopic, error) {
+	if missingCount <= 0 {
+		return nil, nil
+	}
+	payload := map[string]any{
+		"input":           input,
+		"primary_niche":   draft,
+		"missing_count":   missingCount,
+		"valid_pillars":   contentPillarNames(draft.ContentPillars),
+		"accepted_titles": topN(acceptedTitles, 60),
+		"rejected_titles": topN(rejectedTitles, 30),
+		"instructions": []string{
+			"Return exactly missing_count new primary video ideas.",
+			"Use only the supplied primary niche context, target audience, opportunity gaps, creator profile, and valid pillars.",
+			"Every idea must reference one valid_pillars value exactly.",
+			"Do not request or invent YouTube evidence.",
+			"Do not include software/app-building ideas unless the primary niche is software development.",
+			"Do not include fashion, cooking, fitness, or unrelated lifestyle ideas unless the primary niche explicitly requires them.",
+			"Do not repeat accepted_titles or rejected_titles.",
+		},
+	}
+	result, err := s.openAIRequestForTopics(ctx, []map[string]string{
+		{"role": "system", "content": "You repair a TrendCortex Niche Finder content runway. Return strict JSON containing only relevant, user-facing video ideas for the supplied primary niche."},
+		{"role": "user", "content": mustJSON(payload)},
+	})
+	if err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+func (s OpenAINicheStrategist) openAIRequestForTopics(ctx context.Context, messages []map[string]string) ([]VideoTopic, error) {
+	if strings.TrimSpace(s.APIKey) == "" {
+		return nil, ErrNotConfigured
+	}
+	model := strings.TrimSpace(s.Model)
+	if model == "" {
+		model = "gpt-4o-mini"
+	}
+	stringSchema := map[string]any{"type": "string"}
+	topicSchema := map[string]any{
+		"type":                 "object",
+		"additionalProperties": false,
+		"properties": map[string]any{
+			"title":           stringSchema,
+			"pillar":          stringSchema,
+			"intent":          stringSchema,
+			"difficulty":      stringSchema,
+			"source":          stringSchema,
+			"evidence_status": stringSchema,
+		},
+		"required": []string{"title", "pillar", "intent", "difficulty", "source", "evidence_status"},
+	}
+	payload := map[string]any{
+		"model":       model,
+		"messages":    messages,
+		"temperature": 0.25,
+		"response_format": map[string]any{
+			"type": "json_schema",
+			"json_schema": map[string]any{
+				"name":   "niche_primary_idea_repair",
+				"strict": true,
+				"schema": map[string]any{
+					"type":                 "object",
+					"additionalProperties": false,
+					"properties":           map[string]any{"ideas": map[string]any{"type": "array", "items": topicSchema}},
+					"required":             []string{"ideas"},
+				},
+			},
+		},
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return nil, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://api.openai.com/v1/chat/completions", bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+s.APIKey)
+	req.Header.Set("Content-Type", "application/json")
+	client := s.HTTPClient
+	if client == nil {
+		client = &http.Client{Timeout: 90 * time.Second}
+	}
+	res, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer res.Body.Close()
+	resBody, err := io.ReadAll(io.LimitReader(res.Body, 2<<20))
+	if err != nil {
+		return nil, err
+	}
+	if res.StatusCode < 200 || res.StatusCode >= 300 {
+		return nil, fmt.Errorf("openai niche idea repair returned HTTP %d: %s", res.StatusCode, trimForLog(resBody))
+	}
+	var parsed struct {
+		Choices []struct {
+			Message struct {
+				Content string `json:"content"`
+			} `json:"message"`
+		} `json:"choices"`
+	}
+	if err := json.Unmarshal(resBody, &parsed); err != nil {
+		return nil, err
+	}
+	if len(parsed.Choices) == 0 || strings.TrimSpace(parsed.Choices[0].Message.Content) == "" {
+		return nil, errors.New("openai niche idea repair response did not include content")
+	}
+	var out struct {
+		Ideas []VideoTopic `json:"ideas"`
+	}
+	if err := json.Unmarshal([]byte(parsed.Choices[0].Message.Content), &out); err != nil {
+		return nil, err
+	}
+	return out.Ideas, nil
 }
 
 func (s OpenAINicheStrategist) openAIRequest(ctx context.Context, messages []map[string]string) (NicheStrategyResult, error) {
@@ -815,6 +939,27 @@ func ResearchNiches(ctx context.Context, req NicheResearchRequest, cfg NicheRese
 		report.AnalysisMode = "invalid_model_output"
 		return report, nil
 	}
+	primaryIndex := primaryDraftIndex(drafts, strategy.PrimaryRecommendation)
+	if primaryIndex >= 0 && len(drafts[primaryIndex].RecommendedTitles) < 50 {
+		missing := 50 - len(drafts[primaryIndex].RecommendedTitles)
+		if repairer, ok := strategist.(NichePrimaryIdeaRepairer); ok && missing > 0 {
+			ctxInfo := primaryNicheContextFromDraft(drafts[primaryIndex], profile)
+			accepted := videoTopicTitles(drafts[primaryIndex].RecommendedTitles)
+			_, rejected := validateVideoTitlesWithContext(strategyCandidateTitles(strategy.Candidates, drafts[primaryIndex].ID, drafts[primaryIndex].Name), ctxInfo)
+			log.Printf("niche_semantic_repair_attempted candidate_id=%s missing_count=%d rejected_count=%d", drafts[primaryIndex].ID, missing, len(rejected))
+			repairedTopics, repairErr := repairer.RepairPrimaryIdeas(ctx, strategyInput, drafts[primaryIndex], missing, accepted, rejected)
+			if repairErr == nil && len(repairedTopics) > 0 {
+				combined := append([]VideoTopic{}, drafts[primaryIndex].RecommendedTitles...)
+				combined = append(combined, repairedTopics...)
+				drafts[primaryIndex].RecommendedTitles, _ = validateVideoTitlesWithContext(combined, ctxInfo)
+				if len(drafts[primaryIndex].RecommendedTitles) > 50 {
+					drafts[primaryIndex].RecommendedTitles = drafts[primaryIndex].RecommendedTitles[:50]
+				}
+				drafts[primaryIndex].ContentPillars = normalizeContentPillars(drafts[primaryIndex].ContentPillars, drafts[primaryIndex].RecommendedTitles)
+				log.Printf("niche_semantic_repair_completed candidate_id=%s final_idea_count=%d", drafts[primaryIndex].ID, len(drafts[primaryIndex].RecommendedTitles))
+			}
+		}
+	}
 	candidates := make([]NicheCandidate, 0, len(drafts))
 	for _, draft := range drafts {
 		candidate := buildAICandidate(draft, profile, rising, generatedAt)
@@ -861,10 +1006,13 @@ func ResearchNiches(ctx context.Context, req NicheResearchRequest, cfg NicheRese
 	report.Candidates = candidates
 	report.PrimaryRecommendation = &report.Candidates[0]
 	if len(report.Candidates) > 1 {
-		report.AlternativeCandidates = append([]NicheCandidate{}, report.Candidates[1:]...)
+		report.AlternativeCandidates = distinctAlternativeCandidates(report.Candidates[0], report.Candidates[1:], 4)
+		if len(report.AlternativeCandidates) != len(report.Candidates)-1 {
+			log.Printf("niche_alternatives_repaired kept=%d candidate_count=%d", len(report.AlternativeCandidates), len(report.Candidates))
+		}
 	}
 	if len(report.AlternativeCandidates) < 2 {
-		report.Limitations = append(report.Limitations, "Fewer than two validated alternative candidates were available after structured output validation.")
+		report.Limitations = append(report.Limitations, "We could not validate two sufficiently distinct alternatives from the available evidence. Broaden the topic or audience to explore more options.")
 	}
 	report.Internal.Provenance = []string{"openai_structured_strategy", "backend_score_normalization", "optional_budgeted_youtube_validation", "current_trend_overlap"}
 	report, _, _ = FinalizeNicheReportForResponse(report)
@@ -1164,9 +1312,11 @@ func collectBudgetedNicheEvidence(ctx context.Context, provider NicheEvidencePro
 	if cache != nil {
 		if ev, _, ok, fresh := cache.get(key, now); ok {
 			if fresh {
+				log.Printf("niche_evidence_reused cache_key=%s query=%q", key, query)
 				return ev, nil
 			}
 			if provider == nil || provider.Status().Status != StatusActive || !budget.allow() {
+				log.Printf("niche_evidence_reused cache_key=%s query=%q freshness=stale", key, query)
 				return ev, nil
 			}
 		}
@@ -1323,18 +1473,15 @@ func validateNicheDrafts(drafts []NicheDraft, profile CreatorNicheProfile) ([]Ni
 		if draft.TargetAudience == "" {
 			draft.TargetAudience = firstNonEmpty(profile.TargetAudience, countryAudience(profile.TargetCountry))
 		}
-		draft.RecommendedTitles = validateVideoTitles(draft.RecommendedTitles, draft.ContentPillars, draft.Name, draft.TargetAudience)
+		var rejected []string
+		draft.RecommendedTitles, rejected = validateVideoTitlesWithContext(draft.RecommendedTitles, primaryNicheContextFromDraft(draft, profile))
 		draft.ContentPillars = normalizeContentPillars(draft.ContentPillars, draft.RecommendedTitles)
 		if len(draft.RecommendedTitles) < 50 {
-			draft.RecommendedTitles = append(draft.RecommendedTitles, fallbackTitles(draft, 50-len(draft.RecommendedTitles))...)
-			draft.ContentPillars = normalizeContentPillars(draft.ContentPillars, draft.RecommendedTitles)
+			issues = append(issues, fmt.Sprintf("%s returned %d usable unique titles; rejected %d", draft.Name, len(draft.RecommendedTitles), len(rejected)))
 		}
 		if len(draft.RecommendedTitles) > 50 {
 			draft.RecommendedTitles = draft.RecommendedTitles[:50]
 			draft.ContentPillars = normalizeContentPillars(draft.ContentPillars, draft.RecommendedTitles)
-		}
-		if len(draft.RecommendedTitles) < 50 {
-			issues = append(issues, fmt.Sprintf("%s returned %d usable unique titles", draft.Name, len(draft.RecommendedTitles)))
 		}
 		out = append(out, draft)
 	}
@@ -1441,12 +1588,13 @@ func applyEvidenceToCandidate(candidate *NicheCandidate, evidence nicheEvidence,
 	demandScore := scoreDemandValidation(validation)
 	gapScore := scoreOpportunityGap(validation, outliers, candidate.SupplyGaps)
 	candidate.Scores.Demand = ScoreExplanation{Score: demandScore, Label: scoreLabel(demandScore), RatingBand: inferRatingFromScore(demandScore), Explanation: validation.MarketEvidenceSummary}
-	candidate.Scores.OpportunityGap = ScoreExplanation{Score: gapScore, Label: scoreLabel(gapScore), RatingBand: inferRatingFromScore(gapScore), Explanation: "Uses capped public evidence, outliers, and gap statements when validation is available. A perfect opportunity score requires strong recent evidence, not only a gap statement."}
+	candidate.Scores.OpportunityGap = ScoreExplanation{Score: gapScore, Label: scoreLabel(gapScore), RatingBand: inferRatingFromScore(gapScore), Explanation: competitionOpportunityExplanation(validation, outliers, candidate.SupplyGaps)}
 	candidate.Dimensions.AudienceDemand = candidate.Scores.Demand
 	candidate.Dimensions.CompetitionOpportunity = candidate.Scores.OpportunityGap
 	candidate.OverallScore = calculateNicheOverallScore(candidate.Dimensions)
 	candidate.Scores.Overall.Score = candidate.OverallScore
 	candidate.Scores.Overall.Label = scoreLabel(candidate.OverallScore)
+	*candidate = finalizeEvidenceAndConfidence(*candidate)
 }
 
 func marketEvidenceFromValidation(v NicheValidation, ev nicheEvidence) MarketEvidence {
@@ -1461,8 +1609,9 @@ func marketEvidenceFromValidation(v NicheValidation, ev nicheEvidence) MarketEvi
 		engagement = &value
 	}
 	collected := ev.collectedAt
+	status := evidenceStatusFromValidation(v, firstNonEmpty(ev.mode, evidenceModeLiveValidated))
 	return MarketEvidence{
-		Status:         firstNonEmpty(ev.mode, evidenceModeLiveValidated),
+		Status:         status,
 		SourceTypes:    []string{"youtube_public_search", "youtube_public_video_statistics"},
 		SampleSize:     v.SampledVideoCount,
 		RecentActivity: firstNonEmpty(v.NewestActivity, "Unavailable"),
@@ -1471,6 +1620,25 @@ func marketEvidenceFromValidation(v NicheValidation, ev nicheEvidence) MarketEvi
 		CollectedAt:    &collected,
 		Limitations:    []string{"A capped YouTube sample validates public activity only; it does not represent full market size or private channel analytics."},
 	}
+}
+
+func evidenceStatusFromValidation(v NicheValidation, mode string) string {
+	if v.SampledVideoCount == 0 {
+		return "evidence_unavailable"
+	}
+	if v.RecentPublicationVolume == 0 {
+		if v.NewestActivity != "" {
+			return "historical_public_evidence"
+		}
+		return "limited_recent_evidence"
+	}
+	if mode == evidenceModeLiveValidated && v.RecentPublicationVolume >= 4 {
+		return evidenceModeLiveValidated
+	}
+	if mode == evidenceModeCacheValidated {
+		return "public_evidence_validated"
+	}
+	return "limited_recent_evidence"
 }
 
 func videosWithPublicMetrics(videos []ChannelVideoSummary) int {
@@ -1952,12 +2120,12 @@ func FinalizeNicheReportForResponse(report NicheReport) (NicheReport, []string, 
 	report.Candidates = valid
 	report.PrimaryRecommendation = &report.Candidates[0]
 	if len(report.Candidates) > 1 {
-		report.AlternativeCandidates = append([]NicheCandidate{}, report.Candidates[1:]...)
+		report.AlternativeCandidates = distinctAlternativeCandidates(report.Candidates[0], report.Candidates[1:], 4)
 	} else {
 		report.AlternativeCandidates = nil
 	}
 	if len(report.AlternativeCandidates) < 2 {
-		report.Limitations = appendStringGroups(report.Limitations, []string{"Fewer than two validated alternative candidates were available after final response validation."})
+		report.Limitations = appendStringGroups(report.Limitations, []string{"We could not validate two sufficiently distinct alternatives from the available evidence. Broaden the topic or audience to explore more options."})
 	}
 	if len(issues) > 0 {
 		report.Limitations = appendStringGroups(report.Limitations, []string{"Final response validation adjusted cached or generated report fields: " + strings.Join(topN(issues, 4), "; ")})
@@ -1971,7 +2139,6 @@ func finalizeNicheCandidateForResponse(candidate NicheCandidate, profile Creator
 	if candidate.Name == "" {
 		return candidate, append(issues, "candidate missing name at response validation"), false
 	}
-	audience := firstNonEmpty(candidate.TargetAudience, candidate.TargetViewer, profile.TargetAudience)
 	pillars := candidate.ContentPillars
 	if len(pillars) == 0 {
 		pillars = candidate.TopicPillars
@@ -1980,13 +2147,12 @@ func finalizeNicheCandidateForResponse(candidate NicheCandidate, profile Creator
 	if len(titles) == 0 {
 		titles = candidate.VideoTopics
 	}
-	originalTitleCount := len(titles)
-	titles = validateVideoTitles(titles, pillars, candidate.Name, audience)
+	ctx := primaryNicheContextFromCandidate(candidate, profile)
+	ctx.Pillars = pillars
+	var rejected []string
+	titles, rejected = validateVideoTitlesWithContext(titles, ctx)
 	if len(titles) > 50 {
 		titles = titles[:50]
-	}
-	if originalTitleCount >= 50 && len(titles) < 50 {
-		titles = appendValidatedFallbackTitles(titles, candidate, pillars, 50)
 	}
 	pillars = normalizeContentPillars(pillars, titles)
 	runway := buildRunway(len(titles), firstNonEmpty(profile.WeeklyProductionCapacity, "2 videos per week"))
@@ -2002,7 +2168,7 @@ func finalizeNicheCandidateForResponse(candidate NicheCandidate, profile Creator
 	candidate.Sustainability.TopicRepetitionRisk = repetitionRisk(len(titles), len(pillars))
 	candidate.Sustainability.Warning = runway.Limitation
 	if len(titles) < 50 {
-		issues = append(issues, fmt.Sprintf("%s has %d validated runway ideas", candidate.Name, len(titles)))
+		issues = append(issues, fmt.Sprintf("%s has %d validated runway ideas after rejecting %d unrelated or invalid ideas", candidate.Name, len(titles), len(rejected)))
 	}
 
 	var ok bool
@@ -2033,11 +2199,7 @@ func finalizeNicheCandidateForResponse(candidate NicheCandidate, profile Creator
 	candidate.Scores.OpportunityGap = candidate.Dimensions.CompetitionOpportunity
 	candidate.Scores.Sustainability = candidate.Dimensions.Sustainability
 	candidate.Scores.Overall = ScoreExplanation{Score: overall, Label: scoreLabel(overall), RatingBand: inferRatingFromScore(overall), Explanation: "Formula: 0.25 creator fit + 0.25 audience demand + 0.20 competition opportunity + 0.20 sustainability + 0.10 differentiation."}
-	if candidate.Scores.Confidence.Explanation == "" {
-		confidenceScore := math.Round((candidate.Dimensions.CreatorFit.Score + candidate.Dimensions.AudienceDemand.Score + candidate.Dimensions.Sustainability.Score) / 3)
-		candidate.Scores.Confidence = ScoreExplanation{Score: confidenceScore, Label: confidenceLabel(confidenceScore), RatingBand: inferRatingFromScore(confidenceScore), Explanation: "Confidence reflects profile specificity, evidence availability, and title/pillar validation."}
-	}
-	candidate.Confidence = firstNonEmpty(candidate.Confidence, candidate.Scores.Confidence.Label)
+	candidate = finalizeEvidenceAndConfidence(candidate)
 	return candidate, issues, true
 }
 
@@ -2171,21 +2333,38 @@ func positiveRatingLanguage(rating, reasoning string) bool {
 	return false
 }
 
+type primaryNicheContext struct {
+	Niche   string
+	Domain  string
+	Audience string
+	Anchors []string
+	Pillars []ContentPillar
+}
+
 func validateVideoTitles(titles []VideoTopic, pillars []ContentPillar, niche, audience string) []VideoTopic {
-	validPillars := map[string]bool{}
-	for _, pillar := range pillars {
-		if strings.TrimSpace(pillar.Name) != "" {
-			validPillars[strings.ToLower(strings.TrimSpace(pillar.Name))] = true
-		}
-	}
+	text := strings.Join([]string{niche, audience, strings.Join(contentPillarNames(pillars), " ")}, " ")
+	out, _ := validateVideoTitlesWithContext(titles, primaryNicheContext{Niche: niche, Domain: classifyContentDomain(text), Audience: audience, Pillars: pillars, Anchors: semanticAnchors(text)})
+	return out
+}
+
+func validateVideoTitlesWithContext(titles []VideoTopic, ctx primaryNicheContext) ([]VideoTopic, []string) {
+	validPillars := validPillarMap(ctx.Pillars)
 	out := []VideoTopic{}
+	rejected := []string{}
 	seen := map[string]bool{}
 	nearSeen := map[string]bool{}
 	for _, topic := range titles {
 		title := strings.Join(strings.Fields(strings.TrimSpace(topic.Title)), " ")
 		key := strings.ToLower(title)
 		nearKey := nearDuplicateTitleKey(title)
-		if title == "" || seen[key] || nearSeen[nearKey] || len([]rune(title)) > 95 || excessiveTitleRepetition(title, niche, audience) || malformedTitle(title) || unsupportedCurrentClaim(title) {
+		if title == "" || seen[key] || nearSeen[nearKey] || len([]rune(title)) > 95 || excessiveTitleRepetition(title, ctx.Niche, ctx.Audience) || malformedTitle(title) || unsupportedCurrentClaim(title) || !titleSemanticallyRelevant(title, ctx) {
+			if title != "" {
+				rejected = append(rejected, title)
+			}
+			continue
+		}
+		if strings.TrimSpace(topic.Pillar) == "" || (len(validPillars) > 0 && !validPillars[strings.ToLower(strings.TrimSpace(topic.Pillar))]) {
+			rejected = append(rejected, title)
 			continue
 		}
 		seen[key] = true
@@ -2193,20 +2372,312 @@ func validateVideoTitles(titles []VideoTopic, pillars []ContentPillar, niche, au
 			nearSeen[nearKey] = true
 		}
 		topic.Title = title
-		if strings.TrimSpace(topic.Pillar) == "" || (len(validPillars) > 0 && !validPillars[strings.ToLower(strings.TrimSpace(topic.Pillar))]) {
-			if len(pillars) > 0 {
-				topic.Pillar = pillars[len(out)%len(pillars)].Name
-			} else {
-				topic.Pillar = "Core videos"
-			}
-		}
-		topic.Intent = firstNonEmpty(topic.Intent, inferTitleIntent(title))
-		topic.Difficulty = firstNonEmpty(topic.Difficulty, "medium")
-		topic.Source = firstNonEmpty(topic.Source, "openai_structured_strategy")
-		topic.EvidenceStatus = firstNonEmpty(topic.EvidenceStatus, "ai_strategic_analysis")
+		topic.Intent = customerTopicLabel(firstNonEmpty(topic.Intent, inferTitleIntent(title)))
+		topic.Difficulty = customerTopicLabel(firstNonEmpty(topic.Difficulty, "medium"))
+		topic.Source = customerTopicLabel(firstNonEmpty(topic.Source, "Strategic analysis"))
+		topic.EvidenceStatus = customerTopicLabel(firstNonEmpty(topic.EvidenceStatus, "Strategic analysis"))
 		out = append(out, topic)
 	}
+	return out, rejected
+}
+
+func primaryNicheContextFromDraft(draft NicheDraft, profile CreatorNicheProfile) primaryNicheContext {
+	audience := firstNonEmpty(draft.TargetAudience, profile.TargetAudience, countryAudience(profile.TargetCountry))
+	text := strings.Join(append([]string{
+		draft.Name,
+		draft.Category,
+		draft.Subcategory,
+		draft.ConcisePositioning,
+		draft.UniqueAngle,
+		draft.SearchQuery,
+		audience,
+		profile.OptionalBroadTopic,
+		profile.ProfessionalSkills,
+		profile.Hobbies,
+		profile.LivedExperiences,
+		profile.TeachingSubjects,
+	}, append(append([]string{}, draft.AudienceProblems...), draft.OpportunityGaps...)...), " ")
+	return primaryNicheContext{
+		Niche:   firstNonEmpty(draft.Name, draft.SearchQuery, profile.OptionalBroadTopic),
+		Domain:  classifyContentDomain(text),
+		Audience: audience,
+		Anchors: semanticAnchors(text),
+		Pillars: draft.ContentPillars,
+	}
+}
+
+func primaryNicheContextFromCandidate(candidate NicheCandidate, profile CreatorNicheProfile) primaryNicheContext {
+	draft := NicheDraft{
+		Name:               firstNonEmpty(candidate.Name, candidate.NicheName, candidate.Level3),
+		Category:           firstNonEmpty(candidate.Category, candidate.Level1),
+		Subcategory:        firstNonEmpty(candidate.Subcategory, candidate.Level2),
+		ConcisePositioning: candidate.ConcisePositioning,
+		TargetAudience:     firstNonEmpty(candidate.TargetAudience, candidate.TargetViewer),
+		AudienceProblems:   candidate.AudienceProblems,
+		CreatorAdvantages:  candidate.CreatorAdvantages,
+		UniqueAngle:        candidate.UniqueAngle,
+		ContentPillars:     firstNonEmptyPillars(candidate.ContentPillars, candidate.TopicPillars),
+		OpportunityGaps:    candidate.OpportunityGaps,
+		SearchQuery:        firstNonEmpty(candidate.CorePhrase, firstString(candidate.SearchQueriesUsed)),
+	}
+	return primaryNicheContextFromDraft(draft, profile)
+}
+
+func titleSemanticallyRelevant(title string, ctx primaryNicheContext) bool {
+	lower := strings.ToLower(title)
+	if containsInternalIdentifier(lower) {
+		return false
+	}
+	domain := classifyContentDomain(lower)
+	if domain != "" && ctx.Domain != "" && domain != ctx.Domain {
+		return false
+	}
+	if domain != "" && ctx.Domain != "" && domain == ctx.Domain {
+		return true
+	}
+	if ctx.Domain == "fashion" && domain == "software" {
+		return false
+	}
+	if ctx.Domain == "software" && (domain == "fashion" || domain == "cooking" || domain == "fitness") {
+		return false
+	}
+	if domain != "" && ctx.Domain == "" {
+		for _, anchor := range ctx.Anchors {
+			if strings.Contains(lower, anchor) {
+				return true
+			}
+		}
+		return false
+	}
+	if len(ctx.Anchors) == 0 {
+		return true
+	}
+	for _, anchor := range ctx.Anchors {
+		if strings.Contains(lower, anchor) {
+			return true
+		}
+	}
+	if titleLooksGenericTemplate(lower) {
+		return false
+	}
+	return ctx.Domain != ""
+}
+
+func classifyContentDomain(text string) string {
+	lower := strings.ToLower(text)
+	domains := []struct {
+		name  string
+		terms []string
+	}{
+		{"software", []string{"software", "app", "apps", "app builder", "app builders", "code", "coding", "developer", "development", "login", "login flow", "login screen", "data screen", "settings page", "portfolio app", "booking flow", "dashboard", "api", "frontend", "backend", "flutter", "react native", "auth", "storage", "workflow automation", "no-code", "ai automation"}},
+		{"fashion", []string{"fashion", "style", "styling", "outfit", "wardrobe", "makeup", "beauty", "body type", "personal styling", "budget fashion", "inclusive"}},
+		{"cooking", []string{"cooking", "recipe", "meal", "kitchen", "baking", "food prep"}},
+		{"fitness", []string{"fitness", "workout", "gym", "exercise", "training plan", "muscle"}},
+		{"visa", []string{"visa", "immigration", "student route", "graduate route", "brp", "ukvi"}},
+	}
+	best := ""
+	bestCount := 0
+	for _, domain := range domains {
+		count := 0
+		for _, term := range domain.terms {
+			if strings.Contains(lower, term) {
+				count++
+			}
+		}
+		if count > bestCount {
+			best = domain.name
+			bestCount = count
+		}
+	}
+	return best
+}
+
+func semanticAnchors(text string) []string {
+	stop := map[string]bool{"about": true, "after": true, "around": true, "based": true, "before": true, "beginner": true, "beginners": true, "best": true, "build": true, "building": true, "content": true, "creator": true, "creators": true, "every": true, "first": true, "guide": true, "needs": true, "niche": true, "practical": true, "profile": true, "simple": true, "strategy": true, "target": true, "their": true, "these": true, "this": true, "through": true, "tutorial": true, "using": true, "video": true, "videos": true, "with": true, "without": true, "workflow": true}
+	seen := map[string]bool{}
+	out := []string{}
+	clean := strings.NewReplacer("/", " ", "-", " ", "_", " ", ",", " ", ".", " ", ":", " ", ";", " ", "?", " ", "!", " ", "(", " ", ")", " ").Replace(strings.ToLower(text))
+	for _, word := range strings.Fields(clean) {
+		word = strings.TrimSpace(word)
+		if len(word) < 4 || stop[word] || seen[word] {
+			continue
+		}
+		seen[word] = true
+		out = append(out, word)
+		if len(out) >= 24 {
+			break
+		}
+	}
 	return out
+}
+
+func titleLooksGenericTemplate(lower string) bool {
+	for _, phrase := range []string{"fastest path versus safest path", "five mistakes beginners make building", "i tried three approaches to the same", "case study: turning a rough idea", "tool breakdown for building", "why most ideas stall"} {
+		if strings.Contains(lower, phrase) {
+			return true
+		}
+	}
+	return false
+}
+
+func containsInternalIdentifier(lower string) bool {
+	return strings.Contains(lower, "ai_strategic_analysis") || strings.Contains(lower, "backend_") || strings.Contains(lower, "openai_") || strings.Contains(lower, "_validation")
+}
+
+func customerTopicLabel(value string) string {
+	value = strings.TrimSpace(value)
+	lower := strings.ToLower(value)
+	labels := map[string]string{
+		"ai_strategic_analysis":           "Strategic analysis",
+		"backend_response_validation":     "Strategic analysis",
+		"backend_title_validation":        "Strategic analysis",
+		"backend_heuristic_strategy":      "Strategic analysis",
+		"openai_structured_strategy":      "Strategic analysis",
+		"evidence-backed":                 "Evidence-informed",
+		"related opportunity":             "Evidence-informed",
+		"unvalidated idea":                "Exploratory concept",
+		"tutorial":                        "Tutorial",
+		"comparison":                      "Comparison",
+		"case study":                      "Case study",
+		"mistake":                         "Mistakes",
+		"practical workflow":              "Workflow",
+		"workflow":                        "Workflow",
+		"beginner guide":                  "Beginner guide",
+		"tool breakdown":                  "Breakdown",
+		"analysis":                        "Analysis",
+		"checklist":                       "Checklist",
+		"medium":                          "Medium",
+		"low":                             "Low",
+		"high":                            "High",
+	}
+	if label, ok := labels[lower]; ok {
+		return label
+	}
+	if strings.Contains(value, "_") {
+		return ""
+	}
+	return sentenceCase(value)
+}
+
+func validPillarMap(pillars []ContentPillar) map[string]bool {
+	valid := map[string]bool{}
+	for _, pillar := range pillars {
+		if strings.TrimSpace(pillar.Name) != "" {
+			valid[strings.ToLower(strings.TrimSpace(pillar.Name))] = true
+		}
+	}
+	return valid
+}
+
+func contentPillarNames(pillars []ContentPillar) []string {
+	out := []string{}
+	for _, pillar := range pillars {
+		if name := strings.TrimSpace(pillar.Name); name != "" {
+			out = append(out, name)
+		}
+	}
+	return out
+}
+
+func videoTopicTitles(topics []VideoTopic) []string {
+	out := []string{}
+	for _, topic := range topics {
+		if title := strings.TrimSpace(topic.Title); title != "" {
+			out = append(out, title)
+		}
+	}
+	return out
+}
+
+func strategyCandidateTitles(candidates []NicheDraft, id, name string) []VideoTopic {
+	for _, draft := range candidates {
+		if strings.EqualFold(strings.TrimSpace(draft.ID), strings.TrimSpace(id)) || strings.EqualFold(strings.TrimSpace(draft.Name), strings.TrimSpace(name)) {
+			return draft.RecommendedTitles
+		}
+	}
+	return nil
+}
+
+func primaryDraftIndex(drafts []NicheDraft, primaryName string) int {
+	if len(drafts) == 0 {
+		return -1
+	}
+	primaryName = strings.ToLower(strings.TrimSpace(primaryName))
+	if primaryName != "" {
+		for i, draft := range drafts {
+			if strings.ToLower(strings.TrimSpace(draft.Name)) == primaryName || strings.ToLower(strings.TrimSpace(draft.ID)) == primaryName {
+				return i
+			}
+		}
+	}
+	return 0
+}
+
+func firstNonEmptyPillars(primary, fallback []ContentPillar) []ContentPillar {
+	if len(primary) > 0 {
+		return primary
+	}
+	return fallback
+}
+
+func distinctAlternativeCandidates(primary NicheCandidate, alternatives []NicheCandidate, limit int) []NicheCandidate {
+	out := []NicheCandidate{}
+	seen := []NicheCandidate{primary}
+	for _, alt := range alternatives {
+		if !candidateMeaningfullyDistinct(alt, seen) {
+			continue
+		}
+		out = append(out, alt)
+		seen = append(seen, alt)
+		if limit > 0 && len(out) >= limit {
+			break
+		}
+	}
+	return out
+}
+
+func candidateMeaningfullyDistinct(candidate NicheCandidate, seen []NicheCandidate) bool {
+	title := firstNonEmpty(candidate.Name, candidate.NicheName, candidate.Level3)
+	if strings.TrimSpace(title) == "" {
+		return false
+	}
+	candidateTerms := semanticAnchors(strings.Join([]string{title, candidate.TargetAudience, candidate.UniqueAngle, candidate.ConcisePositioning, candidate.ViewerProblem}, " "))
+	if len(candidateTerms) < 2 {
+		return false
+	}
+	for _, existing := range seen {
+		existingTerms := semanticAnchors(strings.Join([]string{firstNonEmpty(existing.Name, existing.NicheName, existing.Level3), existing.TargetAudience, existing.UniqueAngle, existing.ConcisePositioning, existing.ViewerProblem}, " "))
+		if jaccardSimilarity(candidateTerms, existingTerms) >= 0.72 {
+			return false
+		}
+		if normalizeTopicKey(title) == normalizeTopicKey(firstNonEmpty(existing.Name, existing.NicheName, existing.Level3)) {
+			return false
+		}
+	}
+	return true
+}
+
+func jaccardSimilarity(a, b []string) float64 {
+	if len(a) == 0 || len(b) == 0 {
+		return 0
+	}
+	setA := map[string]bool{}
+	for _, item := range a {
+		setA[item] = true
+	}
+	union := len(setA)
+	intersect := 0
+	for _, item := range b {
+		if setA[item] {
+			intersect++
+		} else {
+			union++
+		}
+	}
+	if union == 0 {
+		return 0
+	}
+	return float64(intersect) / float64(union)
 }
 
 func excessiveTitleRepetition(title, niche, audience string) bool {
@@ -2397,33 +2868,33 @@ func naturalTitle(intent string, draft NicheDraft) string {
 
 func naturalTitleVariant(intent string, draft NicheDraft, index int) string {
 	topic := firstNonEmpty(draft.Subcategory, draft.Name, "this workflow")
-	objects := []string{"first project", "login flow", "data screen", "settings page", "student app", "portfolio app", "booking flow", "dashboard", "notes app", "habit tracker"}
-	object := objects[index%len(objects)]
+	angles := []string{"beginner question", "common mistake", "starter checklist", "real example", "weekly routine", "decision point", "audience problem", "practical scenario", "before-and-after", "quick audit"}
+	angle := angles[index%len(angles)]
 	switch intent {
 	case "tutorial":
-		return "Build a " + object + " with " + topic
+		return "How to approach " + angle + " in " + topic
 	case "comparison":
-		return "Fastest path versus safest path for a " + object
+		return "Fastest path versus safest path for " + angle + " in " + topic
 	case "mistake":
-		return "Five mistakes beginners make building a " + object
+		return "Five mistakes beginners make with " + angle + " in " + topic
 	case "case study":
-		return "Case study: turning a rough idea into a " + object
+		return "Case study: turning " + angle + " into useful " + topic + " content"
 	case "practical workflow":
-		return "A repeatable workflow for shipping a " + object
+		return "A repeatable workflow for " + angle + " in " + topic
 	case "tool breakdown":
-		return "Tool breakdown for building a " + object
+		return "Tool breakdown for handling " + angle + " in " + topic
 	case "analysis":
-		return "Why most " + object + " ideas stall before launch"
+		return "Why most " + topic + " ideas around " + angle + " stall"
 	case "breakdown":
-		return "A practical breakdown of the first " + object + " build"
+		return "A practical breakdown of " + angle + " in " + topic
 	case "beginner guide":
-		return "Start here before your first " + object
+		return "Start here before tackling " + angle + " in " + topic
 	case "experiment":
-		return "I tried three approaches to the same " + object
+		return "I tried three approaches to " + angle + " in " + topic
 	case "workflow":
-		return "A repeatable weekly workflow for a " + object
+		return "A repeatable weekly workflow for " + topic
 	default:
-		return "A practical checklist before building a " + object
+		return "A practical checklist for " + angle + " in " + topic
 	}
 }
 
@@ -2490,13 +2961,85 @@ func supplyGapsFromStrings(values []string) []SupplyGap {
 }
 
 func bestCandidateSearchQuery(c NicheCandidate) string {
-	return firstNonEmpty(firstString(c.SearchQueriesUsed), c.CorePhrase, c.Name, c.NicheName)
+	queries := evidenceQueriesForCandidate(c)
+	return firstString(queries)
+}
+
+func evidenceQueriesForCandidate(c NicheCandidate) []string {
+	audience := firstNonEmpty(c.TargetAudience, c.TargetViewer)
+	core := firstNonEmpty(c.CorePhrase, c.Subcategory, c.Level2, c.Name, c.NicheName)
+	format := firstNonEmpty(c.RecommendedContentFormat, "tutorial")
+	candidates := []string{}
+	add := func(parts ...string) {
+		query := normalizeEvidenceQuery(strings.Join(parts, " "))
+		if query != "" {
+			candidates = append(candidates, query)
+		}
+	}
+	for _, pillar := range topN(contentPillarNames(firstNonEmptyPillars(c.ContentPillars, c.TopicPillars)), 3) {
+		add(core, pillar, audience)
+	}
+	for _, gap := range topN(c.OpportunityGaps, 2) {
+		add(core, gap, audience)
+	}
+	for _, problem := range topN(c.AudienceProblems, 2) {
+		add(core, problem, audience)
+	}
+	add(core, audience, format)
+	for _, query := range c.SearchQueriesUsed {
+		if !looksLikeGeneratedBrandQuery(query, c) {
+			add(query, audience)
+		}
+	}
+	if len(candidates) == 0 || !queryHasSpecificity(candidates[0], c) {
+		add(core, audience)
+	}
+	return topN(unique(candidates), 4)
+}
+
+func looksLikeGeneratedBrandQuery(query string, c NicheCandidate) bool {
+	query = normalizeEvidenceQuery(query)
+	name := normalizeEvidenceQuery(firstNonEmpty(c.Name, c.NicheName))
+	if query == "" || name == "" {
+		return false
+	}
+	return query == name && len(strings.Fields(query)) <= 4
+}
+
+func queryHasSpecificity(query string, c NicheCandidate) bool {
+	query = normalizeEvidenceQuery(query)
+	if query == "" {
+		return false
+	}
+	fields := 0
+	for _, value := range []string{c.CorePhrase, c.TargetAudience, c.TargetViewer, c.RecommendedContentFormat} {
+		for _, term := range semanticAnchors(value) {
+			if strings.Contains(query, term) {
+				fields++
+				break
+			}
+		}
+	}
+	for _, pillar := range contentPillarNames(firstNonEmptyPillars(c.ContentPillars, c.TopicPillars)) {
+		for _, term := range semanticAnchors(pillar) {
+			if strings.Contains(query, term) {
+				fields++
+				break
+			}
+		}
+	}
+	return fields >= 2
 }
 
 func evidenceFreshness(candidates []NicheCandidate) string {
 	for _, c := range candidates {
 		if c.MarketEvidence.Status == evidenceModeLiveValidated && c.MarketEvidence.CollectedAt != nil {
 			return "live"
+		}
+	}
+	for _, c := range candidates {
+		if c.MarketEvidence.Status == "historical_public_evidence" || c.MarketEvidence.Status == "limited_recent_evidence" || c.MarketEvidence.Status == "public_evidence_validated" {
+			return c.MarketEvidence.Status
 		}
 	}
 	for _, c := range candidates {
@@ -2511,6 +3054,12 @@ func analysisMode(candidates []NicheCandidate) string {
 	for _, c := range candidates {
 		if c.MarketEvidence.Status == evidenceModeLiveValidated {
 			return evidenceModeLiveValidated
+		}
+	}
+	for _, c := range candidates {
+		switch c.MarketEvidence.Status {
+		case "public_evidence_validated", "historical_public_evidence", "limited_recent_evidence":
+			return c.MarketEvidence.Status
 		}
 	}
 	for _, c := range candidates {
@@ -2656,6 +3205,85 @@ func scoreConfidence(v NicheValidation, m MonetizationEstimate, s Sustainability
 		score = minFloat(score, 54)
 	}
 	return math.Round(clampScore(score))
+}
+
+func finalizeEvidenceAndConfidence(candidate NicheCandidate) NicheCandidate {
+	if candidate.MarketEvidence.Status == evidenceModeAIStrategicAnalysis {
+		candidate.MarketEvidence.Status = "ai_strategy_only"
+	}
+	if candidate.MarketEvidence.Status == evidenceModeLiveValidated {
+		candidate.MarketEvidence.Status = evidenceStatusFromValidation(candidate.Validation, candidate.MarketEvidence.Status)
+	}
+	score := deterministicCandidateConfidence(candidate)
+	candidate.Scores.Confidence = ScoreExplanation{
+		Score:       score,
+		Label:       confidenceLabel(score),
+		RatingBand:  inferRatingFromScore(score),
+		Explanation: "Confidence reflects public evidence coverage, recent activity, output completeness, and final idea validation.",
+	}
+	candidate.Confidence = candidate.Scores.Confidence.Label
+	return candidate
+}
+
+func deterministicCandidateConfidence(candidate NicheCandidate) float64 {
+	v := candidate.Validation
+	score := 35.0
+	if v.SampledVideoCount >= 20 {
+		score += 18
+	} else if v.SampledVideoCount >= 10 {
+		score += 8
+	}
+	if v.MedianSampledViews > 0 {
+		score += 8
+	}
+	if v.RecentPublicationVolume >= 8 {
+		score += 14
+	} else if v.RecentPublicationVolume >= 3 {
+		score += 7
+	} else if v.RecentPublicationVolume == 0 && v.SampledVideoCount > 0 {
+		score -= 20
+	}
+	if candidate.Sustainability.ViableTopicCount >= 50 || len(candidate.RecommendedTitles) >= 50 {
+		score += 12
+	} else if len(candidate.RecommendedTitles) >= 30 {
+		score += 4
+	} else {
+		score -= 12
+	}
+	if candidate.MarketEvidence.Status == "ai_strategy_only" || candidate.MarketEvidence.Status == "evidence_unavailable" {
+		score = minFloat(score, 49)
+	}
+	if candidate.MarketEvidence.Status == "historical_public_evidence" || candidate.MarketEvidence.Status == "limited_recent_evidence" || v.RecentPublicationVolume == 0 {
+		score = minFloat(score, 54)
+	}
+	if len(candidate.RecommendedTitles) < 50 {
+		score = minFloat(score, 54)
+	}
+	return math.Round(clampScore(score))
+}
+
+func competitionOpportunityExplanation(validation NicheValidation, outliers []OutlierEvidence, gaps []SupplyGap) string {
+	parts := []string{}
+	if validation.SampledVideoCount > 0 {
+		parts = append(parts, fmt.Sprintf("Public sample shows %d videos with %d recent uploads.", validation.SampledVideoCount, validation.RecentPublicationVolume))
+	}
+	if validation.CompetitionLevel != "" {
+		parts = append(parts, "Competition appears "+formatPublicLabel(validation.CompetitionLevel)+".")
+	}
+	if len(outliers) > 0 {
+		parts = append(parts, "Outlier examples suggest specific packaging can break through.")
+	}
+	if len(gaps) > 0 {
+		parts = append(parts, gaps[0].Statement+".")
+	}
+	if len(parts) == 0 {
+		return "Creator opportunity should be validated with a focused pilot before scaling."
+	}
+	return strings.Join(parts, " ")
+}
+
+func formatPublicLabel(value string) string {
+	return strings.ReplaceAll(strings.ToLower(strings.TrimSpace(value)), "_", " ")
 }
 
 func normalizeCreatorNicheProfile(p CreatorNicheProfile) CreatorNicheProfile {
@@ -2848,8 +3476,8 @@ func competitionLabel(videoCount int, medianViews uint64) string {
 func marketEvidenceSummary(count, recent int, median uint64, overlap bool) string {
 	parts := []string{
 		"Sampled public videos: " + intString(count),
-		"recent uploads: " + intString(recent),
-		"median sampled views: " + uintString(median),
+		"Recent uploads: " + intString(recent),
+		"Median sampled views: " + uintString(median),
 	}
 	if overlap {
 		parts = append(parts, "overlaps current rising topics")

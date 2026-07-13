@@ -73,6 +73,10 @@ type fakeRepairStrategist struct {
 	result       NicheStrategyResult
 	repaired     NicheStrategyResult
 	repairCalls  int
+	repairedIdeas []VideoTopic
+	ideaRepairCalls int
+	missingCount int
+	wantMissing int
 	generateErr  error
 	repairErr    error
 	repairIssues []string
@@ -91,6 +95,20 @@ func (f *fakeRepairStrategist) RepairCandidates(ctx context.Context, input Niche
 	f.repairCalls++
 	f.repairIssues = append([]string{}, issues...)
 	return f.repaired, f.repairErr
+}
+
+func (f *fakeRepairStrategist) RepairPrimaryIdeas(ctx context.Context, input NicheStrategyInput, draft NicheDraft, missingCount int, acceptedTitles []string, rejectedTitles []string) ([]VideoTopic, error) {
+	_ = ctx
+	_ = input
+	_ = draft
+	_ = acceptedTitles
+	_ = rejectedTitles
+	f.ideaRepairCalls++
+	f.missingCount = missingCount
+	if f.wantMissing > 0 && missingCount != f.wantMissing {
+		return nil, errors.New("unexpected missing count")
+	}
+	return f.repairedIdeas, f.repairErr
 }
 
 func TestNicheResearchValidatesCandidatesWithMeasuredEvidence(t *testing.T) {
@@ -181,7 +199,7 @@ func TestNicheResearchDuplicateCachedQueryDoesNotConsumeLiveSearch(t *testing.T)
 	if provider.searchCalls != 1 {
 		t.Fatalf("duplicate normalized query consumed %d searches, want 1", provider.searchCalls)
 	}
-	if len(report.Candidates) < 2 || report.Candidates[1].MarketEvidence.Status != evidenceModeCacheValidated {
+	if len(report.Candidates) < 2 || report.Candidates[1].MarketEvidence.Status != "public_evidence_validated" {
 		t.Fatalf("second duplicate candidate should use cached validation: %+v", report.Candidates)
 	}
 }
@@ -642,18 +660,18 @@ func TestTitleQualityAndPillarNormalization(t *testing.T) {
 	}
 }
 
-func TestRunwayValidationBuildsExactlyFiftyIdeasAndMatchingPillars(t *testing.T) {
+func TestRunwayValidationKeepsTruthfulIncompleteIdeasAndMatchingPillars(t *testing.T) {
 	draft := baseNicheDraft("draft-50", "Cross-platform app tutorials", "cross-platform apps")
 	drafts, issues := validateNicheDrafts([]NicheDraft{draft}, sampleTitleQualityProfile())
 	if len(drafts) != 1 {
 		t.Fatalf("draft rejected: %v", issues)
 	}
 	candidate := buildAICandidate(drafts[0], sampleTitleQualityProfile(), nil, time.Date(2026, 7, 12, 12, 0, 0, 0, time.UTC))
-	if len(candidate.RecommendedTitles) != 50 || candidate.Runway.ViableTopicCount != 50 {
-		t.Fatalf("ideas=%d runway=%d, want 50", len(candidate.RecommendedTitles), candidate.Runway.ViableTopicCount)
+	if len(candidate.RecommendedTitles) != 10 || candidate.Runway.ViableTopicCount != 10 {
+		t.Fatalf("ideas=%d runway=%d, want 10", len(candidate.RecommendedTitles), candidate.Runway.ViableTopicCount)
 	}
-	if candidate.Runway.WeeklyCapacity != 2 || candidate.Runway.EstimatedWeeks != 25 {
-		t.Fatalf("runway = %#v, want 25 weeks at 2/week", candidate.Runway)
+	if candidate.Runway.WeeklyCapacity != 2 || candidate.Runway.EstimatedWeeks != 5 {
+		t.Fatalf("runway = %#v, want 5 weeks at 2/week", candidate.Runway)
 	}
 	total := 0
 	for _, pillar := range candidate.ContentPillars {
@@ -662,7 +680,7 @@ func TestRunwayValidationBuildsExactlyFiftyIdeasAndMatchingPillars(t *testing.T)
 	if total != len(candidate.RecommendedTitles) {
 		t.Fatalf("pillar topic total = %d, ideas = %d", total, len(candidate.RecommendedTitles))
 	}
-	if candidate.Runway.Heading != "50-video runway" || len(candidate.First10Titles) != 10 || len(candidate.RecommendedTitles) != 50 {
+	if candidate.Runway.Heading != "Initial content runway" || len(candidate.First10Titles) != 10 || len(candidate.RecommendedTitles) != 10 {
 		t.Fatalf("runway/preview mismatch: heading=%q first10=%d full=%d", candidate.Runway.Heading, len(candidate.First10Titles), len(candidate.RecommendedTitles))
 	}
 }
@@ -704,6 +722,141 @@ func TestDuplicateAndNearDuplicateTitlesRejected(t *testing.T) {
 	}, pillars, "cross-platform apps", "students")
 	if len(titles) != 2 {
 		t.Fatalf("titles = %#v, want exact/near duplicate removed", titles)
+	}
+}
+
+func TestFashionReportRejectsSoftwareContaminatedIdeas(t *testing.T) {
+	draft := fashionDraft()
+	draft.RecommendedTitles = append(draft.RecommendedTitles,
+		VideoTopic{Title: "Fastest path versus safest path for a login flow", Pillar: "Budget styling"},
+		VideoTopic{Title: "Five mistakes beginners make building a data screen", Pillar: "Body confidence"},
+		VideoTopic{Title: "I tried three approaches to the same settings page", Pillar: "Beginner outfits"},
+		VideoTopic{Title: "Case study: turning a rough idea into a student app", Pillar: "Personal style"},
+	)
+	drafts, _ := validateNicheDrafts([]NicheDraft{draft}, fashionProfile())
+	if len(drafts) != 1 {
+		t.Fatalf("fashion draft rejected entirely")
+	}
+	for _, topic := range drafts[0].RecommendedTitles {
+		lower := strings.ToLower(topic.Title)
+		for _, forbidden := range []string{"login flow", "data screen", "settings page", "student app"} {
+			if strings.Contains(lower, forbidden) {
+				t.Fatalf("contaminated idea survived: %q", topic.Title)
+			}
+		}
+	}
+}
+
+func TestSoftwareReportKeepsRelevantSoftwareIdeas(t *testing.T) {
+	pillars := []ContentPillar{{Name: "Tutorials"}, {Name: "Case studies"}}
+	titles := validateVideoTitles([]VideoTopic{
+		{Title: "Build a login screen from scratch", Pillar: "Tutorials"},
+		{Title: "I rebuilt a student app in one weekend", Pillar: "Case studies"},
+		{Title: "Budget fashion advice for different body types", Pillar: "Tutorials"},
+	}, pillars, "cross-platform app tutorials", "students")
+	if len(titles) != 2 {
+		t.Fatalf("software titles = %#v, want two relevant software ideas", titles)
+	}
+}
+
+func TestFinalIdeasReferenceValidPrimaryPillarsAndHideInternalLabels(t *testing.T) {
+	draft := baseNicheDraft("draft-pillars", "Cross-platform app tutorials", "cross-platform apps")
+	draft.RecommendedTitles = append(draft.RecommendedTitles, VideoTopic{Title: "Build a fashion capsule wardrobe", Pillar: "Foreign pillar", EvidenceStatus: evidenceModeAIStrategicAnalysis})
+	drafts, _ := validateNicheDrafts([]NicheDraft{draft}, sampleTitleQualityProfile())
+	candidate := buildAICandidate(drafts[0], sampleTitleQualityProfile(), nil, time.Date(2026, 7, 12, 12, 0, 0, 0, time.UTC))
+	report := NicheReport{Status: StatusOK, Profile: sampleTitleQualityProfile(), Candidates: []NicheCandidate{candidate}}
+	finalized, _, ok := FinalizeNicheReportForResponse(report)
+	if !ok {
+		t.Fatalf("finalizer rejected valid report")
+	}
+	validPillars := validPillarMap(finalized.PrimaryRecommendation.ContentPillars)
+	body, _ := json.Marshal(finalized)
+	if strings.Contains(strings.ToLower(string(body)), "ai_strategic_analysis") {
+		t.Fatalf("internal evidence label leaked: %s", string(body))
+	}
+	for _, topic := range finalized.PrimaryRecommendation.RecommendedTitles {
+		if !validPillars[strings.ToLower(topic.Pillar)] {
+			t.Fatalf("topic references invalid pillar: %#v", topic)
+		}
+	}
+}
+
+func TestFocusedIdeaRepairRequestsOnlyMissingCount(t *testing.T) {
+	now := time.Date(2026, 7, 12, 12, 0, 0, 0, time.UTC)
+	strategist := &fakeRepairStrategist{result: strategyWithCandidates(1), repairedIdeas: repairIdeas(40), wantMissing: 40}
+	report, err := ResearchNiches(context.Background(), NicheResearchRequest{Profile: sampleAIProfile()}, NicheResearchConfig{
+		Strategist: strategist,
+		Now:        func() time.Time { return now },
+	})
+	if err != nil {
+		t.Fatalf("ResearchNiches error: %v", err)
+	}
+	if strategist.ideaRepairCalls != 1 || strategist.missingCount != 40 {
+		t.Fatalf("repair calls=%d missing=%d, want one repair for 40", strategist.ideaRepairCalls, strategist.missingCount)
+	}
+	if report.PrimaryRecommendation == nil || len(report.PrimaryRecommendation.RecommendedTitles) != 50 {
+		t.Fatalf("repair did not complete runway")
+	}
+}
+
+func TestOldEvidenceCannotBeHighConfidenceOrLiveValidated(t *testing.T) {
+	now := time.Date(2026, 7, 12, 12, 0, 0, 0, time.UTC)
+	old := now.AddDate(0, -5, 0).Format(time.RFC3339)
+	views := uint64(5760041)
+	videos := []ChannelVideoSummary{{VideoID: "old1", Title: "Fashion advice for beginners", ChannelID: "ch1", PublishedAt: old, Views: &views}}
+	validation := buildNicheValidation(nicheBlueprint{CorePhrase: "beginner fashion guidance", QueryPhrases: []string{"beginner fashion guidance"}}, videos, nil, now)
+	ev := nicheEvidence{videos: videos, query: "beginner fashion guidance", mode: evidenceModeLiveValidated, collectedAt: now}
+	me := marketEvidenceFromValidation(validation, ev)
+	candidate := buildAICandidate(fashionDraft(), fashionProfile(), nil, now)
+	candidate.Validation = validation
+	candidate.MarketEvidence = me
+	candidate.Sustainability.ViableTopicCount = 50
+	candidate.RecommendedTitles = repairFashionIdeas(50)
+	candidate = finalizeEvidenceAndConfidence(candidate)
+	if candidate.Confidence == "high" || candidate.MarketEvidence.Status == evidenceModeLiveValidated {
+		t.Fatalf("old evidence confidence/status = %q/%q, want not high/live", candidate.Confidence, candidate.MarketEvidence.Status)
+	}
+}
+
+func TestRecentEvidenceCanReturnLiveValidated(t *testing.T) {
+	now := time.Date(2026, 7, 12, 12, 0, 0, 0, time.UTC)
+	videos := sampleNicheVideos(now)
+	validation := buildNicheValidation(nicheBlueprint{CorePhrase: "cross-platform apps", QueryPhrases: []string{"cross-platform apps"}}, videos, nil, now)
+	me := marketEvidenceFromValidation(validation, nicheEvidence{videos: videos, query: "cross-platform apps", mode: evidenceModeLiveValidated, collectedAt: now})
+	if me.Status != evidenceModeLiveValidated {
+		t.Fatalf("status = %q, want live_validated", me.Status)
+	}
+}
+
+func TestEvidenceQueryAvoidsBroadGeneratedTitleAsDominantQuery(t *testing.T) {
+	candidate := buildAICandidate(fashionDraft(), fashionProfile(), nil, time.Date(2026, 7, 12, 12, 0, 0, 0, time.UTC))
+	candidate.SearchQueriesUsed = []string{"Fashion Empowerment Hub", "Fashion"}
+	queries := evidenceQueriesForCandidate(candidate)
+	if len(queries) == 0 {
+		t.Fatalf("missing queries")
+	}
+	first := strings.ToLower(queries[0])
+	if first == "fashion" || first == "fashion empowerment hub" {
+		t.Fatalf("dominant query too broad/generated: %v", queries)
+	}
+}
+
+func TestAlternativeCandidatesRequireSemanticDistinctness(t *testing.T) {
+	primary := buildAICandidate(baseNicheDraft("p", "Cross-platform app workflows", "cross-platform apps"), sampleAIProfile(), nil, time.Now())
+	rename := buildAICandidate(baseNicheDraft("r", "Cross-platform app workflow guides", "cross-platform apps"), sampleAIProfile(), nil, time.Now())
+	distinct := buildAICandidate(baseNicheDraft("d", "No-code MVP build tutorials", "no-code mvp builds"), sampleAIProfile(), nil, time.Now())
+	alts := distinctAlternativeCandidates(primary, []NicheCandidate{rename, distinct}, 2)
+	if len(alts) != 1 || alts[0].Name != distinct.Name {
+		t.Fatalf("alternatives = %#v, want only distinct candidate", alts)
+	}
+}
+
+func TestNicheSchemaVersionSeparatesCurrentCacheKey(t *testing.T) {
+	profile := sampleAIProfile()
+	current := NicheResearchCacheKey(profile, "market_estimate")
+	legacy := LegacyNicheResearchCacheKey(profile, "market_estimate")
+	if current == legacy || !strings.Contains(NicheReportSchemaVersion, "v3") {
+		t.Fatalf("cache versioning failed: current=%s legacy=%s version=%s", current, legacy, NicheReportSchemaVersion)
 	}
 }
 
@@ -799,9 +952,10 @@ func TestOldSparseEvidenceLimitsConfidenceAndOpportunity(t *testing.T) {
 func TestProductionProfileFixtureLocalNicheResult(t *testing.T) {
 	now := time.Date(2026, 7, 12, 12, 0, 0, 0, time.UTC)
 	provider := &fakeNicheProvider{videos: sampleNicheVideos(now), channels: sampleNicheChannels()}
+	strategist := &fakeRepairStrategist{result: strategyWithCandidates(3), repairedIdeas: repairIdeas(40), wantMissing: 40}
 	report, err := ResearchNiches(context.Background(), NicheResearchRequest{Profile: sampleTitleQualityProfile()}, NicheResearchConfig{
 		YouTube:                      provider,
-		Strategist:                   fakeNicheStrategist{result: strategyWithCandidates(3)},
+		Strategist:                   strategist,
 		MaxYouTubeSearchesPerRequest: 3,
 		DailyYouTubeSearchLimit:      80,
 		Now:                          func() time.Time { return now },
@@ -815,6 +969,9 @@ func TestProductionProfileFixtureLocalNicheResult(t *testing.T) {
 	}
 	if len(primary.RecommendedTitles) != 50 || primary.Runway.EstimatedWeeks != 25 {
 		t.Fatalf("ideas=%d weeks=%d, want 50 ideas and 25 weeks", len(primary.RecommendedTitles), primary.Runway.EstimatedWeeks)
+	}
+	if strategist.ideaRepairCalls != 1 || strategist.missingCount != 40 {
+		t.Fatalf("idea repair calls=%d missing=%d, want one repair for 40", strategist.ideaRepairCalls, strategist.missingCount)
 	}
 	if len(report.AlternativeCandidates) < 2 {
 		t.Fatalf("alternatives=%d, want at least two", len(report.AlternativeCandidates))
@@ -882,8 +1039,10 @@ func TestNicheResearchCacheKeyIncludesCountryFormatLanguageAndMode(t *testing.T)
 func strategyWithCandidates(count int) NicheStrategyResult {
 	candidates := make([]NicheDraft, 0, count)
 	for i := 0; i < count; i++ {
-		name := "Cross-platform app workflow " + intString(i+1)
-		candidates = append(candidates, baseNicheDraft("draft-"+intString(i+1), name, "cross-platform apps "+intString(i+1)))
+		names := []string{"Cross-platform app workflows", "Flutter student project guides", "No-code MVP build tutorials", "App launch mistake breakdowns", "Beginner product dashboards"}
+		name := names[i%len(names)]
+		query := []string{"cross-platform apps", "flutter student projects", "no-code mvp builds", "app launch mistakes", "product dashboard tutorials"}[i%5]
+		candidates = append(candidates, baseNicheDraft("draft-"+intString(i+1), name, query))
 	}
 	return NicheStrategyResult{
 		CreatorProfileSummary: "Software educator for coding students.",
@@ -945,6 +1104,77 @@ func baseNicheDraft(id, name, query string) NicheDraft {
 		Runway:                 "50-title starter runway",
 		Reasoning:              "Structured strategy fixture.",
 	}
+}
+
+func repairIdeas(count int) []VideoTopic {
+	pillars := []string{"Tutorials", "Comparisons", "Mistakes", "Case studies", "Workflows"}
+	angles := []string{
+		"onboarding flow", "offline sync", "user profile", "payment settings", "notification center",
+		"search filters", "admin table", "mobile navigation", "file upload", "team permissions",
+		"error states", "empty states", "analytics chart", "project setup", "deployment checklist",
+		"form validation", "accessibility pass", "performance audit", "database model", "API contract",
+		"authentication edge case", "responsive layout", "state management", "testing plan", "release notes",
+		"student portfolio", "course tracker", "booking calendar", "habit dashboard", "notes editor",
+		"invoice screen", "chat interface", "settings modal", "pricing page", "content queue",
+		"review workflow", "import wizard", "export tool", "feedback panel", "starter template",
+	}
+	out := make([]VideoTopic, 0, count)
+	for i := 0; i < count; i++ {
+		out = append(out, VideoTopic{
+			Title:      "Build a " + angles[i%len(angles)] + " for student app builders",
+			Pillar:     pillars[i%len(pillars)],
+			Intent:     "tutorial",
+			Difficulty: "medium",
+		})
+	}
+	return out
+}
+
+func fashionProfile() CreatorNicheProfile {
+	return CreatorNicheProfile{
+		ProfessionalSkills:       "personal styling and beginner fashion education",
+		Hobbies:                  "fashion, inclusive styling, budget outfits",
+		TeachingSubjects:         "beginner fashion guidance and body type styling",
+		TargetAudience:           "beginners building confidence with affordable outfits",
+		TargetCountry:            "GB",
+		TargetLanguage:           "en",
+		CreatorPresence:          "personal brand",
+		ContentFormats:           []string{"long-form"},
+		OptionalBroadTopic:       "Fashion",
+		WeeklyProductionCapacity: "2 videos per week",
+	}
+}
+
+func fashionDraft() NicheDraft {
+	pillars := []ContentPillar{{Name: "Budget styling"}, {Name: "Body confidence"}, {Name: "Beginner outfits"}, {Name: "Personal style"}}
+	return NicheDraft{
+		ID:                 "fashion-primary",
+		Name:               "Inclusive beginner fashion guidance",
+		Category:           "Fashion",
+		Subcategory:        "Beginner personal styling",
+		TargetAudience:     "beginners building confidence with affordable outfits",
+		AudienceProblems:   []string{"Viewers need affordable styling advice for different body types."},
+		CreatorAdvantages:  []string{"Can explain styling choices with inclusive examples."},
+		UniqueAngle:        "Budget-conscious, inclusive personal styling for beginners.",
+		DimensionScores:    NicheDraftDimensionScores{CreatorFit: 82, AudienceDemand: 72, CompetitionOpportunity: 68, Sustainability: 80, Differentiation: 75},
+		DimensionRatings:   NicheDraftDimensionRatings{CreatorFit: "very_high", AudienceDemand: "high", CompetitionOpportunity: "high", Sustainability: "very_high", Differentiation: "high"},
+		DimensionReasoning: NicheDraftDimensionReasoning{CreatorFit: "Fashion profile fit.", AudienceDemand: "Specific beginner demand.", CompetitionOpportunity: "Narrow styling angle.", Sustainability: "Several repeatable formats.", Differentiation: "Inclusive and budget-specific."},
+		ContentPillars:     pillars,
+		RecommendedTitles:  repairFashionIdeas(10),
+		OpportunityGaps:    []string{"Beginner fashion advice often lacks inclusive body-type examples."},
+		Risks:              []string{"Fashion examples can become seasonal."},
+		SearchQuery:        "beginner fashion guidance",
+	}
+}
+
+func repairFashionIdeas(count int) []VideoTopic {
+	pillars := []string{"Budget styling", "Body confidence", "Beginner outfits", "Personal style"}
+	angles := []string{"capsule wardrobe", "body type outfit", "budget blazer look", "first date outfit", "workwear basics", "colour matching", "shoe pairing", "makeup and outfit balance", "seasonal layering", "confidence audit"}
+	out := []VideoTopic{}
+	for i := 0; i < count; i++ {
+		out = append(out, VideoTopic{Title: "Beginner fashion guide to " + angles[i%len(angles)] + " " + intString(i+1), Pillar: pillars[i%len(pillars)], Intent: "tutorial", Difficulty: "low"})
+	}
+	return out
 }
 
 func sampleTitleQualityProfile() CreatorNicheProfile {

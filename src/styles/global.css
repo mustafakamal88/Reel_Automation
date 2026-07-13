@@ -762,7 +762,7 @@ body {
   display: grid;
   grid-template-columns: 1.5fr 1fr;
   gap: 14px;
-  align-items: start;
+  align-items: stretch;
 }
 
 .perf-posts-table {
@@ -7277,7 +7277,8 @@ body,
 .niche-analysis-stack,
 .niche-insight-layout,
 .niche-opportunity-stack,
-.niche-evidence-risk-grid {
+.niche-evidence-risk-grid,
+.niche-opportunity-risk-grid {
   display: grid;
   gap: 16px;
   align-items: start;
@@ -7358,6 +7359,10 @@ body,
   color: var(--info);
   border-color: rgba(125, 183, 255, 0.28);
   background: var(--info-dim);
+}
+
+.niche-fixture-action {
+  margin-left: 8px;
 }
 
 .niche-profile-lines {
@@ -7506,28 +7511,91 @@ body,
 
 .niche-score-card-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(285px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(196px, 1fr));
   gap: 12px;
-  align-items: start;
+  align-items: stretch;
 }
 
 .niche-dimension-card {
-  grid-template-columns: 88px minmax(0, 1fr);
-  min-height: 0;
-  height: auto;
+  min-height: 218px;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
   align-items: center;
+  justify-items: center;
+  padding: 14px;
+  text-align: center;
   background: var(--niche-sub-bg);
 }
 
-.niche-dimension-card-copy p {
-  display: -webkit-box;
-  overflow: hidden;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 5;
+.niche-semi-gauge {
+  width: 148px;
+  height: 90px;
+  display: grid;
+  place-items: end center;
+  align-self: start;
+  color: var(--accent);
+}
+
+.niche-semi-gauge svg {
+  grid-area: 1 / 1;
+  width: 148px;
+  height: 88px;
+  overflow: visible;
+}
+
+.niche-semi-gauge-track,
+.niche-semi-gauge-fill {
+  fill: none;
+  stroke-width: 13;
+  stroke-linecap: round;
+}
+
+.niche-semi-gauge-track {
+  stroke: rgba(255, 255, 255, 0.12);
+}
+
+.niche-semi-gauge-fill {
+  stroke: var(--accent);
+  transition: stroke-dashoffset 680ms ease;
+}
+
+.niche-semi-gauge strong {
+  grid-area: 1 / 1;
+  align-self: end;
+  margin-bottom: 3px;
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 28px;
+  line-height: 1;
+}
+
+.niche-dimension-card-copy {
+  min-width: 0;
+  width: 100%;
+  height: 100%;
+  align-self: stretch;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  align-items: center;
+}
+
+.niche-dimension-card-copy > strong {
+  align-self: start;
+  color: var(--text-primary);
+  font-size: 14px;
+  line-height: 1.25;
+}
+
+.niche-dimension-card-copy > span {
+  color: var(--text-muted);
+  font-size: 12px;
 }
 
 .dimension-detail-toggle {
   width: fit-content;
+  margin-top: auto;
   min-height: 28px;
   border: 1px solid var(--niche-border-soft);
   border-radius: 999px;
@@ -7551,6 +7619,12 @@ body,
   border-radius: var(--niche-radius);
   padding: 14px 16px;
   background: linear-gradient(180deg, color-mix(in srgb, var(--accent) 10%, transparent), rgba(255, 255, 255, 0.025));
+}
+
+.dimension-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px 16px;
 }
 
 .dimension-detail-panel > div {
@@ -7587,12 +7661,48 @@ body,
 }
 
 .niche-insight-layout {
-  grid-template-columns: minmax(420px, 1.35fr) minmax(320px, 0.9fr);
+  grid-template-columns: minmax(420px, 1.1fr) minmax(420px, 1fr);
   align-items: start;
 }
 
 .niche-evidence-risk-grid {
-  grid-template-columns: minmax(0, 1.85fr) minmax(280px, 1fr);
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.niche-opportunity-risk-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 16px;
+  align-items: stretch;
+}
+
+.niche-opportunity-risk-grid > .niche-detail-panel {
+  height: 100%;
+  display: grid;
+  grid-template-rows: auto 1fr;
+}
+
+.audience-profile-compact {
+  display: grid;
+  gap: 12px;
+}
+
+.audience-profile-columns {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.audience-profile-columns .section-list {
+  display: grid;
+  gap: 8px;
+}
+
+.audience-profile-columns .small-capability {
+  padding: 8px 10px;
+  border: 1px solid var(--border-inner);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.025);
 }
 
 .niche-radar {
@@ -7734,8 +7844,8 @@ body,
 }
 
 .niche-outlier {
-  grid-template-columns: 72px minmax(0, 1fr);
-  padding: 8px;
+  grid-template-columns: 132px minmax(0, 1fr);
+  padding: 10px;
   border: 1px solid var(--border-inner);
   border-radius: 8px;
   background: rgba(255, 255, 255, 0.025);
@@ -7743,7 +7853,7 @@ body,
 
 .niche-outlier img,
 .niche-outlier-icon {
-  width: 72px;
+  width: 132px;
   aspect-ratio: 16 / 9;
   border-radius: 6px;
 }
@@ -7756,11 +7866,20 @@ body,
 }
 
 .niche-outlier strong {
-  display: -webkit-box;
-  overflow: hidden;
+  display: block;
   overflow-wrap: normal;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
+  line-height: 1.3;
+}
+
+.risk-section {
+  min-height: 100%;
+  align-content: space-between;
+}
+
+.alternative-candidates.is-compact-unavailable .chart-unavailable {
+  min-height: 0;
+  padding: 12px;
+  border-style: solid;
 }
 
 .risk-list {
@@ -7914,7 +8033,8 @@ body,
 @media (max-width: 900px) {
   .niche-analysis-columns,
   .niche-insight-layout,
-  .niche-evidence-risk-grid {
+  .niche-evidence-risk-grid,
+  .dimension-detail-grid {
     grid-template-columns: 1fr;
   }
 
@@ -7965,13 +8085,14 @@ body,
   .runway-card,
   .alternative-card,
   .demand-metric-row,
+  .niche-opportunity-risk-grid,
   .idea-preview-grid,
   .idea-expanded-list {
     grid-template-columns: 1fr;
   }
 
   .niche-dimension-card {
-    grid-template-columns: 82px minmax(0, 1fr);
+    min-height: 214px;
   }
 
   .niche-progress-circle-metric {
@@ -8014,6 +8135,13 @@ body,
   }
 }
 
+@media (max-width: 600px) {
+  .audience-profile-columns,
+  .competition-signal-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
 @media (max-width: 430px) {
   .niche-profile-shell,
   .niche-dashboard-header,
@@ -8023,7 +8151,6 @@ body,
   }
 
   .niche-field-grid,
-  .niche-dimension-card,
   .dimension-bar-row {
     grid-template-columns: 1fr;
   }
@@ -8040,22 +8167,17 @@ body,
     grid-template-columns: 1fr;
   }
 
-  .niche-dimension-card {
-    justify-items: center;
-    text-align: center;
-  }
-
   .dimension-detail-toggle {
     justify-self: center;
   }
 
   .niche-outlier {
-    grid-template-columns: 54px minmax(0, 1fr);
+    grid-template-columns: 88px minmax(0, 1fr);
   }
 
   .niche-outlier img,
   .niche-outlier-icon {
-    width: 54px;
+    width: 88px;
   }
 }
 
@@ -8068,6 +8190,7 @@ body,
 .niche-detail-panel,
 .niche-insight-layout,
 .niche-evidence-risk-grid,
+.niche-opportunity-risk-grid,
 .alternative-candidates,
 .score-methodology {
   scroll-margin-top: 92px;

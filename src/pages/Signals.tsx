@@ -27,6 +27,7 @@ import {
   type YouTubeChannelAnalysisResponse,
   type YouTubeVideoAnalysisResponse,
 } from '../lib/api/client';
+import { nicheFinderFixtureReport } from '../data/nicheFinderFixture';
 import { formatLabel, formatMetric } from '../lib/metricFormat';
 import { storage } from '../lib/storage';
 
@@ -1064,6 +1065,15 @@ function NicheFinderTab({ providers, region, language, audience, onGenerate, gen
       .finally(() => setLoading(false));
   }
 
+  function loadFixture() {
+    setError(null);
+    setLoading(false);
+    setReport(nicheFinderFixtureReport);
+    setExpandedID(nicheFinderFixtureReport.primary_recommendation?.id ?? nicheFinderFixtureReport.candidates?.[0]?.id ?? null);
+    setLastResearchedProfileKey(stableProfileKey(profile));
+    setProfileExpanded(false);
+  }
+
   return (
     <div className="niche-workflow">
       <CreatorProfilePanel
@@ -1086,6 +1096,7 @@ function NicheFinderTab({ providers, region, language, audience, onGenerate, gen
 
       <div className="neutral-callout">
         Niche Finder separates AI strategy from verified public evidence and keeps provider measurements separate from model-derived opportunity scoring.
+        {import.meta.env.DEV && <button className="link-button niche-fixture-action" type="button" onClick={loadFixture}>Load QA fixture</button>}
       </div>
 
       <div className="niche-result-anchor">
@@ -1196,7 +1207,7 @@ function NicheCandidateDashboard({ candidate, showTopics, onToggleTopics }: { ca
         ))}
       </section>
       </ScrollReveal>
-      {openDimension && <DimensionDetailPanel id={detailPanelId} row={openDimension} onClose={() => setOpenDimensionKey(null)} />}
+      {openDimension && <DimensionDetailPanel id={detailPanelId} row={openDimension} candidate={candidate} onClose={() => setOpenDimensionKey(null)} />}
       <ScrollReveal>
       <section className="niche-analysis-columns" aria-label="Strategic analysis">
         <div className="niche-analysis-stack">
@@ -1221,33 +1232,32 @@ function NicheCandidateDashboard({ candidate, showTopics, onToggleTopics }: { ca
         <RunwayCard candidate={candidate} pillars={pillars} />
       </NichePanel>
       <ScrollReveal>
-      <section className="niche-insight-layout" aria-label="Audience and opportunity insights">
+      <section className="niche-insight-layout" aria-label="Audience and competition insights">
         <NichePanel title="Audience profile">
-          <TextBlock label="Audience" value={candidate.target_audience || candidate.target_viewer} />
-          <SectionList label="Audience problems" items={candidate.audience_problems?.length ? candidate.audience_problems : [candidate.viewer_problem].filter(Boolean)} />
-          <SectionList label="Creator advantages" items={candidate.creator_advantages?.length ? candidate.creator_advantages : [candidate.creator_advantage].filter(Boolean)} />
-          <TextBlock label="Unique positioning" value={candidate.unique_angle} />
+          <AudienceProfile candidate={candidate} />
         </NichePanel>
-        <div className="niche-opportunity-stack">
-          <NichePanel title="Competition opportunity">
-            <CompetitionVisual candidate={candidate} />
-          </NichePanel>
-          <NichePanel title="Opportunity gaps">
-            <List items={candidate.opportunity_gaps?.length ? candidate.opportunity_gaps : (candidate.supply_gaps ?? []).map(gap => gap.statement)} />
-          </NichePanel>
-        </div>
+        <NichePanel title="Competition opportunity">
+          <CompetitionVisual candidate={candidate} />
+        </NichePanel>
       </section>
       </ScrollReveal>
       <NichePanel title="First 10 video ideas">
         <IdeaPreview titles={titles} showTopics={showTopics} onToggleTopics={onToggleTopics} />
       </NichePanel>
       <ScrollReveal>
-      <section className="niche-evidence-risk-grid">
-        <NichePanel title="Evidence and outliers">
-          <EvidenceSection candidate={candidate} />
+      <section className="niche-opportunity-risk-grid" aria-label="Opportunity gaps and risks">
+        <NichePanel title="Opportunity gaps">
+          <List items={candidate.opportunity_gaps?.length ? candidate.opportunity_gaps : (candidate.supply_gaps ?? []).map(gap => gap.statement)} />
         </NichePanel>
         <NichePanel title="Risks and limitations">
           <RiskSection candidate={candidate} />
+        </NichePanel>
+      </section>
+      </ScrollReveal>
+      <ScrollReveal>
+      <section className="niche-evidence-risk-grid">
+        <NichePanel title="Evidence and outliers">
+          <EvidenceSection candidate={candidate} />
         </NichePanel>
       </section>
       </ScrollReveal>
@@ -1713,29 +1723,80 @@ function LinearProgress({ value, color, ariaLabel, className = '', displayValue,
 function DimensionCard({ row, open, detailPanelId, onToggle }: { row: DimensionRow; open: boolean; detailPanelId: string; onToggle: () => void }) {
   return (
     <div className={`niche-dimension-card accent-${row.accent}`}>
-      <ProgressCircle value={row.score} accent={row.accent} size="metric" ariaLabel={`${row.label} score ${Math.round(row.score)} out of 100`} />
+      <SemiGauge value={row.score} accent={row.accent} ariaLabel={`${row.label} score ${Math.round(row.score)} out of 100`} />
       <div className="niche-dimension-card-copy">
         <strong>{row.label}</strong>
         <span>{formatRatingBand(row.ratingBand ?? ratingBandForScore(row.score))}</span>
-        <p>{row.explanation}</p>
         <button className="dimension-detail-toggle" type="button" onClick={onToggle} aria-expanded={open} aria-controls={open ? detailPanelId : undefined} aria-label={`${open ? 'Hide' : 'Show'} ${row.label} details`}>
-          {open ? 'Hide details' : 'Details'}
+          {open ? 'Hide details' : 'View details'}
         </button>
       </div>
     </div>
   );
 }
 
-function DimensionDetailPanel({ id, row, onClose }: { id: string; row: DimensionRow; onClose: () => void }) {
+function SemiGauge({ value, accent, max = 100, ariaLabel }: { value: number; accent: string; max?: number; ariaLabel: string }) {
+  const numericValue = Number.isFinite(value) ? value : 0;
+  const boundedValue = Math.max(0, Math.min(max, numericValue));
+  const { ref, inView, reducedMotion } = useInViewOnce<HTMLDivElement>(0.25);
+  const animatedValue = useAnimatedNumber(boundedValue, inView, reducedMotion, 820);
+  const displayValue = Math.round(animatedValue);
+  const radius = 52;
+  const circumference = Math.PI * radius;
+  const progress = max > 0 ? Math.max(0, Math.min(max, animatedValue)) / max : 0;
+  const dashOffset = circumference * (1 - progress);
+  return (
+    <div
+      ref={ref}
+      className={`niche-semi-gauge accent-${accent}`}
+      role="progressbar"
+      aria-label={ariaLabel}
+      aria-valuenow={Math.round(boundedValue)}
+      aria-valuemin={0}
+      aria-valuemax={max}
+    >
+      <svg viewBox="0 0 128 76" aria-hidden="true" focusable="false">
+        <path className="niche-semi-gauge-track" d="M12 64 A52 52 0 0 1 116 64" pathLength="100" />
+        <path className="niche-semi-gauge-fill" d="M12 64 A52 52 0 0 1 116 64" pathLength="100" style={{ strokeDasharray: circumference, strokeDashoffset: dashOffset }} />
+      </svg>
+      <strong>{displayValue}</strong>
+    </div>
+  );
+}
+
+function DimensionDetailPanel({ id, row, candidate, onClose }: { id: string; row: DimensionRow; candidate: NicheCandidate; onClose: () => void }) {
+  const evidence = candidate.market_evidence;
+  const contribution = row.score * row.weight;
+  const limitations = evidence?.limitations?.slice(0, 2) ?? [];
   return (
     <section id={id} className={`dimension-detail-panel accent-${row.accent}`} aria-live="polite" tabIndex={-1}>
       <div>
         <span>{row.label}</span>
         <strong>{Math.round(row.score)} / 100 · {formatRatingBand(row.ratingBand ?? ratingBandForScore(row.score))}</strong>
       </div>
-      <p>{row.explanation}</p>
+      <div className="dimension-detail-grid">
+        <TextBlock label="Explanation" value={row.explanation} />
+        <TextBlock label="Weighted contribution" value={`${contribution.toFixed(1)} of ${(row.weight * 100).toFixed(0)} possible points`} />
+        {evidence?.sample_size ? <TextBlock label="Evidence considered" value={`${evidence.sample_size} sampled public videos; ${candidate.validation?.recent_publication_volume ?? 0} recent uploads; ${evidenceModeLabel(evidence.status)}.`} /> : null}
+        {limitations.length ? <TextBlock label="Important limitations" value={limitations.join(' ')} /> : null}
+      </div>
       <button className="link-button" type="button" onClick={onClose}>Close details</button>
     </section>
+  );
+}
+
+function AudienceProfile({ candidate }: { candidate: NicheCandidate }) {
+  const problems = candidate.audience_problems?.length ? candidate.audience_problems : [candidate.viewer_problem].filter(Boolean);
+  const advantages = candidate.creator_advantages?.length ? candidate.creator_advantages : [candidate.creator_advantage].filter(Boolean);
+  return (
+    <div className="audience-profile-compact">
+      <TextBlock label="Audience" value={candidate.target_audience || candidate.target_viewer} />
+      <div className="audience-profile-columns">
+        <SectionList label="Audience problems" items={problems} />
+        <SectionList label="Creator advantages" items={advantages} />
+      </div>
+      <TextBlock label="Unique positioning" value={candidate.unique_angle} />
+    </div>
   );
 }
 
@@ -1763,12 +1824,13 @@ function IdeaPreview({ titles, showTopics, onToggleTopics }: { titles: VideoTopi
 }
 
 function CompactIdeaRow({ index, topic }: { index: number; topic: VideoTopic }) {
+  const meta = [topic.pillar, topic.intent ? topicMetaLabel(topic.intent) : '', topic.evidence_status ? topicMetaLabel(topic.evidence_status) : ''].filter(Boolean);
   return (
     <div className="compact-idea-row">
       <span className="idea-number">{index}</span>
       <span className="idea-row-copy">
         <strong>{topic.title}</strong>
-        {(topic.pillar || topic.intent || topic.evidence_status) && <small>{[topic.pillar, topic.intent, topic.evidence_status].filter(Boolean).join(' · ')}</small>}
+        {meta.length ? <small>{meta.join(' · ')}</small> : null}
       </span>
     </div>
   );
@@ -1963,7 +2025,7 @@ function DemandEvidence({ candidate }: { candidate: NicheCandidate }) {
         <MetricStat label="Engagement" value={ev.engagement == null ? 'Unavailable' : `${ev.engagement}%`} />
       </div>
       <div className="demand-meta-row">
-        <span><strong>Recent activity:</strong> {ev.recent_activity || 'Unavailable'}</span>
+        <span><strong>Evidence freshness:</strong> {ev.recent_activity && ev.recent_activity !== 'Unavailable' ? `last qualifying sampled upload was ${ev.recent_activity}` : 'Unavailable'}</span>
         <span><strong>Collected:</strong> {ev.collected_at ? formatCacheTime(ev.collected_at) : 'Unavailable'}</span>
       </div>
     </div>
@@ -1984,7 +2046,7 @@ function CompetitionVisual({ candidate }: { candidate: NicheCandidate }) {
   const demand = candidate.dimensions?.audience_demand ?? candidate.scores.demand;
   const demandSignal = candidate.market_evidence?.recent_activity || candidate.evidence_summary || candidate.validation.market_evidence_summary;
   const competitionSignal = candidate.validation.competition_level
-    ? `${formatLabel(candidate.validation.competition_level)} competition. ${competition.explanation}`
+    ? `${formatLabel(candidate.validation.competition_level)} competition from the sampled public results.`
     : competition.explanation;
   const interpretation = candidate.opportunity_gaps?.[0] || candidate.supply_gaps?.[0]?.statement || candidate.recommended_first_action;
   return (
@@ -1993,12 +2055,12 @@ function CompetitionVisual({ candidate }: { candidate: NicheCandidate }) {
         <strong>{Math.round(competition.score)} / 100</strong>
         <span>{formatRatingBand(competition.rating_band ?? ratingBandForScore(competition.score))}</span>
       </div>
-      <TextBlock label="Strategic explanation" value={competition.explanation} />
       <div className="competition-signal-grid">
         <TextBlock label="Demand signal" value={demandSignal || demand.explanation} />
         <TextBlock label="Competition signal" value={competitionSignal} />
+        <TextBlock label="Interpretation" value={interpretation} />
       </div>
-      <TextBlock label="Interpretation" value={interpretation} />
+      <TextBlock label="Strategic explanation" value={competition.explanation} />
     </div>
   );
 }
@@ -2009,7 +2071,7 @@ function UnavailableChart({ title, desc }: { title: string; desc: string }) {
 
 function AlternativeCandidates({ candidates, unavailableReason, expandedID, onToggle }: { candidates: NicheCandidate[]; unavailableReason?: string; expandedID: string | null; onToggle: (id: string | null) => void }) {
   const reveal = useRevealClass();
-  if (!candidates.length) return <section ref={reveal.ref as RefObject<HTMLElement>} className={`alternative-candidates ${reveal.className}`.trim()}><div className="settings-card-title">Alternative candidates</div><UnavailableChart title="Alternatives unavailable" desc={unavailableReason || 'No validated alternative candidates were returned after structured output validation.'} /></section>;
+  if (!candidates.length) return <section ref={reveal.ref as RefObject<HTMLElement>} className={`alternative-candidates ${reveal.className} is-compact-unavailable`.trim()}><div className="settings-card-title">Alternative candidates</div><UnavailableChart title="Alternatives unavailable" desc={unavailableReason || 'We could not validate two sufficiently distinct alternatives from the available evidence. Broaden the topic or audience to explore more options.'} /></section>;
   return (
     <section ref={reveal.ref as RefObject<HTMLElement>} className={`alternative-candidates ${reveal.className}`.trim()}>
       <div className="settings-card-title">Alternative candidates</div>
@@ -2059,8 +2121,19 @@ function DimensionBars({ rows }: { rows: DimensionRow[] }) {
 }
 
 function evidenceModeLabel(mode?: string): string {
-  const labels: Record<string, string> = { live_validated: 'Live validated', cache_validated: 'Cache validated', trend_supported: 'Trend supported', ai_strategic_analysis: 'AI strategic analysis', limited_evidence: 'Limited evidence' };
-  return labels[String(mode ?? '')] || 'Limited evidence';
+  const labels: Record<string, string> = {
+    live_validated: 'Live validated',
+    cache_validated: 'Public evidence validated',
+    public_evidence_validated: 'Public evidence validated',
+    historical_public_evidence: 'Historical public evidence',
+    limited_recent_evidence: 'Limited recent evidence',
+    trend_supported: 'Evidence-informed',
+    ai_strategic_analysis: 'AI strategy only',
+    ai_strategy_only: 'AI strategy only',
+    limited_evidence: 'Evidence unavailable',
+    evidence_unavailable: 'Evidence unavailable',
+  };
+  return labels[String(mode ?? '')] || 'Evidence unavailable';
 }
 
 function evidenceBadgeLabel(report: NicheReport, candidate: NicheCandidate): string {
@@ -2073,7 +2146,35 @@ function evidenceFreshnessLabel(freshness?: string, collectedAt?: string | null)
   if (collectedAt) return `Collected ${formatCacheTime(collectedAt)}`;
   if (freshness === 'live') return 'Live evidence';
   if (freshness === 'cached') return 'Cached evidence';
+  if (freshness === 'historical_public_evidence') return 'Historical public evidence';
+  if (freshness === 'limited_recent_evidence') return 'Limited recent evidence';
   return 'Strategic only';
+}
+
+function topicMetaLabel(value: string): string {
+  const labels: Record<string, string> = {
+    ai_strategic_analysis: 'Strategic analysis',
+    backend_response_validation: 'Strategic analysis',
+    backend_title_validation: 'Strategic analysis',
+    openai_structured_strategy: 'Strategic analysis',
+    'evidence-backed': 'Evidence-informed',
+    'related opportunity': 'Evidence-informed',
+    'unvalidated idea': 'Exploratory concept',
+    tutorial: 'Tutorial',
+    comparison: 'Comparison',
+    'case study': 'Case study',
+    mistake: 'Mistakes',
+    experiment: 'Experiment',
+    workflow: 'Workflow',
+    'beginner guide': 'Beginner guide',
+    breakdown: 'Breakdown',
+    analysis: 'Analysis',
+    checklist: 'Checklist',
+  };
+  const key = String(value).trim().toLowerCase();
+  if (labels[key]) return labels[key];
+  if (key.includes('_')) return '';
+  return formatLabel(value);
 }
 
 function TrendOpportunityCard({ result, expanded, onToggle, generated, generationError, generating, onGenerate, onOpenScriptStudio }: {
@@ -2415,7 +2516,7 @@ function LabelledChips({ label, items }: { label: string; items: string[] }) {
 function SectionList({ label, items }: { label: string; items: string[] }) {
   if (!items.length) return null;
   return (
-    <div style={{ display: 'grid', gap: 6, marginTop: 8 }}>
+    <div className="section-list" style={{ display: 'grid', gap: 6, marginTop: 8 }}>
       <div style={{ fontSize: 11, fontWeight: 800, color: 'var(--text-dim)', textTransform: 'uppercase' }}>{label}</div>
       <List items={items} />
     </div>
@@ -2429,7 +2530,7 @@ function ChipList({ items }: { items: string[] }) {
 
 function List({ items }: { items: string[] }) {
   if (!items.length) return <div className="muted-note">No data returned for this field.</div>;
-  return <div style={{ display: 'grid', gap: 8 }}>{items.map(item => <div key={item} className="small-capability">{item}</div>)}</div>;
+  return <div className="compact-insight-list" style={{ display: 'grid', gap: 8 }}>{items.map(item => <div key={item} className="small-capability">{item}</div>)}</div>;
 }
 
 function VideoSummaryList({ videos }: { videos: NonNullable<YouTubeChannelAnalysisResponse['top_videos_summary']> }) {
