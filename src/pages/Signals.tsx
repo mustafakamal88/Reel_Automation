@@ -892,7 +892,7 @@ function VideoAnalysisHero({ result, onGenerate, generating }: { result: YouTube
           </div>
           <div className="video-revenue-card">
             <span>Revenue potential</span>
-            <strong>{displayRevenueRange(result.revenue_estimate)}</strong>
+            <strong>{displayCompactRevenueRange(result.revenue_estimate)}</strong>
             <small>{result.revenue_estimate?.confidence ? `${result.revenue_estimate.confidence} confidence` : 'Public estimate'}</small>
           </div>
         </div>
@@ -3480,6 +3480,22 @@ function displayRevenueRange(estimate?: YouTubeVideoAnalysisResponse['revenue_es
     return `${formatCurrencyEstimate(estimate.low)}-${formatCurrencyEstimate(estimate.high)}`;
   }
   return estimate.formatted_range || 'Unavailable';
+}
+
+function displayCompactRevenueRange(estimate?: YouTubeVideoAnalysisResponse['revenue_estimate']): string {
+  if (!estimate) return 'Unavailable';
+  if (Number.isFinite(estimate.low) && Number.isFinite(estimate.high)) {
+    return `${formatCompactCurrency(estimate.low)}-${formatCompactCurrency(estimate.high)}`;
+  }
+  return estimate.formatted_range || 'Unavailable';
+}
+
+function formatCompactCurrency(value?: number): string {
+  if (value == null || !Number.isFinite(value)) return 'Unavailable';
+  const abs = Math.abs(value);
+  if (abs >= 1_000_000) return `$${(value / 1_000_000).toLocaleString(undefined, { maximumFractionDigits: 1 })}M`;
+  if (abs >= 1_000) return `$${(value / 1_000).toLocaleString(undefined, { maximumFractionDigits: abs >= 10_000 ? 0 : 1 })}K`;
+  return formatCurrencyEstimate(value);
 }
 
 function formatCompactNumber(value?: number): string {
