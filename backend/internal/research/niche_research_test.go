@@ -70,16 +70,16 @@ func (f fakeNicheStrategist) GenerateCandidates(ctx context.Context, input Niche
 }
 
 type fakeRepairStrategist struct {
-	result       NicheStrategyResult
-	repaired     NicheStrategyResult
-	repairCalls  int
-	repairedIdeas []VideoTopic
+	result          NicheStrategyResult
+	repaired        NicheStrategyResult
+	repairCalls     int
+	repairedIdeas   []VideoTopic
 	ideaRepairCalls int
-	missingCount int
-	wantMissing int
-	generateErr  error
-	repairErr    error
-	repairIssues []string
+	missingCount    int
+	wantMissing     int
+	generateErr     error
+	repairErr       error
+	repairIssues    []string
 }
 
 func (f *fakeRepairStrategist) GenerateCandidates(ctx context.Context, input NicheStrategyInput) (NicheStrategyResult, error) {
@@ -240,8 +240,8 @@ func TestNicheResearchOpenAIUnavailableReturnsStructuredApplicationState(t *test
 	if err != nil {
 		t.Fatalf("OpenAI unavailable should return application state, not generic error: %v", err)
 	}
-	if report.Status != "openai_unavailable" || report.AnalysisMode != "openai_unavailable" {
-		t.Fatalf("status=%s analysis_mode=%s, want openai_unavailable", report.Status, report.AnalysisMode)
+	if report.Status != "openai_unavailable" || report.AnalysisMode != "AI strategy unavailable" {
+		t.Fatalf("status=%s analysis_mode=%s, want sanitized openai_unavailable state", report.Status, report.AnalysisMode)
 	}
 	if !strings.Contains(strings.ToLower(report.Message), "ai niche strategy") {
 		t.Fatalf("message should state AI niche strategy is unavailable: %q", report.Message)

@@ -28,8 +28,8 @@ func TestHandleCreateNicheResearchOpenAIUnavailableApplicationState(t *testing.T
 	if err := json.Unmarshal(rec.Body.Bytes(), &report); err != nil {
 		t.Fatalf("decode report: %v; body=%s", err, rec.Body.String())
 	}
-	if report.Status != "openai_unavailable" || report.AnalysisMode != "openai_unavailable" {
-		t.Fatalf("status=%s analysis_mode=%s, want openai_unavailable", report.Status, report.AnalysisMode)
+	if report.Status != "openai_unavailable" || report.AnalysisMode != "AI strategy unavailable" {
+		t.Fatalf("status=%s analysis_mode=%s, want sanitized openai_unavailable state", report.Status, report.AnalysisMode)
 	}
 	if !strings.Contains(strings.ToLower(report.Message), "ai niche strategy") {
 		t.Fatalf("message should explain unavailable AI strategy: %q", report.Message)
@@ -39,6 +39,29 @@ func TestHandleCreateNicheResearchOpenAIUnavailableApplicationState(t *testing.T
 	}
 	if report.Profile.ProfessionalSkills != "teach how to code" {
 		t.Fatalf("profile inputs not preserved for retry: %#v", report.Profile)
+	}
+}
+
+func TestHandleCreateNicheResearchInvalidInputHidesInternalAnalysisMode(t *testing.T) {
+	srv := NewServer(&config.Config{}, nil, nil, nil)
+	req := httptest.NewRequest(http.MethodPost, "/api/niches/research", bytes.NewBufferString(`{}`))
+	rec := httptest.NewRecorder()
+
+	srv.handleCreateNicheResearch(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 application state; body=%s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if strings.Contains(strings.ToLower(body), "ai_strategic_analysis") {
+		t.Fatalf("internal analysis mode leaked: %s", body)
+	}
+	var report research.NicheReport
+	if err := json.Unmarshal(rec.Body.Bytes(), &report); err != nil {
+		t.Fatalf("decode report: %v; body=%s", err, body)
+	}
+	if report.Status != "invalid_input" || report.AnalysisMode != "Strategic analysis" {
+		t.Fatalf("status=%s analysis_mode=%s, want sanitized invalid input state", report.Status, report.AnalysisMode)
 	}
 }
 

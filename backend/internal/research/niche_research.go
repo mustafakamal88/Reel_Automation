@@ -866,6 +866,7 @@ func ResearchNiches(ctx context.Context, req NicheResearchRequest, cfg NicheRese
 	if meaningfulProfileFields(profile) < 3 {
 		report.Status = "invalid_input"
 		report.Message = "Add at least three creator-profile inputs before researching niches."
+		report, _, _ = FinalizeNicheReportForResponse(report)
 		return report, nil
 	}
 
@@ -896,6 +897,7 @@ func ResearchNiches(ctx context.Context, req NicheResearchRequest, cfg NicheRese
 		report.Status = "openai_unavailable"
 		report.Message = "AI niche strategy is unavailable because OpenAI is not configured."
 		report.AnalysisMode = "openai_unavailable"
+		report, _, _ = FinalizeNicheReportForResponse(report)
 		return report, nil
 	}
 	if strategist == nil {
@@ -908,6 +910,7 @@ func ResearchNiches(ctx context.Context, req NicheResearchRequest, cfg NicheRese
 		report.Status = "openai_unavailable"
 		report.Message = "AI niche strategy is temporarily unavailable."
 		report.AnalysisMode = "openai_unavailable"
+		report, _, _ = FinalizeNicheReportForResponse(report)
 		return report, nil
 	}
 	report.CreatorProfileSummary = strings.TrimSpace(strategy.CreatorProfileSummary)
@@ -2090,6 +2093,7 @@ func FinalizeNicheReportForResponse(report NicheReport) (NicheReport, []string, 
 	issues := []string{}
 	report.SchemaVersion = NicheReportSchemaVersion
 	report.Cache.SchemaVersion = NicheReportSchemaVersion
+	report.AnalysisMode = customerTopicLabel(report.AnalysisMode)
 	if report.Status != StatusOK {
 		return report, issues, true
 	}
@@ -2334,11 +2338,11 @@ func positiveRatingLanguage(rating, reasoning string) bool {
 }
 
 type primaryNicheContext struct {
-	Niche   string
-	Domain  string
+	Niche    string
+	Domain   string
 	Audience string
-	Anchors []string
-	Pillars []ContentPillar
+	Anchors  []string
+	Pillars  []ContentPillar
 }
 
 func validateVideoTitles(titles []VideoTopic, pillars []ContentPillar, niche, audience string) []VideoTopic {
@@ -2398,11 +2402,11 @@ func primaryNicheContextFromDraft(draft NicheDraft, profile CreatorNicheProfile)
 		profile.TeachingSubjects,
 	}, append(append([]string{}, draft.AudienceProblems...), draft.OpportunityGaps...)...), " ")
 	return primaryNicheContext{
-		Niche:   firstNonEmpty(draft.Name, draft.SearchQuery, profile.OptionalBroadTopic),
-		Domain:  classifyContentDomain(text),
+		Niche:    firstNonEmpty(draft.Name, draft.SearchQuery, profile.OptionalBroadTopic),
+		Domain:   classifyContentDomain(text),
 		Audience: audience,
-		Anchors: semanticAnchors(text),
-		Pillars: draft.ContentPillars,
+		Anchors:  semanticAnchors(text),
+		Pillars:  draft.ContentPillars,
 	}
 }
 
@@ -2528,27 +2532,34 @@ func customerTopicLabel(value string) string {
 	value = strings.TrimSpace(value)
 	lower := strings.ToLower(value)
 	labels := map[string]string{
-		"ai_strategic_analysis":           "Strategic analysis",
-		"backend_response_validation":     "Strategic analysis",
-		"backend_title_validation":        "Strategic analysis",
-		"backend_heuristic_strategy":      "Strategic analysis",
-		"openai_structured_strategy":      "Strategic analysis",
-		"evidence-backed":                 "Evidence-informed",
-		"related opportunity":             "Evidence-informed",
-		"unvalidated idea":                "Exploratory concept",
-		"tutorial":                        "Tutorial",
-		"comparison":                      "Comparison",
-		"case study":                      "Case study",
-		"mistake":                         "Mistakes",
-		"practical workflow":              "Workflow",
-		"workflow":                        "Workflow",
-		"beginner guide":                  "Beginner guide",
-		"tool breakdown":                  "Breakdown",
-		"analysis":                        "Analysis",
-		"checklist":                       "Checklist",
-		"medium":                          "Medium",
-		"low":                             "Low",
-		"high":                            "High",
+		"ai_strategic_analysis":       "Strategic analysis",
+		"backend_response_validation": "Strategic analysis",
+		"backend_title_validation":    "Strategic analysis",
+		"backend_heuristic_strategy":  "Strategic analysis",
+		"openai_structured_strategy":  "Strategic analysis",
+		"openai_unavailable":          "AI strategy unavailable",
+		"invalid_model_output":        "Invalid model output",
+		"limited_recent_evidence":     "Limited recent evidence",
+		"historical_public_evidence":  "Historical public evidence",
+		"public_evidence_validated":   "Public evidence validated",
+		"live_validated":              "Live validated",
+		"ai_only":                     "AI strategy only",
+		"evidence-backed":             "Evidence-informed",
+		"related opportunity":         "Evidence-informed",
+		"unvalidated idea":            "Exploratory concept",
+		"tutorial":                    "Tutorial",
+		"comparison":                  "Comparison",
+		"case study":                  "Case study",
+		"mistake":                     "Mistakes",
+		"practical workflow":          "Workflow",
+		"workflow":                    "Workflow",
+		"beginner guide":              "Beginner guide",
+		"tool breakdown":              "Breakdown",
+		"analysis":                    "Analysis",
+		"checklist":                   "Checklist",
+		"medium":                      "Medium",
+		"low":                         "Low",
+		"high":                        "High",
 	}
 	if label, ok := labels[lower]; ok {
 		return label
