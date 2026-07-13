@@ -238,6 +238,7 @@ func sanitizeResearchKeywords(values []string) []string {
 		if cleaned == "" || isRejectedResearchPromptFragment(cleaned) {
 			continue
 		}
+		cleaned = researchAcronymCasing(cleaned)
 		out = append(out, cleaned)
 	}
 	return uniqueStrings(out)
@@ -296,6 +297,18 @@ func sanitizeResearchPromptText(value string) string {
 		value = regexp.MustCompile(pattern).ReplaceAllString(value, " ")
 	}
 	return strings.TrimSpace(regexp.MustCompile(`\s+`).ReplaceAllString(value, " "))
+}
+
+func researchAcronymCasing(value string) string {
+	words := strings.Fields(value)
+	for i, word := range words {
+		trimmed := strings.Trim(word, ".,;:!?()[]{}")
+		switch strings.ToLower(trimmed) {
+		case "ict", "rpm", "seo", "api", "ai", "url", "ctr", "fvg":
+			words[i] = strings.Replace(word, trimmed, strings.ToUpper(trimmed), 1)
+		}
+	}
+	return strings.Join(words, " ")
 }
 
 func isRejectedResearchPromptFragment(value string) bool {

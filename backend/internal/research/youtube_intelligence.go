@@ -192,13 +192,171 @@ func sanitizeKeywordIntelligenceOutput(kw KeywordIntelligence, in KeywordExtract
 	evidenceText := strings.Join(append([]string{cleanTitle, cleanDescription, categoryName(in.Category), strings.Join(in.TopicDetails, " ")}, cleanTags...), " ")
 	evidenceTokens := tokenSet(tokenizeUseful(evidenceText, map[string]bool{}))
 	titleTokens := tokenSet(tokenizeUseful(cleanTitle, map[string]bool{}))
-	kw.PrimaryKeywords = filterQualityPhrases(kw.PrimaryKeywords, evidenceTokens, titleTokens, 6)
-	kw.SecondaryKeywords = filterQualityPhrases(kw.SecondaryKeywords, evidenceTokens, titleTokens, 10)
-	kw.LongTailPhrases = filterQualityPhrases(kw.LongTailPhrases, evidenceTokens, titleTokens, 8)
+	reconstructed := reconstructTopicHierarchy(in, kw, evidenceTokens, titleTokens)
+	if len(reconstructed.primary) > 0 {
+		kw.PrimaryKeywords = reconstructed.primary
+	} else {
+		kw.PrimaryKeywords = filterQualityPhrases(kw.PrimaryKeywords, evidenceTokens, titleTokens, 6)
+	}
+	if len(reconstructed.supporting) > 0 {
+		kw.SecondaryKeywords = reconstructed.supporting
+	} else {
+		kw.SecondaryKeywords = filterQualityPhrases(kw.SecondaryKeywords, evidenceTokens, titleTokens, 10)
+	}
+	if len(reconstructed.search) > 0 {
+		kw.LongTailPhrases = reconstructed.search
+	} else {
+		kw.LongTailPhrases = filterQualityPhrases(kw.LongTailPhrases, evidenceTokens, titleTokens, 8)
+	}
+	kw.PrimaryKeywords = applyAcronymCasingList(kw.PrimaryKeywords)
+	kw.SecondaryKeywords = applyAcronymCasingList(kw.SecondaryKeywords)
+	kw.LongTailPhrases = applyAcronymCasingList(kw.LongTailPhrases)
 	kw.PrimaryTopics = kw.PrimaryKeywords
 	kw.SupportingTerms = kw.SecondaryKeywords
 	kw.SearchPhrases = kw.LongTailPhrases
 	return kw
+}
+
+type topicHierarchy struct {
+	primary    []string
+	supporting []string
+	search     []string
+}
+
+type topicCandidate struct {
+	phrase  string
+	score   float64
+	sources map[string]bool
+}
+
+func reconstructTopicHierarchy(in KeywordExtractionInput, kw KeywordIntelligence, evidenceTokens, titleTokens map[string]bool) topicHierarchy {
+	candidates := map[string]*topicCandidate{}
+	add := func(raw, source string, weight float64) {
+		phrase := normalizeTopicPhrase(raw)
+		if phrase == "" || isGenericTopicPhrase(phrase) || !isUsefulTerm(phrase) || !isRelevantPhrase(phrase, evidenceTokens, titleTokens, weight) {
+			return
+		}
+		if len(strings.Fields(phrase)) > 5 {
+			return
+		}
+		key := topicDedupeKey(phrase)
+		c := candidates[key]
+		if c == nil {
+			c = &topicCandidate{phrase: phrase, sources: map[string]bool{}}
+			candidates[key] = c
+		}
+		c.score += weight + phraseSpecificityBonus(phrase)
+		c.sources[source] = true
+	}
+	addText := func(text, source string, weight float64, maxN int) {
+		cleaned := cleanMetadataText(text)
+		tokens := tokenizeUseful(cleaned, map[string]bool{})
+		for _, token := range tokens {
+			add(token, source, weight)
+		}
+		for n := 2; n <= maxN; n++ {
+			for _, phrase := range ngrams(tokens, n) {
+				add(phrase, source, weight*float64(n)*0.95)
+			}
+		}
+		for _, segment := range meaningfulTitleSegments(cleaned) {
+			add(segment, source, weight*2.2)
+		}
+	}
+	addText(in.Title, "title", 6.5, 5)
+	descParts := splitDescriptionForWeighting(in.Description)
+	addText(descParts[0], "description_intro", 3.2, 5)
+	addText(descParts[1], "description", 1.1, 4)
+	for _, tag := range in.Tags {
+		addText(tag, "tag", 5.2, 5)
+	}
+	for _, topic := range in.TopicDetails {
+		addText(topicLastSegment(topic), "topic_metadata", 0.9, 3)
+	}
+	addText(categoryName(in.Category), "category", 0.45, 3)
+	for _, value := range append(append(append([]string{}, kw.PrimaryKeywords...), kw.SecondaryKeywords...), kw.LongTailPhrases...) {
+		add(value, "existing", 2.2)
+	}
+	for _, phrase := range inferredSupportedDomainPhrases(in) {
+		normalized := normalizeTopicPhrase(phrase)
+		if normalized == "" || isGenericTopicPhrase(normalized) || !isUsefulTerm(normalized) {
+			continue
+		}
+		key := topicDedupeKey(normalized)
+		c := candidates[key]
+		if c == nil {
+			c = &topicCandidate{phrase: normalized, sources: map[string]bool{}}
+			candidates[key] = c
+		}
+		c.score += 24 + phraseSpecificityBonus(normalized)
+		c.sources["metadata_context"] = true
+	}
+	items := make([]topicCandidate, 0, len(candidates))
+	for _, c := range candidates {
+		if len(c.sources) > 1 {
+			c.score += float64(len(c.sources)) * 2.4
+		}
+		if c.sources["title"] || c.sources["tag"] {
+			c.score += 2.2
+		}
+		if isGenericTopicPhrase(c.phrase) {
+			c.score -= 50
+		}
+		items = append(items, *c)
+	}
+	for i := range items {
+		words := strings.Fields(items[i].phrase)
+		if len(words) == 1 && isKnownAcronym(words[0]) {
+			for _, other := range items {
+				if len(strings.Fields(other.phrase)) > 1 && strings.Contains(other.phrase, words[0]) {
+					items[i].score -= 20
+					break
+				}
+			}
+		}
+	}
+	sort.Slice(items, func(i, j int) bool {
+		if items[i].score == items[j].score {
+			return len(items[i].phrase) > len(items[j].phrase)
+		}
+		return items[i].score > items[j].score
+	})
+	primary := []string{}
+	supporting := []string{}
+	search := []string{}
+	for _, item := range items {
+		phrase := item.phrase
+		if isGenericTopicPhrase(phrase) || nearDuplicateSelected(phrase, append(append(primary, supporting...), search...)) {
+			continue
+		}
+		words := len(strings.Fields(phrase))
+		switch {
+		case len(primary) < 6 && (words >= 2 || item.score >= 8):
+			primary = append(primary, phrase)
+		case len(supporting) < 10:
+			supporting = append(supporting, phrase)
+		}
+		if len(search) < 8 && words >= 2 && isNaturalSearchPhrase(phrase) {
+			search = append(search, phrase)
+		}
+	}
+	if len(primary) == 1 && len(supporting) > 0 && topicDedupeKey(primary[0]) == topicDedupeKey(supporting[0]) {
+		supporting = supporting[1:]
+	}
+	return topicHierarchy{primary: primary, supporting: supporting, search: search}
+}
+
+func inferredSupportedDomainPhrases(in KeywordExtractionInput) []string {
+	raw := strings.ToLower(strings.Join(append(append([]string{in.Title, in.Description, in.ChannelTitle, categoryName(in.Category)}, in.Tags...), in.TopicDetails...), " "))
+	out := []string{}
+	if regexp.MustCompile(`\bict\b`).MatchString(raw) && containsAny([]string{raw}, []string{"trading", "trader", "funded", "forex", "financial instrument", "market"}) {
+		if strings.Contains(raw, "concept") {
+			out = append(out, "ict trading concepts")
+		} else {
+			out = append(out, "ict trading")
+		}
+	}
+	return out
 }
 
 func ClassifyNiche(in KeywordExtractionInput, kw KeywordIntelligence) NicheAnalysis {
@@ -256,6 +414,7 @@ func ClassifyNiche(in KeywordExtractionInput, kw KeywordIntelligence) NicheAnaly
 	}
 	format := detectContentFormat(in.Title + " " + in.Description)
 	specificTopic := grammaticallyMeaningfulTopic(kw, in.Title, bestNiche)
+	specificTopic = applyAcronymCasing(specificTopic)
 	sub := specificTopic
 	confidence := 0.42 + float64(bestScore)*0.09
 	if confidence > 0.9 {
@@ -270,7 +429,7 @@ func ClassifyNiche(in KeywordExtractionInput, kw KeywordIntelligence) NicheAnaly
 		AudienceType:         inferAudienceType(bestNiche, haystack),
 		ContentFormat:        format,
 		Confidence:           confidence,
-		EvidenceTerms:        unique(topN(append(evidence, kw.PrimaryKeywords...), 8)),
+		EvidenceTerms:        applyAcronymCasingList(unique(topN(append(evidence, kw.PrimaryKeywords...), 8))),
 		TargetAudience:       inferAudienceType(bestNiche, haystack),
 		InferredContentAngle: inferContentAngle(format, sub, bestNiche),
 	}
@@ -372,38 +531,54 @@ func BuildCreatorOpportunities(niche NicheAnalysis, kw KeywordIntelligence, hook
 	if core == "" {
 		return CreatorOpportunities{}
 	}
+	core = applyAcronymCasing(core)
+	audience = applyAcronymCasing(audience)
+	themes := groundedCreativeThemes(kw, core)
+	themeA := firstNonEmpty(firstTheme(themes, 0), core)
+	themeB := firstTheme(themes, 1)
+	themeC := firstNonEmpty(firstTheme(themes, 2), themeA, core)
+	themeADistinct := !nearDuplicateSelected(themeA, []string{core})
+	angles := []string{
+		"Checklist angle: " + titleCase(core) + " steps built around " + titleCase(themeA) + " for " + audience + ". Public metadata supports this through the title, tags, or description.",
+		"Beginner-to-advanced angle: teach " + titleCase(core) + " through " + titleCase(themeC) + " with clear difficulty levels.",
+		"Workflow angle: turn " + titleCase(core) + " into a concise decision flow using " + titleCase(themeA) + ".",
+		"Mistake-led angle: show where " + audience + " misunderstand " + titleCase(core) + ".",
+	}
+	titles := []string{
+		titleCase(core) + " Explained From Beginner to Advanced",
+		"7 Parts of " + titleCase(core) + " " + titleCase(audience) + " Confuse",
+		"A Beginner Checklist for " + titleCase(core),
+		"Before You Try " + titleCase(core) + ", Learn the Core Framework",
+	}
+	if themeADistinct {
+		titles = append(titles, "How "+titleCase(themeA)+" Fits Into "+titleCase(core))
+	}
+	shorts := []string{
+		"Short-form idea: define " + titleCase(themeA) + " in one clear example.",
+		"Short-form idea: three signs that " + titleCase(themeC) + " is the right concept to use.",
+		"Short-form idea: a beginner mistake around " + titleCase(core) + " corrected quickly.",
+		"Short-form idea: turn " + titleCase(themeA) + " into a single-question hook.",
+	}
+	scripts := []string{
+		"Write a 30-second " + format + " script for " + audience + " about " + core + " using " + themeA + " as the main example.",
+		"Write a 60-second tutorial script that preserves the public title premise \"" + cleanTitle + "\" and teaches " + themeC + ".",
+		"Write a short adaptation using these extracted public topics: " + strings.Join(topN(themes, 4), ", ") + ".",
+		"Write a concise hook and outline for a truthful remake about " + core + ".",
+	}
+	if strings.TrimSpace(themeB) != "" {
+		angles = append([]string{"Comparison angle: " + titleCase(themeA) + " vs " + titleCase(themeB) + " for " + audience + ". Use only the extracted public topic evidence."}, angles...)
+		titles = append([]string{titleCase(themeA) + " vs " + titleCase(themeB) + ": When Each Matters"}, titles...)
+		shorts = append([]string{"Short-form idea: compare " + titleCase(themeA) + " and " + titleCase(themeB) + " in 30 seconds."}, shorts...)
+		scripts = append(scripts, "Write a comparison script around "+themeA+" and "+themeB+" for "+audience+".")
+	}
 	opps := CreatorOpportunities{
-		SuggestedRemakeAngles: filterCreativeOutputs([]string{
-			"Checklist angle - change the format into a step-by-step " + format + " for " + audience + "; public evidence basis: title/topic terms around " + core + "; confidence: medium.",
-			"Comparison angle - keep the source premise but compare " + core + " with a close alternative; evidence basis: cleaned search phrases; confidence: medium.",
-			"Beginner-to-advanced angle - preserve the topic but make the difficulty level explicit for " + audience + "; evidence basis: inferred audience and title structure; confidence: medium.",
-			"Time-boxed workflow angle - turn " + core + " into a concise setup or decision workflow; evidence basis: metadata hook type and topic clarity; confidence: medium.",
-			"Contrarian angle - challenge a common assumption about " + core + " without claiming private performance data; evidence basis: public title and description terms; confidence: low-medium.",
-		}),
-		TitleIdeas: filterCreativeOutputs([]string{
-			"How to Approach " + titleCase(core) + " Without Wasting Time",
-			titleCase(core) + ": A Practical Guide for " + titleCase(audience),
-			"Before You Try " + titleCase(core) + ", Check These Steps",
-			"The " + titleCase(core) + " Workflow I Would Use Today",
-			"Is " + titleCase(core) + " Still Worth It? A Metadata-Based Breakdown",
-		}),
-		ShortFormClipIdeas: filterCreativeOutputs([]string{
-			"Adaptation idea: one clear takeaway from the public title promise about " + core + ".",
-			"Cut a 20-second myth-versus-reality version around " + core + ".",
-			"Adaptation idea: three-step checklist viewers can screenshot.",
-			"Adaptation idea: compare the source premise with one realistic alternative.",
-			"Adaptation idea: turn one cleaned search phrase into a single-question short.",
-		}),
-		ScriptPrompts: filterCreativeOutputs([]string{
-			"Write a 30-second " + format + " script for " + audience + " about " + core + ", grounded only in public metadata.",
-			"Write a 60-second tutorial script that preserves the source premise from the title \"" + cleanTitle + "\" and teaches one practical takeaway.",
-			"Write a short adaptation using these inferred public topics: " + strings.Join(topN(kw.PrimaryTopics, 4), ", ") + ". Do not mention private analytics or transcript-only moments.",
-			"Write a comparison script around " + core + " that states the analysis is based on public metadata.",
-			"Write a concise hook and outline for a truthful remake of: " + cleanTitle,
-		}),
-		ContentGaps:         []string{"Beginner explainer", "Comparison angle", "Mistake-led breakdown"},
-		UnderusedTopics:     filterQualityPhrases(append(kw.SecondaryKeywords, kw.LongTailPhrases...), tokenSet(tokenizeUseful(strings.Join(append([]string{cleanTitle}, kw.PrimaryKeywords...), " "), map[string]bool{})), map[string]bool{}, 5),
-		LocalizationOptions: []string{"Local examples for target country", "Bilingual hook", "Regional creator examples without claiming private analytics"},
+		SuggestedRemakeAngles: filterCreativeOutputs(angles),
+		TitleIdeas:            filterCreativeOutputs(titles),
+		ShortFormClipIdeas:    filterCreativeOutputs(shorts),
+		ScriptPrompts:         filterCreativeOutputs(scripts),
+		ContentGaps:           applyAcronymCasingList([]string{"Beginner explainer for " + core, "Mistake-led breakdown of " + themeC}),
+		UnderusedTopics:       filterQualityPhrases(append(kw.SecondaryKeywords, kw.LongTailPhrases...), tokenSet(tokenizeUseful(strings.Join(append([]string{cleanTitle}, kw.PrimaryKeywords...), " "), map[string]bool{})), map[string]bool{}, 5),
+		LocalizationOptions:   []string{"Local examples for target country", "Bilingual hook", "Regional creator examples without claiming private analytics"},
 	}
 	if len(kw.PrimaryTopics) == 0 {
 		opps.ScriptPrompts = filterCreativeOutputs([]string{
@@ -412,6 +587,32 @@ func BuildCreatorOpportunities(niche NicheAnalysis, kw KeywordIntelligence, hook
 		})
 	}
 	return opps
+}
+
+func groundedCreativeThemes(kw KeywordIntelligence, core string) []string {
+	values := append(append(append([]string{}, kw.SecondaryKeywords...), kw.PrimaryKeywords...), kw.LongTailPhrases...)
+	out := []string{}
+	for _, value := range values {
+		phrase := applyAcronymCasing(normalizeTopicPhrase(value))
+		if phrase == "" || isGenericTopicPhrase(phrase) || creativeOutputRejected(phrase) || nearDuplicateSelected(phrase, append(out, core)) {
+			continue
+		}
+		out = append(out, phrase)
+		if len(out) >= 8 {
+			break
+		}
+	}
+	if len(out) == 0 && strings.TrimSpace(core) != "" {
+		out = append(out, core)
+	}
+	return out
+}
+
+func firstTheme(values []string, index int) string {
+	if index >= 0 && index < len(values) {
+		return values[index]
+	}
+	return ""
 }
 
 func ChannelKeywordClusters(kw KeywordIntelligence, videos []ChannelVideoSummary) []KeywordCluster {
@@ -740,6 +941,9 @@ func isUsefulTerm(term string) bool {
 	if len(term) < 3 || stopWords[term] {
 		return false
 	}
+	if regexp.MustCompile(`[a-z]+\d|\d+[a-z]+`).MatchString(term) && len(term) >= 8 {
+		return false
+	}
 	if regexp.MustCompile(`^[a-z]$|^\d+$|^utm_|^[?&=]+$`).MatchString(term) {
 		return false
 	}
@@ -782,6 +986,7 @@ var stopWords = map[string]bool{
 	"lecture": true, "educational": true, "entertainment": true, "minute": true, "minutes": true, "updated": true,
 	"january": true, "february": true, "march": true, "april": true, "may": true, "june": true,
 	"july": true, "august": true, "september": true, "october": true, "november": true, "december": true,
+	"youtu": true, "tube": true, "tested": true, "cover": true, "covers": true, "include": true, "includes": true, "including": true,
 }
 
 var lowInformationWords = map[string]bool{
@@ -792,6 +997,7 @@ var lowInformationWords = map[string]bool{
 	"purpose": true, "research": true, "consult": true, "licensed": true, "adviser": true, "advisor": true,
 	"decisions": true, "decision": true, "guaranteed": true, "guarantee": true, "funded": true, "days": true,
 	"lecture": true, "educational": true, "entertainment": true, "minute": true, "minutes": true, "updated": true,
+	"tested": true, "cover": true, "covers": true,
 }
 
 func ngrams(tokens []string, n int) []string {
@@ -818,18 +1024,43 @@ func overlapsSelected(term string, selected []string) bool {
 }
 
 func nearDuplicateSelected(term string, selected []string) bool {
-	if overlapsSelected(term, selected) {
-		return true
-	}
 	normalized := strings.ReplaceAll(strings.ToLower(term), "-", " ")
 	for _, item := range selected {
 		other := strings.ReplaceAll(strings.ToLower(item), "-", " ")
 		if normalized == other {
 			return true
 		}
-		if jaccardSimilarity(strings.Fields(normalized), strings.Fields(other)) >= 0.75 {
+		if topicDedupeKey(normalized) != "" && topicDedupeKey(normalized) == topicDedupeKey(other) {
 			return true
 		}
+		if containmentDuplicate(normalized, other) {
+			return true
+		}
+		if jaccardSimilarity(strings.Fields(normalized), strings.Fields(other)) >= 0.82 {
+			return true
+		}
+	}
+	return false
+}
+
+func containmentDuplicate(a, b string) bool {
+	if !(strings.Contains(a, b) || strings.Contains(b, a)) {
+		return false
+	}
+	shorter, longer := a, b
+	if len(shorter) > len(longer) {
+		shorter, longer = longer, shorter
+	}
+	shortWords := strings.Fields(shorter)
+	longWords := strings.Fields(longer)
+	if len(shortWords) == 0 || len(longWords) == 0 {
+		return false
+	}
+	if len(shortWords) == 1 {
+		return true
+	}
+	if len(longWords)-len(shortWords) <= 1 {
+		return true
 	}
 	return false
 }
@@ -856,6 +1087,87 @@ func isNaturalSearchPhrase(value string) bool {
 		return false
 	}
 	return !regexp.MustCompile(`(?i)\butm|http|affiliate|sponsor|instagram|tiktok|facebook|twitter|financial advice|own research|educational purposes\b`).MatchString(value)
+}
+
+func meaningfulTitleSegments(value string) []string {
+	parts := regexp.MustCompile(`(?i)\s+(\||-|–|—|:|\(|\)|/|\bvs\b|\bversus\b)\s+`).Split(value, -1)
+	out := []string{}
+	for _, part := range parts {
+		part = normalizeTopicPhrase(part)
+		if part != "" && len(strings.Fields(part)) >= 2 && len(strings.Fields(part)) <= 5 && !isGenericTopicPhrase(part) {
+			out = append(out, part)
+		}
+	}
+	return out
+}
+
+func isGenericTopicPhrase(value string) bool {
+	phrase := normalizeTopicPhrase(value)
+	if phrase == "" {
+		return true
+	}
+	generic := map[string]bool{
+		"concept": true, "concepts": true, "video": true, "tutorial": true, "education": true, "beginner": true, "beginners": true,
+		"explained": true, "explain": true, "guide": true, "lesson": true, "course": true, "basics": true, "basic": true,
+	}
+	if generic[phrase] {
+		return true
+	}
+	words := strings.Fields(phrase)
+	meaningful := 0
+	for _, word := range words {
+		if !generic[word] && !stopWords[word] && !lowInformationWords[word] {
+			meaningful++
+		}
+	}
+	if meaningful == 0 {
+		return true
+	}
+	if meaningful == 1 && len(words) >= 2 {
+		for _, word := range words {
+			if generic[word] {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func phraseSpecificityBonus(phrase string) float64 {
+	words := strings.Fields(normalizeTopicPhrase(phrase))
+	score := float64(len(words)) * 0.7
+	for _, word := range words {
+		if len(word) >= 7 {
+			score += 0.8
+		}
+		if isKnownAcronym(word) {
+			score += 1.2
+		}
+	}
+	return score
+}
+
+func topicDedupeKey(value string) string {
+	words := strings.Fields(normalizeTopicPhrase(value))
+	out := make([]string, 0, len(words))
+	hasFairValueGap := strings.Contains(strings.Join(words, " "), "fair value gap")
+	for _, word := range words {
+		switch word {
+		case "concept", "concepts", "tutorial", "explained", "explain", "guide", "lesson", "beginner", "beginners", "basic", "basics", "example", "examples", "setup", "setups":
+			continue
+		case "fvg":
+			if hasFairValueGap {
+				continue
+			}
+			out = append(out, word)
+		default:
+			out = append(out, word)
+		}
+	}
+	if len(out) == 0 {
+		return strings.Join(words, " ")
+	}
+	return strings.Join(out, " ")
 }
 
 func isNoisePhrase(value string) bool {
@@ -974,7 +1286,7 @@ func inferAudienceType(niche, haystack string) string {
 }
 
 func inferContentAngle(format, sub, niche string) string {
-	return "A " + format + " angle for " + sub + " within " + niche + ", inferred from public metadata."
+	return "A " + format + " angle for " + applyAcronymCasing(sub) + " within " + applyAcronymCasing(niche) + ", inferred from public metadata."
 }
 
 func grammaticallyMeaningfulTopic(kw KeywordIntelligence, title, fallback string) string {
@@ -983,7 +1295,7 @@ func grammaticallyMeaningfulTopic(kw KeywordIntelligence, title, fallback string
 	bestTitleScore := -1
 	for n := minInt(4, len(titleTokens)); n >= 2; n-- {
 		for _, phrase := range ngrams(titleTokens, n) {
-			if isNaturalSearchPhrase(phrase) {
+			if isNaturalSearchPhrase(phrase) && !isGenericTopicPhrase(phrase) {
 				score := titleTopicPhraseScore(phrase)
 				if score > bestTitleScore {
 					bestTitlePhrase = phrase
@@ -999,8 +1311,8 @@ func grammaticallyMeaningfulTopic(kw KeywordIntelligence, title, fallback string
 	candidates = append(candidates, kw.SearchPhrases...)
 	for _, candidate := range candidates {
 		candidate = strings.TrimSpace(candidate)
-		if isNaturalSearchPhrase(candidate) {
-			return candidate
+		if isNaturalSearchPhrase(candidate) && !isGenericTopicPhrase(candidate) {
+			return applyAcronymCasing(candidate)
 		}
 	}
 	return fallback
@@ -1024,6 +1336,9 @@ func titleTopicPhraseScore(phrase string) int {
 	}
 	if len(words[0]) <= 3 && len(words) >= 4 {
 		score -= 8
+	}
+	if isGenericTopicPhrase(phrase) {
+		score -= 60
 	}
 	return score
 }
@@ -1114,12 +1429,13 @@ func normalizeTopicPhrase(value string) string {
 		return ""
 	}
 	out := make([]string, 0, len(words))
+	pluralExceptions := map[string]bool{"concepts": true, "redis": true, "kubernetes": true, "physics": true, "mathematics": true, "analytics": true}
 	for _, word := range words {
 		word = strings.Trim(word, "-/ ")
 		if word == "" {
 			continue
 		}
-		if len(word) > 4 && strings.HasSuffix(word, "s") && !strings.HasSuffix(word, "ss") && !strings.HasSuffix(word, "sis") && !strings.HasSuffix(word, "us") {
+		if len(word) > 4 && strings.HasSuffix(word, "s") && !pluralExceptions[word] && !strings.HasSuffix(word, "ss") && !strings.HasSuffix(word, "sis") && !strings.HasSuffix(word, "us") {
 			word = strings.TrimSuffix(word, "s")
 		}
 		if len(out) == 0 || out[len(out)-1] != word {
@@ -1127,6 +1443,44 @@ func normalizeTopicPhrase(value string) string {
 		}
 	}
 	return strings.Join(out, " ")
+}
+
+func applyAcronymCasingList(values []string) []string {
+	out := []string{}
+	for _, value := range values {
+		cased := applyAcronymCasing(value)
+		if cased != "" && !nearDuplicateSelected(cased, out) {
+			out = append(out, cased)
+		}
+	}
+	return out
+}
+
+func applyAcronymCasing(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	words := strings.Fields(value)
+	for i, word := range words {
+		trimmed := strings.Trim(word, ".,;:!?()[]{}")
+		if isKnownAcronym(trimmed) {
+			upper := strings.ToUpper(trimmed)
+			words[i] = strings.Replace(word, trimmed, upper, 1)
+		}
+	}
+	out := strings.Join(words, " ")
+	out = regexp.MustCompile(`(?i)\bfvg\b`).ReplaceAllString(out, "FVG")
+	return strings.TrimSpace(out)
+}
+
+func isKnownAcronym(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "ict", "rpm", "seo", "api", "ai", "url", "ctr", "fvg":
+		return true
+	default:
+		return false
+	}
 }
 
 func tokenSet(tokens []string) map[string]bool {
@@ -1173,7 +1527,7 @@ func filterQualityPhrases(values []string, evidenceTokens, titleTokens map[strin
 	out := []string{}
 	for _, value := range values {
 		phrase := normalizeTopicPhrase(value)
-		if containsBoilerplateFragment(phrase) || !isUsefulTerm(phrase) || !isRelevantPhrase(phrase, evidenceTokens, titleTokens, 3.5) || nearDuplicateSelected(phrase, out) {
+		if containsBoilerplateFragment(phrase) || isGenericTopicPhrase(phrase) || !isUsefulTerm(phrase) || !isRelevantPhrase(phrase, evidenceTokens, titleTokens, 3.5) || nearDuplicateSelected(phrase, out) {
 			continue
 		}
 		out = append(out, phrase)
@@ -1267,8 +1621,8 @@ func isGenericCreativeSeed(value string) bool {
 func filterCreativeOutputs(values []string) []string {
 	out := []string{}
 	for _, value := range values {
-		cleaned := strings.TrimSpace(value)
-		if cleaned == "" || creativeOutputRejected(cleaned) || nearDuplicateSelected(cleaned, out) {
+		cleaned := cleanupGeneratedText(value)
+		if cleaned == "" || creativeOutputRejected(cleaned) || isTruncatedGeneratedTitle(cleaned) || nearDuplicateSelected(cleaned, out) {
 			continue
 		}
 		out = append(out, cleaned)
@@ -1290,7 +1644,42 @@ func creativeOutputRejected(value string) bool {
 	if regexp.MustCompile(`(?i)\b(explained in|using these inferred public topics:\s*(not|financial|finance)\b)`).MatchString(lower) {
 		return true
 	}
+	if regexp.MustCompile(`(?i)\b(cleaned metadata|evidence basis|claiming private performance data|schema|provider|youtube_data_api)\b`).MatchString(lower) {
+		return true
+	}
 	return false
+}
+
+func cleanupGeneratedText(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	value = regexp.MustCompile(`\s+`).ReplaceAllString(value, " ")
+	value = strings.ReplaceAll(value, ";.", ".")
+	value = strings.ReplaceAll(value, "..", ".")
+	value = strings.ReplaceAll(value, " ,", ",")
+	value = strings.ReplaceAll(value, " .", ".")
+	value = applyAcronymCasing(value)
+	value = strings.TrimSpace(value)
+	for regexp.MustCompile(`[;:,]\s*$`).MatchString(value) {
+		value = strings.TrimSpace(value[:len(value)-1])
+	}
+	return value
+}
+
+func isTruncatedGeneratedTitle(value string) bool {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return true
+	}
+	last := strings.ToLower(strings.Trim(value[strings.LastIndex(value, " ")+1:], ".!?;:, "))
+	switch last {
+	case "the", "a", "an", "to", "from", "of", "for", "with", "and", "or", "but", "into", "by":
+		return true
+	default:
+		return false
+	}
 }
 
 func containsBoilerplateFragment(value string) bool {
@@ -1351,11 +1740,14 @@ func firstNonEmpty(values ...string) string {
 func titleCase(value string) string {
 	words := strings.Fields(value)
 	for i, word := range words {
-		if len(word) > 0 {
+		clean := strings.Trim(word, ".,;:!?()[]{}")
+		if isKnownAcronym(clean) {
+			words[i] = strings.Replace(word, clean, strings.ToUpper(clean), 1)
+		} else if len(word) > 0 {
 			words[i] = strings.ToUpper(word[:1]) + word[1:]
 		}
 	}
-	return strings.Join(words, " ")
+	return applyAcronymCasing(strings.Join(words, " "))
 }
 
 func containsAny(items, needles []string) bool {

@@ -77,7 +77,7 @@ func TestKeywordExtractorRemovesNoiseAndFindsPhrases(t *testing.T) {
 	if strings.Contains(joined, "abcdef12345") || strings.Contains(joined, "https") {
 		t.Fatalf("keywords include noise: %+v", got)
 	}
-	if !strings.Contains(joined, "ai automation") {
+	if !strings.Contains(strings.ToLower(joined), "ai automation") {
 		t.Fatalf("keywords missing meaningful phrase: %+v", got)
 	}
 	if len(got.Hashtags) == 0 || got.Hashtags[0] != "#aivideo" {
@@ -133,6 +133,62 @@ Disclaimer: This is not financial advice. Always do your own research and consul
 	}
 }
 
+func TestVideoTopicReconstructionRecoversSpecificICTTradingConcepts(t *testing.T) {
+	got := ExtractKeywordIntelligence(KeywordExtractionInput{
+		Title: "Every ICT Concept Explained in 14 Minutes",
+		Description: `This lesson covers ICT trading concepts including liquidity, fair value gaps, order blocks, displacement, break of structure, market structure, breakers, mitigation blocks, balanced price ranges, premium and discount.
+
+Disclaimer: Not financial advice. Do your own research. Past performance does not guarantee future results.`,
+		Tags:         []string{"ICT trading", "liquidity", "fair value gaps", "order blocks", "market structure", "FVG"},
+		Category:     "27",
+		TopicDetails: []string{"https://en.wikipedia.org/wiki/Foreign_exchange_market"},
+	})
+	all := strings.Join(append(append(got.PrimaryKeywords, got.SecondaryKeywords...), got.LongTailPhrases...), " | ")
+	lower := strings.ToLower(all)
+	for _, want := range []string{"ICT", "liquidity", "fair value gap", "order block", "market structure"} {
+		if !strings.Contains(all, want) && !strings.Contains(lower, strings.ToLower(want)) {
+			t.Fatalf("expected %q in reconstructed topics: %+v", want, got)
+		}
+	}
+	if len(got.PrimaryKeywords) == 1 && strings.EqualFold(got.PrimaryKeywords[0], "ict concept") {
+		t.Fatalf("generic ICT concept should not be the only primary topic: %+v", got)
+	}
+	if strings.Contains(all, "Ict") || strings.Contains(all, "fvg") {
+		t.Fatalf("acronym casing not preserved: %+v", got)
+	}
+}
+
+func TestKeywordExtractorSuppressesGenericOnlyTopic(t *testing.T) {
+	got := ExtractKeywordIntelligence(KeywordExtractionInput{
+		Title:       "Concepts Explained for Beginners",
+		Description: "This tutorial explains concepts in a beginner education video.",
+		Tags:        []string{"concepts", "tutorial", "education", "beginners"},
+		Category:    "27",
+	})
+	all := strings.ToLower(strings.Join(append(append(got.PrimaryKeywords, got.SecondaryKeywords...), got.LongTailPhrases...), " | "))
+	for _, generic := range []string{"concept", "tutorial", "education", "beginner"} {
+		if all == generic || strings.Contains(all, generic+" |") {
+			t.Fatalf("generic phrase survived as topic %q: %+v", generic, got)
+		}
+	}
+}
+
+func TestKeywordExtractorPreventsDuplicateTopicClusterLabels(t *testing.T) {
+	got := ExtractKeywordIntelligence(KeywordExtractionInput{
+		Title:       "Fair Value Gap Trading Explained",
+		Description: "Fair value gaps and FVG trading examples for ICT traders. Fair value gap setups appear with market structure.",
+		Tags:        []string{"fair value gap", "fair value gaps", "FVG", "ICT trading", "market structure"},
+	})
+	seen := map[string]bool{}
+	for _, phrase := range append(got.PrimaryKeywords, got.SecondaryKeywords...) {
+		key := topicDedupeKey(phrase)
+		if seen[key] {
+			t.Fatalf("duplicate normalized graph label %q in %+v", key, got)
+		}
+		seen[key] = true
+	}
+}
+
 func TestKeywordExtractorPreservesNonFinancialEducationalThemes(t *testing.T) {
 	got := ExtractKeywordIntelligence(KeywordExtractionInput{
 		Title:       "Photosynthesis Explained for Beginners",
@@ -148,6 +204,36 @@ func TestKeywordExtractorPreservesNonFinancialEducationalThemes(t *testing.T) {
 	}
 	if strings.Contains(joined, "financial") {
 		t.Fatalf("unexpected finance leakage in non-financial video: %+v", got)
+	}
+}
+
+func TestScienceAndProgrammingEducationSpecificTopics(t *testing.T) {
+	cases := []struct {
+		name string
+		in   KeywordExtractionInput
+		want []string
+	}{
+		{
+			name: "science",
+			in:   KeywordExtractionInput{Title: "Photosynthesis Explained for Beginners", Description: "Chlorophyll, sunlight, carbon dioxide, glucose, oxygen, and plant cells are explained.", Tags: []string{"photosynthesis", "chlorophyll", "plant cells"}, Category: "27"},
+			want: []string{"photosynthesis", "chlorophyll", "plant cell"},
+		},
+		{
+			name: "programming",
+			in:   KeywordExtractionInput{Title: "Python Decorators Explained", Description: "Learn wrapper functions, closures, decorators, and reusable Python patterns.", Tags: []string{"python decorators", "closures", "wrapper functions", "programming"}, Category: "28"},
+			want: []string{"python decorator", "closure", "wrapper function"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := ExtractKeywordIntelligence(tc.in)
+			joined := strings.ToLower(strings.Join(append(append(got.PrimaryKeywords, got.SecondaryKeywords...), got.LongTailPhrases...), " | "))
+			for _, want := range tc.want {
+				if !strings.Contains(joined, want) {
+					t.Fatalf("missing %q in %+v", want, got)
+				}
+			}
+		})
 	}
 }
 
@@ -172,6 +258,28 @@ Use code SAVE20 and join my Discord.`,
 	}
 }
 
+func TestPromotionalDescriptionKeepsUsefulTechnicalContent(t *testing.T) {
+	got := ExtractKeywordIntelligence(KeywordExtractionInput{
+		Title: "Build an API Rate Limiter in Go",
+		Description: `Subscribe and use code SAVE20.
+Business inquiries: hello@example.com.
+This tutorial covers token buckets, middleware, HTTP handlers, API rate limiting, and Redis counters.`,
+		Tags: []string{"API rate limiter", "Go middleware", "token bucket", "Redis counters"},
+	})
+	joined := strings.Join(append(append(got.PrimaryKeywords, got.SecondaryKeywords...), got.LongTailPhrases...), " | ")
+	lower := strings.ToLower(joined)
+	for _, want := range []string{"API rate limiter", "token bucket", "middleware", "redis counter"} {
+		if !strings.Contains(joined, want) && !strings.Contains(lower, strings.ToLower(want)) {
+			t.Fatalf("missing technical topic %q: %+v", want, got)
+		}
+	}
+	for _, noise := range []string{"subscribe", "save20", "business inquiries"} {
+		if strings.Contains(lower, noise) {
+			t.Fatalf("promotional noise survived %q: %+v", noise, got)
+		}
+	}
+}
+
 func TestKeywordExtractorSparseMetadataDoesNotPadNoise(t *testing.T) {
 	got := ExtractKeywordIntelligence(KeywordExtractionInput{
 		Title: "ICT Basics",
@@ -182,6 +290,22 @@ func TestKeywordExtractorSparseMetadataDoesNotPadNoise(t *testing.T) {
 	}
 	if len(got.PrimaryKeywords) > 2 || len(got.LongTailPhrases) > 2 {
 		t.Fatalf("sparse metadata should not be padded: %+v", got)
+	}
+}
+
+func TestSparseMetadataFallbackDoesNotDuplicateCoreTopic(t *testing.T) {
+	got := ExtractKeywordIntelligence(KeywordExtractionInput{Title: "ICT Basics"})
+	all := append(got.PrimaryKeywords, got.SecondaryKeywords...)
+	seen := map[string]bool{}
+	for _, phrase := range all {
+		key := topicDedupeKey(phrase)
+		if seen[key] {
+			t.Fatalf("sparse metadata duplicated topic %q: %+v", key, got)
+		}
+		seen[key] = true
+	}
+	if len(all) > 2 {
+		t.Fatalf("sparse metadata should return few honest terms: %+v", got)
 	}
 }
 
@@ -222,6 +346,28 @@ func TestCreativeOpportunitiesUseOnlySanitizedTopicIntelligence(t *testing.T) {
 	}
 	if !strings.Contains(creative, "ict") && !strings.Contains(creative, "liquidity") && !strings.Contains(creative, "fair value gap") {
 		t.Fatalf("creative outputs lost legitimate trading topics: %+v", opps)
+	}
+}
+
+func TestCreativeOutputsAreCompleteAndClean(t *testing.T) {
+	kw := ExtractKeywordIntelligence(KeywordExtractionInput{
+		Title:       "Every ICT Concept Explained in 14 Minutes",
+		Description: "ICT trading concepts include liquidity, fair value gaps, order blocks, displacement, and market structure.",
+		Tags:        []string{"ICT trading", "liquidity", "fair value gaps", "order blocks", "market structure"},
+	})
+	niche := ClassifyNiche(KeywordExtractionInput{Title: "Every ICT Concept Explained in 14 Minutes", Description: "ICT trading concepts include liquidity, fair value gaps and order blocks."}, kw)
+	opps := BuildCreatorOpportunities(niche, kw, AnalyzeHookIntelligence("Every ICT Concept Explained in 14 Minutes"), "Every ICT Concept Explained in 14 Minutes")
+	all := append(append(append(opps.TitleIdeas, opps.ScriptPrompts...), opps.ShortFormClipIdeas...), opps.SuggestedRemakeAngles...)
+	if len(opps.TitleIdeas) == 0 {
+		t.Fatalf("expected title ideas: %+v", opps)
+	}
+	for _, value := range all {
+		if isTruncatedGeneratedTitle(value) {
+			t.Fatalf("truncated creative output: %q", value)
+		}
+		if strings.Contains(value, ";.") || strings.Contains(value, "..") || strings.Contains(strings.ToLower(value), "cleaned metadata") || strings.Contains(strings.ToLower(value), "evidence basis") {
+			t.Fatalf("unclean creative output: %q", value)
+		}
 	}
 }
 

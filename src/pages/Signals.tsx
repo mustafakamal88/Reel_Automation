@@ -870,7 +870,7 @@ function VideoAnalysisHero({ result, onGenerate, generating }: { result: YouTube
             <span>{initialsForTitle(result.title || 'Video')}</span>
           </div>
         )}
-        {sourceURL && <a className="video-play-link" href={sourceURL} target="_blank" rel="noopener noreferrer" aria-label="Open source video">Open source</a>}
+        {sourceURL && <a className="video-play-link" href={sourceURL} target="_blank" rel="noopener noreferrer" aria-label="View on YouTube">View on YouTube</a>}
       </div>
       <div className="video-hero-content">
         <div className="video-hero-kicker">
@@ -886,20 +886,20 @@ function VideoAnalysisHero({ result, onGenerate, generating }: { result: YouTube
         <div className="video-hero-metrics">
           <OpportunityScoreRing score={score} label={ratingForScore(score)} />
           <div className="video-confidence-card">
-            <span>Confidence</span>
+            <span>Analysis confidence</span>
             <strong>{result.analysis_confidence ? `${clampScore(result.analysis_confidence.score)}%` : 'Unavailable'}</strong>
-            <small>{result.analysis_confidence?.rating || 'Public metadata scale'}</small>
+            <small>{result.analysis_confidence?.rating ? `${result.analysis_confidence.rating} metadata coverage` : 'Public metadata scale'}</small>
           </div>
           <div className="video-revenue-card">
             <span>Revenue potential</span>
             <strong>{displayCompactRevenueRange(result.revenue_estimate)}</strong>
-            <small>{result.revenue_estimate?.confidence ? `${result.revenue_estimate.confidence} confidence` : 'Public estimate'}</small>
+            <small>{result.revenue_estimate?.confidence ? `${result.revenue_estimate.confidence} revenue estimate confidence` : 'Public estimate'}</small>
           </div>
         </div>
         <p>{analysisSummary(result)}</p>
         <div className="video-hero-actions">
           <button className="generate-btn idle" type="button" onClick={onGenerate} disabled={generating}>{generating ? 'Generating...' : 'Generate script'}</button>
-          {sourceURL && <a className="link-button" href={sourceURL} target="_blank" rel="noopener noreferrer">Open source video</a>}
+          {sourceURL && <a className="link-button" href={sourceURL} target="_blank" rel="noopener noreferrer">View on YouTube</a>}
         </div>
       </div>
     </section>
@@ -1024,9 +1024,9 @@ function RevenuePotentialCard({ estimate }: { estimate?: YouTubeVideoAnalysisRes
           </div>
         </div>
         <div className="revenue-facts">
-          <div><span>RPM range</span><strong>{estimate.estimated_revenue_per_1000_views}</strong></div>
-          <div><span>Confidence</span><strong>{estimate.confidence}</strong></div>
-          <div><span>Model</span><strong>{humanizeLabel(estimate.model_type || estimate.source)}</strong></div>
+          <div><span>RPM range</span><strong className="revenue-rpm-value">{displayRPMRange(estimate)}</strong></div>
+          <div><span>Revenue estimate confidence</span><strong>{estimate.confidence}</strong></div>
+          <div><span>Basis</span><strong>Public views × estimated RPM range</strong></div>
         </div>
       </div>
       <p>{concise(estimate.calculation_basis, 140)}</p>
@@ -1035,7 +1035,7 @@ function RevenuePotentialCard({ estimate }: { estimate?: YouTubeVideoAnalysisRes
         <summary>How this estimate was calculated</summary>
         <SectionList label="Assumptions" items={estimate.assumptions ?? []} />
         <SectionList label="Exclusions" items={estimate.exclusions ?? []} />
-        <MetricGrid values={{ Source: humanizeLabel(estimate.source), 'Model type': humanizeLabel(estimate.model_type), 'Exact analytics unavailable': estimate.actual_analytics_unavailable ? 'Yes' : undefined, 'Monetisation eligibility': estimate.monetisation_eligibility }} />
+        <MetricGrid values={{ 'Calculation basis': 'Public views × estimated RPM range', 'Exact analytics unavailable': estimate.actual_analytics_unavailable ? 'Yes' : undefined, 'Monetisation eligibility': estimate.monetisation_eligibility }} />
       </details>
     </section>
   );
@@ -1043,7 +1043,7 @@ function RevenuePotentialCard({ estimate }: { estimate?: YouTubeVideoAnalysisRes
 
 function TopicIntelligence({ result }: { result: YouTubeVideoAnalysisResponse }) {
   const topic = videoCoreTopic(result);
-  const themes = uniqueStrings([...(result.keyword_intelligence?.primary_topics ?? []), ...(result.keyword_intelligence?.supporting_terms ?? []), ...(result.keyword_intelligence?.secondary_keywords ?? [])]).slice(0, 12);
+  const themes = distinctTopicLabels([...(result.keyword_intelligence?.primary_topics ?? []), ...(result.keyword_intelligence?.supporting_terms ?? []), ...(result.keyword_intelligence?.secondary_keywords ?? [])], [topic.main, topic.specific]).slice(0, 12);
   const search = uniqueStrings([...(result.keyword_intelligence?.search_phrases ?? []), ...(result.keyword_intelligence?.long_tail_phrases ?? [])]).slice(0, 8);
   return (
     <section className="video-section topic-intelligence" aria-labelledby="topic-title">
@@ -1076,10 +1076,21 @@ function TopicIntelligence({ result }: { result: YouTubeVideoAnalysisResponse })
 }
 
 function TopicCluster({ core, themes }: { core: string; themes: string[] }) {
+  const nodes = distinctTopicLabels([core, ...themes]);
+  if (nodes.length < 3) {
+    return (
+      <div className="related-concepts-fallback">
+        <span>Related concepts</span>
+        <ChipList items={nodes} />
+        <p>Public metadata returned fewer than three distinct concepts, so the graph view is hidden.</p>
+      </div>
+    );
+  }
+  const [center, ...outer] = nodes;
   return (
-    <div className="topic-cluster" aria-label={`Topic cluster centred on ${core}`}>
-      <strong>{core}</strong>
-      {themes.map((theme, index) => <span key={theme} className={`topic-node node-${index + 1}`}>{theme}</span>)}
+    <div className="topic-cluster" aria-label={`Topic cluster centred on ${center}`}>
+      <strong>{center}</strong>
+      {outer.slice(0, 6).map((theme, index) => <span key={theme} className={`topic-node node-${index + 1}`}>{theme}</span>)}
     </div>
   );
 }
@@ -1198,8 +1209,6 @@ function AnalysisDetailsAccordion({ result }: { result: YouTubeVideoAnalysisResp
           Views: result.formatted_metadata?.views ?? result.views,
           Likes: result.formatted_metadata?.likes ?? result.likes,
           Comments: result.formatted_metadata?.comments ?? result.comments,
-          Provider: result.metadata?.source_provider,
-          'Schema version': result.schema_version,
         }} />
         <SectionList label="Limitations" items={result.limitations ?? []} />
         <SectionList label="Evidence fields" items={(result.evidence_basis ?? []).map(item => `${formatLabel(item.field)}: ${item.basis}`)} />
@@ -3129,7 +3138,7 @@ function averageScores(values: Array<number | undefined>): number {
 function uniqueStrings(items: string[]): string[] {
   const seen = new Set<string>();
   return items
-    .map(item => item.trim())
+    .map(item => applyAcronymCasing(item.trim()))
     .filter(item => {
       const key = item.toLowerCase();
       if (!item || seen.has(key)) return false;
@@ -3138,10 +3147,36 @@ function uniqueStrings(items: string[]): string[] {
     });
 }
 
+function distinctTopicLabels(items: string[], exclude: string[] = []): string[] {
+  const seen = new Set(exclude.map(topicLabelKey));
+  const out: string[] = [];
+  for (const item of items) {
+    const label = applyAcronymCasing(item.trim());
+    const key = topicLabelKey(label);
+    if (!label || seen.has(key)) continue;
+    seen.add(key);
+    out.push(label);
+  }
+  return out;
+}
+
+function topicLabelKey(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/\b(concepts?|tutorial|explained|guide|beginners?|basics?)\b/g, '')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+}
+
+function applyAcronymCasing(value: string): string {
+  const acronyms = new Set(['ict', 'rpm', 'seo', 'api', 'ai', 'url', 'ctr', 'fvg']);
+  return value.replace(/\b([a-z]{2,4})\b/gi, match => acronyms.has(match.toLowerCase()) ? match.toUpperCase() : match);
+}
+
 function humanizeLabel(value?: string): string {
-  return String(value || 'Unavailable')
+  return applyAcronymCasing(String(value || 'Unavailable')
     .replaceAll('_', ' ')
-    .replace(/\b\w/g, char => char.toUpperCase());
+    .replace(/\b\w/g, char => char.toUpperCase()));
 }
 
 function hookExplanation(id: string): string {
@@ -3328,11 +3363,19 @@ function researchScriptFromNicheCandidate(candidate: NicheCandidate, region: str
 function researchScriptFromVideo(result: YouTubeVideoAnalysisResponse, region: string, language: string): ResearchScriptGenerationRequest {
   const title = result.title || 'YouTube video analysis';
   const suggestedAngle = result.creator_opportunities?.suggested_remake_angles?.[0] || result.suggested_remake_angles?.[0];
+  const topic = videoCoreTopic(result).specific || result.keyword_intelligence?.primary_keywords?.[0] || result.extracted_keywords?.[0] || title;
+  const approvedKeywords = distinctTopicLabels([
+    topic,
+    ...(result.keyword_intelligence?.primary_keywords ?? []),
+    ...(result.keyword_intelligence?.secondary_keywords ?? []),
+    ...(result.keyword_intelligence?.long_tail_phrases ?? []),
+    ...(result.tags ?? []),
+  ]);
   return {
     source_type: 'youtube_video_analysis',
     source_id: result.video_id,
     source_url: result.metadata?.source_url || result.video_url,
-    topic: result.keyword_intelligence?.primary_keywords?.[0] || result.extracted_keywords?.[0] || title,
+    topic,
     title,
     summary: [
       result.message,
@@ -3342,12 +3385,7 @@ function researchScriptFromVideo(result: YouTubeVideoAnalysisResponse, region: s
       `Suggested angle: ${suggestedAngle || result.niche_analysis?.inferred_content_angle || result.inferred_content_angle || ''}.`,
       result.keyword_intelligence?.inferred_search_intent,
     ].filter(Boolean).join(' '),
-    keywords: [
-      ...(result.keyword_intelligence?.primary_keywords ?? []),
-      ...(result.keyword_intelligence?.secondary_keywords ?? []),
-      ...(result.keyword_intelligence?.long_tail_phrases ?? []),
-      ...(result.tags ?? []),
-    ],
+    keywords: approvedKeywords,
     inferred_niche: result.niche_analysis?.primary_niche || result.inferred_niche,
     inferred_angle: result.niche_analysis?.inferred_content_angle || result.inferred_content_angle,
     performance_signals: {
@@ -3370,6 +3408,12 @@ function researchScriptFromVideo(result: YouTubeVideoAnalysisResponse, region: s
       primary_niche: result.niche_analysis?.primary_niche,
       target_audience: result.niche_analysis?.target_audience || result.niche_analysis?.audience_type,
       hook_type: result.hook_intelligence?.hook_type,
+      approved_topic_hierarchy: {
+        core_topic: topic,
+        primary_keywords: result.keyword_intelligence?.primary_keywords,
+        supporting_terms: result.keyword_intelligence?.supporting_terms,
+        search_phrases: result.keyword_intelligence?.search_phrases,
+      },
       primary_keywords: result.keyword_intelligence?.primary_keywords,
       script_prompts: result.creator_opportunities?.script_prompts,
       score_reason: result.metadata?.score_reason,
@@ -3474,10 +3518,23 @@ function formatCurrencyEstimate(value?: number): string {
   return `$${Math.round(value).toLocaleString()}`;
 }
 
+function formatRPMCurrency(value?: number): string {
+  if (value == null || !Number.isFinite(value)) return 'Unavailable';
+  return `$${value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
+function displayRPMRange(estimate?: YouTubeVideoAnalysisResponse['revenue_estimate']): string {
+  if (!estimate) return 'Unavailable';
+  if (Number.isFinite(estimate.rpm_low) && Number.isFinite(estimate.rpm_high)) {
+    return `${formatRPMCurrency(estimate.rpm_low)}–${formatRPMCurrency(estimate.rpm_high)} estimated RPM`;
+  }
+  return applyAcronymCasing((estimate.estimated_revenue_per_1000_views || 'Unavailable').replace(/-/g, '–'));
+}
+
 function displayRevenueRange(estimate?: YouTubeVideoAnalysisResponse['revenue_estimate']): string {
   if (!estimate) return 'Unavailable';
   if (Number.isFinite(estimate.low) && Number.isFinite(estimate.high)) {
-    return `${formatCurrencyEstimate(estimate.low)}-${formatCurrencyEstimate(estimate.high)}`;
+    return `${formatCurrencyEstimate(estimate.low)}–${formatCurrencyEstimate(estimate.high)}`;
   }
   return estimate.formatted_range || 'Unavailable';
 }
@@ -3485,7 +3542,7 @@ function displayRevenueRange(estimate?: YouTubeVideoAnalysisResponse['revenue_es
 function displayCompactRevenueRange(estimate?: YouTubeVideoAnalysisResponse['revenue_estimate']): string {
   if (!estimate) return 'Unavailable';
   if (Number.isFinite(estimate.low) && Number.isFinite(estimate.high)) {
-    return `${formatCompactCurrency(estimate.low)}-${formatCompactCurrency(estimate.high)}`;
+    return `${formatCompactCurrency(estimate.low)}–${formatCompactCurrency(estimate.high)}`;
   }
   return estimate.formatted_range || 'Unavailable';
 }

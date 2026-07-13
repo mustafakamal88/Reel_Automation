@@ -142,6 +142,34 @@ func TestResearchScriptRequestSanitizesContaminatedCreativeContext(t *testing.T)
 	}
 }
 
+func TestResearchScriptRequestPreservesApprovedDomainTerminology(t *testing.T) {
+	req := validResearchScriptRequest()
+	req.Topic = "ICT trading concepts"
+	req.Title = "Every ICT Concept Explained in 14 Minutes"
+	req.Keywords = []string{"ict trading", "fair value gap", "FVG", "order block", "market structure"}
+	req.Summary = "Server analysis recovered ICT trading concepts, liquidity, fair value gaps, order blocks, and market structure from public metadata."
+	req.Evidence = map[string]any{
+		"approved_topic_hierarchy": map[string]any{
+			"core_topic":       "ICT trading concepts",
+			"supporting_terms": []any{"liquidity", "fair value gaps", "order blocks", "market structure"},
+		},
+	}
+
+	_, candidate, keywords, _, _, err := researchScriptGenerateRequest(req)
+	if err != nil {
+		t.Fatalf("researchScriptGenerateRequest: %v", err)
+	}
+	joined := strings.Join(append([]string{candidate.Keyword, candidate.Title, candidate.Evidence}, keywords...), " | ")
+	for _, want := range []string{"ICT", "fair value gap", "FVG", "order block", "market structure"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("script context missing approved term %q: %s", want, joined)
+		}
+	}
+	if strings.Contains(joined, "Ict") || strings.Contains(joined, " fvg ") {
+		t.Fatalf("script context lost acronym casing: %s", joined)
+	}
+}
+
 func validResearchScriptRequest() models.ResearchScriptGenerationRequest {
 	return models.ResearchScriptGenerationRequest{
 		SourceType:      "youtube_video_analysis",

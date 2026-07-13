@@ -175,10 +175,10 @@ func estimateRevenue(item youtubeVideoItem, niche NicheAnalysis, views *uint64, 
 		FormattedRange:             formatMoneyRange(low, high),
 		RPMLow:                     rpmLow,
 		RPMHigh:                    rpmHigh,
-		EstimatedRevenuePer1000:    fmt.Sprintf("$%.2f-$%.2f estimated RPM", rpmLow, rpmHigh),
+		EstimatedRevenuePer1000:    fmt.Sprintf("$%.2f–$%.2f estimated RPM", rpmLow, rpmHigh),
 		Confidence:                 ratingForScore(confidenceScore),
 		ConfidenceScore:            confidenceScore,
-		CalculationBasis:           fmt.Sprintf("Based on %s public views and an estimated %s RPM range. Formula: public views / 1,000 x estimated RPM range.", formatUint(publicViews), strings.ReplaceAll(format, "_", " ")),
+		CalculationBasis:           fmt.Sprintf("Based on %s public views and an estimated %s RPM range. Formula: public views / 1,000 × estimated RPM range.", formatUint(publicViews), strings.ReplaceAll(format, "_", " ")),
 		Assumptions:                revenueAssumptions(item, niche, format),
 		Exclusions:                 []string{"Actual YouTube Analytics revenue", "Exact RPM or playback-based CPM", "Audience geography", "Premium revenue adjustments", "Invalid-traffic adjustments", "Sponsorships", "Affiliate revenue", "Memberships", "Merchandise", "Course or product sales"},
 		FutureRevenueScenario:      fmt.Sprintf("Each additional 10,000 public views would add roughly %s at the current estimated RPM range.", formatMoneyRange(10000/1000*rpmLow, 10000/1000*rpmHigh)),
@@ -399,7 +399,7 @@ func analysisConfidenceScore(item youtubeVideoItem, kw KeywordIntelligence, nich
 }
 
 func formatMoneyRange(low, high float64) string {
-	return fmt.Sprintf("$%.0f-$%.0f", math.Round(low), math.Round(high))
+	return fmt.Sprintf("$%.0f–$%.0f", math.Round(low), math.Round(high))
 }
 
 func roundMoney(v float64) float64 {
