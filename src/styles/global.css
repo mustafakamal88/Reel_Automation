@@ -5161,13 +5161,6 @@ textarea:focus {
   line-height: 1.2;
 }
 
-.niche-card-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-  align-items: center;
-}
-
 /* ─── Creator settings and platform selector ─────────────────── */
 .settings-page .page-hero {
   margin-bottom: 16px;
@@ -6715,8 +6708,7 @@ body,
   line-height: 1.45;
 }
 
-.niche-header-badges,
-.niche-card-actions {
+.niche-header-badges {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
@@ -7317,7 +7309,6 @@ body,
 .niche-profile-summary,
 .niche-profile-heading,
 .niche-header-badges,
-.niche-card-actions,
 .niche-action-buttons,
 .idea-preview-footer,
 .demand-evidence-head,
@@ -8150,6 +8141,78 @@ body,
 
 .generate-btn:disabled {
   transform: none;
+}
+
+.niche-card-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: stretch;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.niche-card-actions > .generate-btn.secondary {
+  grid-column: 1;
+  grid-row: 1;
+}
+
+.niche-card-actions > .script-action {
+  display: grid;
+  grid-column: 2;
+  grid-row: 1;
+  align-items: stretch;
+  justify-self: stretch;
+  min-width: 0;
+  width: 100%;
+  margin: 0;
+}
+
+.niche-card-actions .script-action-buttons {
+  display: grid;
+  align-items: stretch;
+  width: 100%;
+  min-width: 0;
+  margin: 0;
+}
+
+.niche-card-actions .generate-btn {
+  grid-column: auto;
+  grid-row: auto;
+  align-self: stretch;
+  justify-self: stretch;
+  width: 100%;
+  min-width: 0;
+  min-height: 44px;
+  margin: 0;
+  padding: 10px 16px;
+  border-radius: var(--radius-md);
+  line-height: 1.2;
+  text-align: center;
+  transform: none;
+}
+
+.niche-card-actions .generate-btn:hover:not(:disabled),
+.niche-card-actions .generate-btn:active:not(:disabled),
+.niche-card-actions .generate-btn:focus-visible {
+  transform: none;
+}
+
+@media (max-width: 767px) {
+  .niche-card-actions {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .niche-card-actions > .script-action {
+    grid-column: auto;
+    grid-row: auto;
+    order: 1;
+  }
+
+  .niche-card-actions > .generate-btn.secondary {
+    grid-column: auto;
+    grid-row: auto;
+    order: 2;
+  }
 }
 
 .alternative-card:hover {
