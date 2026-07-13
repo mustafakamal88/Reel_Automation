@@ -952,6 +952,7 @@ export interface YouTubeVideoAnalysisResponse {
   message: string;
   video_url?: string;
   video_id?: string;
+  thumbnail_url?: string;
   title?: string;
   channel_title?: string;
   channel_id?: string;

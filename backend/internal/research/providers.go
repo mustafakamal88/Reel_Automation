@@ -169,6 +169,7 @@ type VideoAnalysisResult struct {
 	Message                    string                 `json:"message"`
 	VideoURL                   string                 `json:"video_url"`
 	VideoID                    string                 `json:"video_id,omitempty"`
+	ThumbnailURL               string                 `json:"thumbnail_url,omitempty"`
 	Title                      string                 `json:"title,omitempty"`
 	ChannelTitle               string                 `json:"channel_title,omitempty"`
 	ChannelID                  string                 `json:"channel_id,omitempty"`
@@ -442,6 +443,7 @@ func (p *YouTubeProvider) AnalyzeVideo(ctx context.Context, videoURL string) (Vi
 		Message:                    "Analyzed public YouTube Data API metadata. Inferences are labeled and do not include private analytics.",
 		VideoURL:                   videoURL,
 		VideoID:                    videoID,
+		ThumbnailURL:               bestVideoThumbnail(item),
 		Title:                      item.Snippet.Title,
 		ChannelTitle:               item.Snippet.ChannelTitle,
 		ChannelID:                  item.Snippet.ChannelID,
@@ -464,6 +466,7 @@ func (p *YouTubeProvider) AnalyzeVideo(ctx context.Context, videoURL string) (Vi
 		VideoSnapshot: map[string]any{
 			"title":        item.Snippet.Title,
 			"channel":      item.Snippet.ChannelTitle,
+			"thumbnail":    bestVideoThumbnail(item),
 			"published_at": item.Snippet.PublishedAt,
 			"duration":     item.ContentDetails.Duration,
 			"views":        views,
@@ -764,6 +767,16 @@ type youtubeVideoItem struct {
 	TopicDetails struct {
 		TopicCategories []string `json:"topicCategories"`
 	} `json:"topicDetails"`
+}
+
+func bestVideoThumbnail(item youtubeVideoItem) string {
+	if item.Snippet.Thumbnails.High.URL != "" {
+		return item.Snippet.Thumbnails.High.URL
+	}
+	if item.Snippet.Thumbnails.Medium.URL != "" {
+		return item.Snippet.Thumbnails.Medium.URL
+	}
+	return item.Snippet.Thumbnails.Default.URL
 }
 
 type youtubeChannelsResponse struct {
