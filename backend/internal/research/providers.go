@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"os"
@@ -676,6 +677,8 @@ func (p *YouTubeProvider) AnalyzeVideo(ctx context.Context, videoURL string) (Vi
 
 func (p *YouTubeProvider) AnalyzeChannel(ctx context.Context, channelURL string) (ChannelAnalysisResult, error) {
 	channelURL = strings.TrimSpace(channelURL)
+	startedAt := time.Now()
+	log.Printf("channel_analysis_stage=start input=%q", channelURL)
 	result := ChannelAnalysisResult{
 		Status:        StatusNotConfigured,
 		Message:       "Add YOUTUBE_API_KEY in Settings/Railway variables to analyze YouTube channels.",
@@ -703,6 +706,7 @@ func (p *YouTubeProvider) AnalyzeChannel(ctx context.Context, channelURL string)
 		return result, nil
 	}
 	channelID := resolved.ChannelID
+	log.Printf("channel_analysis_stage=resolved channel_id=%s elapsed_ms=%d", channelID, time.Since(startedAt).Milliseconds())
 	channelAPIURL := youtubeAPIURL("channels", map[string]string{
 		"part": "snippet,statistics,contentDetails,topicDetails,brandingSettings",
 		"id":   channelID,
@@ -720,16 +724,26 @@ func (p *YouTubeProvider) AnalyzeChannel(ctx context.Context, channelURL string)
 		return result, nil
 	}
 	channel := channelRes.Items[0]
-	recentVideos, _ := p.fetchChannelUploads(ctx, channel.ContentDetails.RelatedPlaylists.Uploads, 25)
+	log.Printf("channel_analysis_stage=channel_metadata channel_id=%s elapsed_ms=%d", channelID, time.Since(startedAt).Milliseconds())
+	recentVideos, _ := boundedChannelVideoFetch(ctx, 10*time.Second, func(fetchCtx context.Context) ([]ChannelVideoSummary, error) {
+		return p.fetchChannelUploads(fetchCtx, channel.ContentDetails.RelatedPlaylists.Uploads, 25)
+	})
 	if len(recentVideos) == 0 {
-		recentVideos, _ = p.fetchChannelVideos(ctx, channelID, "date", 25)
+		recentVideos, _ = boundedChannelVideoFetch(ctx, 10*time.Second, func(fetchCtx context.Context) ([]ChannelVideoSummary, error) {
+			return p.fetchChannelVideos(fetchCtx, channelID, "date", 25)
+		})
 	}
-	topVideos, _ := p.fetchChannelVideos(ctx, channelID, "viewCount", 25)
+	log.Printf("channel_analysis_stage=recent_sample channel_id=%s count=%d elapsed_ms=%d", channelID, len(recentVideos), time.Since(startedAt).Milliseconds())
+	topVideos, _ := boundedChannelVideoFetch(ctx, 8*time.Second, func(fetchCtx context.Context) ([]ChannelVideoSummary, error) {
+		return p.fetchChannelVideos(fetchCtx, channelID, "viewCount", 25)
+	})
+	log.Printf("channel_analysis_stage=performance_seed channel_id=%s top_count=%d elapsed_ms=%d", channelID, len(topVideos), time.Since(startedAt).Milliseconds())
 	recentVideos = enrichChannelVideos(recentVideos, p.now)
 	topVideos = enrichChannelVideos(topVideos, p.now)
 	recentUploadSample := recentUploadSample(recentVideos, 20)
 	performanceSample := mergeChannelVideos(recentUploadSample, topVideos)
 	performanceSample = enrichChannelVideos(performanceSample, p.now)
+	log.Printf("channel_analysis_stage=samples_ready channel_id=%s recent_count=%d performance_count=%d elapsed_ms=%d", channelID, len(recentUploadSample), len(performanceSample), time.Since(startedAt).Milliseconds())
 	handle := firstNonEmpty(channel.Snippet.CustomURL, resolved.Handle)
 	identity := buildChannelIdentityContext(channel.Snippet.Title, handle, channel.Snippet.Description)
 	keywordIntel := ExtractKeywordIntelligence(KeywordExtractionInput{
@@ -772,6 +786,7 @@ func (p *YouTubeProvider) AnalyzeChannel(ctx context.Context, channelURL string)
 	growthOpps = sanitizeChannelGrowthOpportunities(growthOpps, pillarObjects, performanceSample, identity)
 	contentPlan := buildChannelContentPlan(recentUploadSample, performanceSample, pillarObjects, growthOpps, nicheAnalysis, p.now)
 	details := buildChannelAnalysisDetails(recentUploadSample, performanceSample, channel, p.now)
+	log.Printf("channel_analysis_stage=report_ready channel_id=%s elapsed_ms=%d", channelID, time.Since(startedAt).Milliseconds())
 	canonicalURL := "https://www.youtube.com/channel/" + channelID
 	cacheKey := "youtube_channel:" + channelAnalysisSchemaVersion + ":" + channelID
 	score := float64(opportunityScore.Score)
@@ -3012,6 +3027,29 @@ func (p *YouTubeProvider) resolveChannelByQuery(ctx context.Context, query strin
 
 func (p *YouTubeProvider) fetchRecentVideos(ctx context.Context, channelID string, limit int) ([]ChannelVideoSummary, error) {
 	return p.fetchChannelVideos(ctx, channelID, "date", limit)
+}
+
+func boundedChannelVideoFetch(ctx context.Context, timeout time.Duration, fetch func(context.Context) ([]ChannelVideoSummary, error)) ([]ChannelVideoSummary, error) {
+	if timeout <= 0 {
+		return fetch(ctx)
+	}
+	fetchCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	type result struct {
+		videos []ChannelVideoSummary
+		err    error
+	}
+	done := make(chan result, 1)
+	go func() {
+		videos, err := fetch(fetchCtx)
+		done <- result{videos: videos, err: err}
+	}()
+	select {
+	case res := <-done:
+		return res.videos, res.err
+	case <-fetchCtx.Done():
+		return nil, fetchCtx.Err()
+	}
 }
 
 func (p *YouTubeProvider) fetchChannelUploads(ctx context.Context, uploadsPlaylistID string, limit int) ([]ChannelVideoSummary, error) {
