@@ -1105,9 +1105,14 @@ export interface KeywordCluster {
 export interface YouTubeChannelAnalysisResponse {
   status: 'not_configured' | 'ok' | 'invalid_input' | 'provider_error' | 'no_data';
   message: string;
+  schema_version?: string;
   channel_url?: string;
   channel_id?: string;
   channel_title?: string;
+  channel_handle?: string;
+  canonical_channel_url?: string;
+  avatar_url?: string;
+  banner_url?: string;
   description?: string;
   subscribers?: number;
   views?: number;
@@ -1118,17 +1123,29 @@ export interface YouTubeChannelAnalysisResponse {
     video_id: string;
     title: string;
     published_at: string;
+    duration?: string;
+    thumbnail_url?: string;
     views?: number;
     likes?: number;
     comments?: number;
+    format?: string;
+    views_per_day?: number;
+    pillar?: string;
+    canonical_url?: string;
   }[];
   top_videos_summary?: {
     video_id: string;
     title: string;
     published_at: string;
+    duration?: string;
+    thumbnail_url?: string;
     views?: number;
     likes?: number;
     comments?: number;
+    format?: string;
+    views_per_day?: number;
+    pillar?: string;
+    canonical_url?: string;
   }[];
   channel_snapshot?: Record<string, unknown>;
   channel_niche?: string;
@@ -1148,8 +1165,147 @@ export interface YouTubeChannelAnalysisResponse {
   opportunities?: string[];
   suggested_content_ideas?: string[];
   suggested_short_clip_ideas?: string[];
+  opportunity_score?: ScoreDimension;
+  analysis_confidence?: ScoreDimension;
+  score_dimensions?: ScoreDimension[];
+  performance_metrics?: PerformanceMetric[];
+  revenue_estimate?: RevenueEstimate;
+  channel_pillars?: ChannelContentPillar[];
+  performance_charts?: ChannelCharts;
+  top_video_groups?: ChannelVideoGroup[];
+  packaging_analysis?: ChannelPackaging;
+  growth_opportunities?: ChannelOpportunity[];
+  content_plan?: ChannelPlanWeek[];
+  cta_context?: ChannelCTAContext;
+  analysis_details?: ChannelAnalysisDetails;
+  cache?: { hit?: boolean; cache_hit?: boolean; schema_version?: string; key?: string; stored_at?: string; ttl?: string; freshness?: string };
   limitations?: string[];
   metadata?: ResearchResultMetadata;
+}
+
+export interface ChannelContentPillar {
+  name: string;
+  share_of_uploads: number;
+  upload_count: number;
+  median_views?: number;
+  strongest_example?: ChannelVideoSummary;
+  consistency: string;
+  opportunity_status: string;
+  recommendation: string;
+}
+
+export interface ChannelVideoSummary {
+  video_id: string;
+  title: string;
+  description?: string;
+  channel_id?: string;
+  channel_title?: string;
+  published_at: string;
+  duration?: string;
+  thumbnail_url?: string;
+  views?: number;
+  likes?: number;
+  comments?: number;
+  format?: string;
+  views_per_day?: number;
+  pillar?: string;
+  canonical_url?: string;
+}
+
+export interface ChannelChartPoint {
+  label: string;
+  date?: string;
+  title?: string;
+  views?: number;
+  value?: number;
+  duration?: string;
+  format?: string;
+  pillar?: string;
+  video_id?: string;
+  description?: string;
+}
+
+export interface ChannelCharts {
+  upload_performance?: ChannelChartPoint[];
+  views_distribution?: ChannelChartPoint[];
+  upload_cadence?: ChannelChartPoint[];
+  topic_performance?: ChannelChartPoint[];
+  format_performance?: ChannelChartPoint[];
+}
+
+export interface ChannelVideoGroup {
+  id: string;
+  label: string;
+  explanation: string;
+  videos: ChannelVideoSummary[];
+}
+
+export interface ChannelPackaging {
+  strongest_pattern?: string;
+  weakest_habit?: string;
+  repeated_winning_structure?: string;
+  recommended_title_framework?: string;
+  average_title_length?: number;
+  question_title_share?: number;
+  number_title_share?: number;
+  thumbnail_availability?: number;
+  evidence?: string[];
+}
+
+export interface ChannelOpportunity {
+  title: string;
+  why: string;
+  evidence?: string[];
+  recommended_format: string;
+  suggested_audience: string;
+  confidence: string;
+  sample_title: string;
+  next_action: string;
+}
+
+export interface ChannelPlanIdea {
+  working_title: string;
+  content_pillar: string;
+  format: string;
+  objective: string;
+  evidence: string;
+  hook_direction: string;
+  recommended_timing: string;
+}
+
+export interface ChannelPlanWeek {
+  week: number;
+  theme: string;
+  cadence: string;
+  ideas: ChannelPlanIdea[];
+  rationale: string;
+}
+
+export interface ChannelCTAContext {
+  action_label?: string;
+  channel_id?: string;
+  channel_title?: string;
+  canonical_url?: string;
+  clean_content_pillars?: string[];
+  performance_evidence?: string[];
+  selected_opportunity?: string;
+  selected_audience?: string;
+  recommended_format?: string;
+  public_data_limitations?: string[];
+  script_generation_enabled: boolean;
+}
+
+export interface ChannelAnalysisDetails {
+  sampled_video_count: number;
+  sample_start?: string;
+  sample_end?: string;
+  provider_availability: string;
+  hidden_metric_notes?: string[];
+  scoring_methodology?: string[];
+  topic_methodology?: string[];
+  revenue_methodology?: string[];
+  classification_rules?: string[];
+  analysis_timestamp: string;
 }
 
 export interface ResearchResultMetadata {

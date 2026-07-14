@@ -56,7 +56,7 @@ const AI_TOOL_PAGE_META: Record<AIToolView, { title: string; eyebrow: string; de
   youtubeChannelAnalyzer: {
     eyebrow: 'YouTube research',
     title: 'YouTube Channel Analyzer',
-    description: 'Enter a channel URL, handle, or search term to review positioning, formats, and next-video ideas.',
+    description: 'Enter a channel URL, @handle, or channel ID to review public positioning, formats, and next-video ideas.',
     action: 'Analyze Channel',
   },
   nicheFinder: {
@@ -1252,7 +1252,7 @@ function YouTubeChannelTab({ value, onChange, onAnalyze, loading, result, onGene
   return (
     <AnalyzerShell
       title="YouTube Channel Analyzer"
-      description="Paste a channel URL, @handle, /channel/ID, /c/Name, or search term to review formats, keywords, and content gaps."
+      description="Paste a channel URL, @handle, /channel/ID, /user/name, /c/name, or a channel ID to review public creator signals."
       inputLabel="YouTube channel URL or handle"
       value={value}
       onChange={onChange}
@@ -1262,54 +1262,264 @@ function YouTubeChannelTab({ value, onChange, onAnalyze, loading, result, onGene
     >
       {!result && <div className="neutral-callout">Connect YouTube in Connections to analyze channels.</div>}
       {result && result.status !== 'ok' && <HonestResultState result={result} />}
-      {result?.status === 'ok' && (
-        <div style={{ display: 'grid', gap: 10 }}>
-          <ResultCard title="Channel snapshot">
-            <TextBlock label="Channel" value={[result.channel_title, result.channel_id].filter(Boolean).join(' · ')} />
-            <MetricGrid values={{ Subscribers: result.subscribers, 'Total views': result.views, Videos: result.video_count, Country: result.country, 'Channel age': result.channel_snapshot?.channel_age }} />
-          </ResultCard>
-          <ResultCard title="Niche diagnosis">
-            <MetricGrid values={{
-              'Primary niche': result.niche_analysis?.primary_niche || result.channel_niche,
-              'Sub-niche': result.niche_analysis?.sub_niche,
-              Audience: result.niche_analysis?.audience_type,
-              Format: result.niche_analysis?.content_format,
-              Confidence: result.niche_analysis?.confidence,
-            }} />
-            <TextBlock label="Likely strategy" value={result.likely_strategy} />
-            <LabelledChips label="Evidence terms" items={result.niche_analysis?.evidence_terms ?? []} />
-          </ResultCard>
-          <ResultCard title="Top content pillars"><ChipList items={result.content_pillars ?? []} /></ResultCard>
-          <ResultCard title="Top videos summary"><VideoSummaryList videos={result.top_videos_summary ?? []} /></ResultCard>
-          <ResultCard title="Format patterns"><ChipList items={result.format_patterns ?? []} /></ResultCard>
-          <ResultCard title="Title patterns"><List items={result.title_patterns ?? []} /></ResultCard>
-          <ResultCard title="Keyword clusters"><KeywordClusterList clusters={result.keyword_clusters ?? []} fallback={result.repeated_keywords ?? []} /></ResultCard>
-          <ResultCard title="Performance distribution"><MetricGrid values={result.performance_distribution ?? result.view_distribution ?? {}} /></ResultCard>
-          <ResultCard title="Content opportunities"><List items={result.opportunities ?? []} /></ResultCard>
-          <ResultCard title="Suggested short clip ideas"><List items={result.suggested_short_clip_ideas ?? []} /></ResultCard>
-          <ResultCard title="Suggested next 10 video ideas">
-            <List items={result.suggested_content_ideas ?? []} />
-            {(result.suggested_content_ideas ?? []).map(idea => {
-              const key = candidateFromChannel(result, idea, region, language).id;
-              return (
-                <div key={idea} style={{ display: 'grid', gap: 8 }}>
-                  <div style={{ fontSize: 12, color: 'var(--text-muted)', overflowWrap: 'anywhere' }}>{idea}</div>
-                  <ScriptAction
-                    label="Generate Script"
-                    generating={generatingID === key}
-                    generated={Boolean(generated[key])}
-                    error={generationErrors[key]}
-                    onGenerate={() => onGenerateIdea(idea)}
-                    onOpenScriptStudio={onOpenScriptStudio}
-                  />
-                </div>
-              );
-            })}
-          </ResultCard>
-          <Limitations items={result.limitations ?? []} />
-        </div>
-      )}
+      {result?.status === 'ok' && <ChannelAnalysisDashboard result={result} onGenerateIdea={onGenerateIdea} generated={generated} generationErrors={generationErrors} generatingID={generatingID} region={region} language={language} onOpenScriptStudio={onOpenScriptStudio} />}
     </AnalyzerShell>
+  );
+}
+
+function ChannelAnalysisDashboard({ result, onGenerateIdea, generated, generationErrors, generatingID, region, language, onOpenScriptStudio }: {
+  result: YouTubeChannelAnalysisResponse;
+  onGenerateIdea: (idea: string) => void;
+  generated: Record<string, ReelContentPackage>;
+  generationErrors: Record<string, string>;
+  generatingID: string | null;
+  region: string;
+  language: string;
+  onOpenScriptStudio?: () => void;
+}) {
+  return (
+    <div className="channel-analysis-results">
+      <ChannelHero result={result} />
+      <ChannelTakeaways result={result} />
+      <ChannelPerformanceStory result={result} />
+      <ChannelChartsSection result={result} />
+      <ChannelRevenueSection result={result} />
+      <ChannelPillarsSection result={result} />
+      <ChannelTopVideosSection result={result} />
+      <ChannelPackagingSection result={result} />
+      <ChannelOpportunitiesSection result={result} />
+      <ChannelPlanSection result={result} />
+      <ChannelCTAPanel result={result} onGenerateIdea={onGenerateIdea} generated={generated} generationErrors={generationErrors} generatingID={generatingID} region={region} language={language} onOpenScriptStudio={onOpenScriptStudio} />
+      <ChannelDetails result={result} />
+    </div>
+  );
+}
+
+function ChannelHero({ result }: { result: YouTubeChannelAnalysisResponse }) {
+  const score = result.opportunity_score?.score ?? result.metadata?.score ?? 0;
+  const handle = result.channel_handle ? (result.channel_handle.startsWith('@') ? result.channel_handle : `@${result.channel_handle}`) : result.channel_id;
+  return (
+    <section className="channel-hero" aria-labelledby="channel-title">
+      {result.banner_url && <div className="channel-hero-banner" style={{ backgroundImage: `url(${result.banner_url})` }} aria-hidden="true" />}
+      <div className="channel-identity">
+        <div className="channel-avatar">{result.avatar_url ? <img src={result.avatar_url} alt="" /> : <span>{(result.channel_title || 'C').slice(0, 1)}</span>}</div>
+        <div className="channel-title-block">
+          <span className="channel-kicker">Channel intelligence</span>
+          <h2 id="channel-title">{result.channel_title || 'YouTube channel'}</h2>
+          <div className="channel-meta-line">
+            {handle && <span>{handle}</span>}
+            {result.canonical_channel_url && <a href={result.canonical_channel_url} target="_blank" rel="noopener noreferrer">Open on YouTube</a>}
+            {result.country && <span>{result.country}</span>}
+          </div>
+          <div className="channel-meta-line">
+            {result.channel_snapshot?.channel_age ? <span>{String(result.channel_snapshot.channel_age)}</span> : null}
+            {typeof result.channel_snapshot?.last_public_upload_at === 'string' ? <span>Last upload {formatDateLabel(result.channel_snapshot.last_public_upload_at)}</span> : null}
+            {typeof result.channel_snapshot?.primary_format === 'string' ? <span>{formatVideoFormat(result.channel_snapshot.primary_format)}</span> : null}
+          </div>
+        </div>
+      </div>
+      <div className="channel-hero-score">
+        <OpportunityScoreRing score={clampScore(score)} label={result.opportunity_score?.rating || ratingForScore(score)} />
+      </div>
+      <div className="channel-hero-metrics">
+        <ChannelMetric label="Subscribers" value={formatCompactNumber(result.subscribers)} detail={formatCount(result.subscribers)} />
+        <ChannelMetric label="Public views" value={formatCompactNumber(result.views)} detail={formatCount(result.views)} />
+        <ChannelMetric label="Public videos" value={formatCompactNumber(result.video_count)} detail={formatCount(result.video_count)} />
+        <ChannelMetric label="Cadence" value={metricValue(result.performance_metrics, 'uploads_per_month')} detail="Uploads/month from sample" />
+      </div>
+      <div className="channel-hero-cards">
+        <ChannelMetric label="Analysis confidence" value={`${result.analysis_confidence?.score ?? 0}/100`} detail={result.analysis_confidence?.rating} />
+        <ChannelMetric label="Revenue potential" value={displayCompactRevenueRange(result.revenue_estimate)} detail={result.revenue_estimate?.confidence} />
+        <ChannelMetric label="Publishing consistency" value={`${scoreById(result, 'publishing_consistency')}/100`} detail={ratingForScore(scoreById(result, 'publishing_consistency'))} />
+        <ChannelMetric label="Recent momentum" value={`${scoreById(result, 'recent_momentum')}/100`} detail={ratingForScore(scoreById(result, 'recent_momentum'))} />
+      </div>
+    </section>
+  );
+}
+
+function ChannelMetric({ label, value, detail }: { label: string; value: string; detail?: string }) {
+  return <div className="channel-metric"><span>{label}</span><strong title={detail}>{value}</strong>{detail && detail !== value && <small>{detail}</small>}</div>;
+}
+
+function ChannelTakeaways({ result }: { result: YouTubeChannelAnalysisResponse }) {
+  const strong = strongestDimension(result.score_dimensions ?? []);
+  const weak = weakestDimension(result.score_dimensions ?? []);
+  const opp = result.growth_opportunities?.[0];
+  return (
+    <section className="executive-takeaways channel-takeaways" aria-label="Channel takeaways">
+      <ExecutiveInsightCard tone="good" icon="W" title="Why the channel works" text={concise(strong?.explanation || result.likely_strategy || 'The public channel metadata shows a repeatable creator lane.')} tag={strong?.label || 'Public signal'} />
+      <ExecutiveInsightCard tone="risk" icon="R" title="Biggest weakness" text={concise(weak?.explanation || result.packaging_analysis?.weakest_habit || 'Public evidence is limited for this weakness.')} tag={weak?.label || 'Evidence gap'} />
+      <ExecutiveInsightCard tone="creative" icon="C" title="Best growth opportunity" text={concise(opp ? `${opp.title}: ${opp.why}` : firstUseful([result.opportunities?.[0]], [], ['Build from the strongest repeated pillar.']))} tag={opp?.confidence || 'Opportunity'} />
+    </section>
+  );
+}
+
+function ChannelPerformanceStory({ result }: { result: YouTubeChannelAnalysisResponse }) {
+  return (
+    <section className="video-section performance-story channel-section" aria-labelledby="channel-signals-title">
+      <div className="video-section-heading"><span>Performance story</span><h3 id="channel-signals-title">What the public channel signals say</h3></div>
+      <div className="performance-story-grid">
+        <div className="score-profile-panel">{(result.score_dimensions ?? []).map(dimension => <ScoreDimensionRow key={dimension.id} dimension={dimension} />)}</div>
+        <div className="public-signal-panel">
+          <div className="video-chart-note">Raw public metrics</div>
+          <div className="public-signal-grid">{(result.performance_metrics ?? []).slice(0, 8).map(metric => <PublicSignalMetric key={metric.id || metric.label} metric={metric} />)}</div>
+          {!(result.performance_metrics ?? []).length && <div className="muted-note">Not enough public video data to calculate channel-level metrics.</div>}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function ChannelChartsSection({ result }: { result: YouTubeChannelAnalysisResponse }) {
+  const charts = result.performance_charts;
+  return (
+    <section className="video-section channel-section" aria-labelledby="channel-charts-title">
+      <div className="video-section-heading"><span>Performance charts</span><h3 id="channel-charts-title">Recent uploads, distribution, cadence, and topics</h3></div>
+      <div className="channel-chart-grid">
+        <ChannelBars title="Recent upload performance" points={charts?.upload_performance ?? []} mode="timeline" />
+        <ChannelBars title="Views distribution" points={charts?.views_distribution ?? []} mode="distribution" />
+        <ChannelBars title="Upload cadence" points={charts?.upload_cadence ?? []} mode="cadence" />
+        <ChannelBars title="Topic performance" points={charts?.topic_performance ?? []} mode="topic" />
+        {(charts?.format_performance ?? []).length > 1 && <ChannelBars title="Format performance" points={charts?.format_performance ?? []} mode="format" />}
+      </div>
+    </section>
+  );
+}
+
+function ChannelBars({ title, points, mode }: { title: string; points: NonNullable<YouTubeChannelAnalysisResponse['performance_charts']>['upload_performance']; mode: string }) {
+  const visible = (points ?? []).filter(point => Number.isFinite(point.value)).slice(-18);
+  const max = Math.max(1, ...visible.map(point => point.value ?? 0));
+  return (
+    <div className="channel-chart-card">
+      <div className="channel-chart-title">{title}</div>
+      {visible.length ? (
+        <div className={`channel-bars is-${mode}`} role="img" aria-label={title}>
+          {visible.map((point, index) => (
+            <div key={`${point.label}-${index}`} className="channel-bar-wrap">
+              <span className="channel-bar" style={{ height: `${Math.max(8, ((point.value ?? 0) / max) * 100)}%` }} title={[point.title, point.label, formatCompactNumber(point.value), point.format].filter(Boolean).join(' · ')} />
+              <small>{shortChartLabel(point.label, mode)}</small>
+            </div>
+          ))}
+        </div>
+      ) : <div className="muted-note">No chartable public data available for this view.</div>}
+    </div>
+  );
+}
+
+function ChannelRevenueSection({ result }: { result: YouTubeChannelAnalysisResponse }) {
+  return <RevenuePotentialCard estimate={result.revenue_estimate} />;
+}
+
+function ChannelPillarsSection({ result }: { result: YouTubeChannelAnalysisResponse }) {
+  const pillars = result.channel_pillars ?? [];
+  return (
+    <section className="video-section channel-section" aria-labelledby="channel-pillars-title">
+      <div className="video-section-heading"><span>Topic intelligence</span><h3 id="channel-pillars-title">Content pillars worth repeating</h3></div>
+      <div className="channel-pillar-grid">
+        {pillars.map(pillar => <article className="channel-pillar-card" key={pillar.name}><span>{pillar.opportunity_status}</span><h4>{pillar.name}</h4><MetricGrid values={{ 'Share of uploads': formatPercent(pillar.share_of_uploads), 'Median views': formatCompactNumber(pillar.median_views), Consistency: pillar.consistency }} /><p>{pillar.recommendation}</p>{pillar.strongest_example && <small>Strongest example: {pillar.strongest_example.title}</small>}</article>)}
+      </div>
+      {!pillars.length && <div className="muted-note">The sampled metadata did not contain enough clean repeated phrases to build pillars.</div>}
+    </section>
+  );
+}
+
+function ChannelTopVideosSection({ result }: { result: YouTubeChannelAnalysisResponse }) {
+  const [active, setActive] = useState(result.top_video_groups?.[0]?.id ?? 'recent_winners');
+  const groups = result.top_video_groups ?? [];
+  const current = groups.find(group => group.id === active) ?? groups[0];
+  return (
+    <section className="video-section channel-section" aria-labelledby="channel-top-videos-title">
+      <div className="video-section-heading"><span>What performs best</span><h3 id="channel-top-videos-title">Top videos and outliers</h3></div>
+      <div className="creative-tabs" role="tablist" aria-label="Channel video categories">{groups.map(group => <button key={group.id} type="button" role="tab" aria-selected={active === group.id} className={active === group.id ? 'is-active' : ''} onClick={() => setActive(group.id)}>{group.label}</button>)}</div>
+      {current?.explanation && <p className="muted-note">{current.explanation}</p>}
+      <div className="channel-video-grid">{(current?.videos ?? []).map(video => <ChannelVideoCard key={video.video_id} video={video} />)}</div>
+      {current && !current.videos.length && <div className="muted-note">No videos matched this category from the available public sample.</div>}
+    </section>
+  );
+}
+
+function ChannelVideoCard({ video }: { video: NonNullable<YouTubeChannelAnalysisResponse['recent_videos']>[number] }) {
+  const href = video.canonical_url || `https://www.youtube.com/watch?v=${video.video_id}`;
+  return (
+    <a className="channel-video-card" href={href} target="_blank" rel="noopener noreferrer">
+      {video.thumbnail_url ? <img src={video.thumbnail_url} alt="" /> : <div className="channel-video-thumb-fallback" />}
+      <div><h4>{video.title}</h4><div className="channel-video-meta"><span>{formatDateLabel(video.published_at)}</span><span>{formatCompactNumber(video.views)} views</span><span>{formatCompactNumber(video.views_per_day)} / day</span><span>{formatVideoFormat(video.format)}</span></div>{video.pillar && <small>{video.pillar}</small>}</div>
+    </a>
+  );
+}
+
+function ChannelPackagingSection({ result }: { result: YouTubeChannelAnalysisResponse }) {
+  const pkg = result.packaging_analysis;
+  return (
+    <section className="video-section hook-packaging-lab channel-section" aria-labelledby="channel-packaging-title">
+      <div className="video-section-heading"><span>Packaging and title patterns</span><h3 id="channel-packaging-title">{pkg?.strongest_pattern || 'Public title structure'}</h3></div>
+      <div className="hook-lab-grid">
+        <div className="hook-copy-panel">
+          <div><span>Strongest title pattern</span><p>{pkg?.strongest_pattern || 'Unavailable'}</p></div>
+          <div><span>Weakest packaging habit</span><p>{pkg?.weakest_habit || 'Unavailable'}</p></div>
+          <div><span>Recommended title framework</span><p>{pkg?.recommended_title_framework || 'Use a clear viewer problem, outcome, and proof point.'}</p></div>
+        </div>
+        <MetricGrid values={{ 'Average title length': pkg?.average_title_length?.toFixed(1), 'Question titles': formatPercent(pkg?.question_title_share), 'Number titles': formatPercent(pkg?.number_title_share), 'Thumbnail availability': formatPercent(pkg?.thumbnail_availability) }} />
+      </div>
+      <SectionList label="Evidence titles" items={pkg?.evidence ?? []} />
+    </section>
+  );
+}
+
+function ChannelOpportunitiesSection({ result }: { result: YouTubeChannelAnalysisResponse }) {
+  return (
+    <section className="video-section channel-section" aria-labelledby="channel-opps-title">
+      <div className="video-section-heading"><span>Creator opportunities</span><h3 id="channel-opps-title">Repeatable content moves</h3></div>
+      <div className="creative-card-grid">{(result.growth_opportunities ?? []).map(opp => <article className="creative-direction-card" key={opp.title}><div className="creative-card-top"><span aria-hidden="true">O</span><small>{opp.confidence}</small></div><h4>{opp.title}</h4><p>{opp.why}</p><small>{opp.recommended_format} · {opp.suggested_audience}</small><strong className="channel-sample-title">{opp.sample_title}</strong><p>{opp.next_action}</p></article>)}</div>
+    </section>
+  );
+}
+
+function ChannelPlanSection({ result }: { result: YouTubeChannelAnalysisResponse }) {
+  return (
+    <section className="video-section channel-section" aria-labelledby="channel-plan-title">
+      <div className="video-section-heading"><span>30-day content plan</span><h3 id="channel-plan-title">A realistic next month from current cadence</h3></div>
+      <div className="channel-plan-grid">{(result.content_plan ?? []).map(week => <article className="channel-plan-week" key={week.week}><span>Week {week.week}</span><h4>{week.theme}</h4><small>{week.cadence}</small>{week.ideas.map(idea => <div className="channel-plan-idea" key={idea.working_title}><strong>{idea.working_title}</strong><p>{idea.objective} · {idea.hook_direction}</p><small>{idea.content_pillar} · {idea.format} · {idea.recommended_timing}</small></div>)}<p>{week.rationale}</p></article>)}</div>
+    </section>
+  );
+}
+
+function ChannelCTAPanel({ result, onGenerateIdea, generated, generationErrors, generatingID, region, language, onOpenScriptStudio }: {
+  result: YouTubeChannelAnalysisResponse;
+  onGenerateIdea: (idea: string) => void;
+  generated: Record<string, ReelContentPackage>;
+  generationErrors: Record<string, string>;
+  generatingID: string | null;
+  region: string;
+  language: string;
+  onOpenScriptStudio?: () => void;
+}) {
+  const idea = result.growth_opportunities?.[0]?.sample_title || result.suggested_content_ideas?.[0];
+  if (!idea || !result.cta_context?.script_generation_enabled) return null;
+  const key = candidateFromChannel(result, idea, region, language).id;
+  return (
+    <section className="script-generation-panel channel-cta" aria-labelledby="channel-cta-title">
+      <div><span>Next creator action</span><h3 id="channel-cta-title">{result.cta_context.action_label || 'Build a channel strategy from this analysis'}</h3><p>{[result.cta_context.selected_opportunity, result.cta_context.selected_audience, result.cta_context.recommended_format].filter(Boolean).join(' · ')}</p></div>
+      <ScriptAction label="Generate Strategy Script" generating={generatingID === key} generated={Boolean(generated[key])} error={generationErrors[key]} onGenerate={() => onGenerateIdea(idea)} onOpenScriptStudio={onOpenScriptStudio} />
+    </section>
+  );
+}
+
+function ChannelDetails({ result }: { result: YouTubeChannelAnalysisResponse }) {
+  const details = result.analysis_details;
+  return (
+    <section className="analysis-details-bottom">
+      <details className="video-details-accordion">
+        <summary>Analysis details</summary>
+        <MetricGrid values={{ 'Sampled videos': details?.sampled_video_count, 'Sample start': formatDateLabel(details?.sample_start), 'Sample end': formatDateLabel(details?.sample_end), Provider: details?.provider_availability, 'Cache version': result.cache?.schema_version || result.schema_version, 'Cache freshness': result.cache?.freshness, 'Analyzed at': formatCacheTime(details?.analysis_timestamp) }} />
+        <SectionList label="Hidden metric limitations" items={details?.hidden_metric_notes ?? []} />
+        <SectionList label="Scoring methodology" items={details?.scoring_methodology ?? []} />
+        <SectionList label="Topic methodology" items={details?.topic_methodology ?? []} />
+        <SectionList label="Revenue methodology" items={details?.revenue_methodology ?? []} />
+        <SectionList label="Classification rules" items={details?.classification_rules ?? []} />
+        <Limitations items={result.limitations ?? []} />
+      </details>
+    </section>
   );
 }
 
@@ -2851,15 +3061,6 @@ function HookProfile({ hook }: { hook?: YouTubeVideoAnalysisResponse['hook_intel
   );
 }
 
-function ResultCard({ title, children }: { title: string; children: ReactNode }) {
-  return (
-    <div className="settings-card" style={{ padding: '12px 14px' }}>
-      <div className="settings-card-title">{title}</div>
-      {children}
-    </div>
-  );
-}
-
 function Select({ label, value, onChange, options }: { label: string; value: string; onChange: (value: string) => void; options: { label: string; value: string }[] }) {
   const id = useId();
   return (
@@ -2949,35 +3150,6 @@ function ChipList({ items }: { items: string[] }) {
 function List({ items }: { items: string[] }) {
   if (!items.length) return <div className="muted-note">No data returned for this field.</div>;
   return <div className="compact-insight-list" style={{ display: 'grid', gap: 8 }}>{items.map(item => <div key={item} className="small-capability">{item}</div>)}</div>;
-}
-
-function VideoSummaryList({ videos }: { videos: NonNullable<YouTubeChannelAnalysisResponse['top_videos_summary']> }) {
-  if (!videos.length) return <div className="muted-note">No public top video metadata returned for this field.</div>;
-  return (
-    <div style={{ display: 'grid', gap: 8 }}>
-      {videos.slice(0, 10).map(video => (
-        <div key={video.video_id || video.title} className="small-capability">
-          <strong>{video.title}</strong>
-          <div style={{ marginTop: 4, color: 'var(--text-dim)' }}>{formatMetric('views', video.views)} views · {video.published_at || 'date unavailable'}</div>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function KeywordClusterList({ clusters, fallback }: { clusters: NonNullable<YouTubeChannelAnalysisResponse['keyword_clusters']>; fallback: string[] }) {
-  if (!clusters.length) return <ChipList items={fallback} />;
-  return (
-    <div style={{ display: 'grid', gap: 8 }}>
-      {clusters.map(cluster => (
-        <div key={cluster.name} className="small-capability">
-          <strong>{cluster.name}</strong>
-          {cluster.terms?.length ? <div style={{ marginTop: 4, color: 'var(--text-muted)' }}>{cluster.terms.join(', ')}</div> : null}
-          {cluster.evidence?.length ? <div style={{ marginTop: 4, color: 'var(--text-dim)' }}>Evidence: {cluster.evidence.slice(0, 2).join(' · ')}</div> : null}
-        </div>
-      ))}
-    </div>
-  );
 }
 
 function Limitations({ items }: { items: string[] }) {
@@ -3559,6 +3731,25 @@ function displayCompactRevenueRange(estimate?: YouTubeVideoAnalysisResponse['rev
     return `${formatCompactCurrency(estimate.low)}–${formatCompactCurrency(estimate.high)}`;
   }
   return estimate.formatted_range || 'Unavailable';
+}
+
+function scoreById(result: YouTubeChannelAnalysisResponse, id: string): number {
+  return clampScore(result.score_dimensions?.find(dimension => dimension.id === id)?.score ?? 0);
+}
+
+function metricValue(resultMetrics: YouTubeChannelAnalysisResponse['performance_metrics'], id: string): string {
+  return resultMetrics?.find(metric => metric.id === id)?.value || 'Unavailable';
+}
+
+function shortChartLabel(label: string, mode: string): string {
+  if (mode === 'cadence') return label.slice(2);
+  if (label.length <= 8) return label;
+  return label.slice(0, 8);
+}
+
+function formatPercent(value?: number): string {
+  if (value == null || !Number.isFinite(value)) return 'Unavailable';
+  return `${Math.round(value * 100)}%`;
 }
 
 function formatCompactCurrency(value?: number): string {

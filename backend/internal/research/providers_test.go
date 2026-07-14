@@ -475,6 +475,94 @@ func TestAnalyzeChannelReturnsSpecificPillarsAndIdeas(t *testing.T) {
 	assertNoExactRankingClaim(t, result.Limitations)
 }
 
+func TestChannelAnalyzerLaunchIntelligenceContract(t *testing.T) {
+	provider := NewYouTubeProvider("yt-key", &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		switch req.URL.Path {
+		case "/youtube/v3/channels":
+			return jsonResponse(`{"items":[{"id":"UCcreator","snippet":{"title":"Creator Systems Lab","customUrl":"@creatorsystems","description":"Practical tutorials for AI video workflows, creator automation, and YouTube systems.\nDisclaimer: affiliate links may be present.","country":"GB","publishedAt":"2020-01-01T00:00:00Z","thumbnails":{"high":{"url":"https://img.example/avatar.jpg"}}},"statistics":{"viewCount":"12000000","subscriberCount":"85000","videoCount":"220"},"topicDetails":{"topicCategories":["https://en.wikipedia.org/wiki/Artificial_intelligence"]},"brandingSettings":{"image":{"bannerExternalUrl":"https://img.example/banner.jpg"}}}]}`), nil
+		case "/youtube/v3/search":
+			return jsonResponse(`{"items":[{"id":{"videoId":"v1"},"snippet":{"title":"AI Video Workflow for Solo Creators"}},{"id":{"videoId":"v2"},"snippet":{"title":"Creator Automation Setup Guide"}},{"id":{"videoId":"v3"},"snippet":{"title":"YouTube Systems That Save 10 Hours"}},{"id":{"videoId":"v4"},"snippet":{"title":"AI Video Workflow Mistakes"}}]}`), nil
+		case "/youtube/v3/videos":
+			return jsonResponse(`{"items":[
+				{"id":"v1","snippet":{"publishedAt":"2026-07-01T00:00:00Z","title":"AI Video Workflow for Solo Creators","description":"A practical AI video workflow tutorial.","thumbnails":{"high":{"url":"https://img.example/v1.jpg"}}},"statistics":{"viewCount":"180000","likeCount":"7200","commentCount":"360"},"contentDetails":{"duration":"PT9M"}},
+				{"id":"v2","snippet":{"publishedAt":"2026-06-20T00:00:00Z","title":"Creator Automation Setup Guide","description":"Creator automation systems explained.","thumbnails":{"high":{"url":"https://img.example/v2.jpg"}}},"statistics":{"viewCount":"120000","commentCount":"210"},"contentDetails":{"duration":"PT11M"}},
+				{"id":"v3","snippet":{"publishedAt":"2026-06-10T00:00:00Z","title":"YouTube Systems That Save 10 Hours","description":"YouTube systems for planning and production.","thumbnails":{"high":{"url":"https://img.example/v3.jpg"}}},"statistics":{"viewCount":"90000","likeCount":"3000"},"contentDetails":{"duration":"PT55S"}},
+				{"id":"v4","snippet":{"publishedAt":"2026-05-01T00:00:00Z","title":"AI Video Workflow Mistakes","description":"Avoid common workflow mistakes.","thumbnails":{"high":{"url":"https://img.example/v4.jpg"}}},"statistics":{"viewCount":"60000","likeCount":"1800","commentCount":"90"},"contentDetails":{"duration":"PT7M"}}
+			]}`), nil
+		default:
+			t.Fatalf("unexpected URL: %s", req.URL.String())
+			return nil, nil
+		}
+	})})
+	provider.now = func() time.Time { return mustTime("2026-07-10T00:00:00Z") }
+
+	result, err := provider.AnalyzeChannel(context.Background(), "https://www.youtube.com/@creatorsystems")
+	if err != nil {
+		t.Fatalf("AnalyzeChannel: %v", err)
+	}
+	if result.SchemaVersion != channelAnalysisSchemaVersion || result.Cache.SchemaVersion != channelAnalysisSchemaVersion {
+		t.Fatalf("schema/cache version missing: result=%q cache=%q", result.SchemaVersion, result.Cache.SchemaVersion)
+	}
+	if result.CanonicalChannelURL != "https://www.youtube.com/channel/UCcreator" || result.ChannelHandle != "@creatorsystems" {
+		t.Fatalf("identity not normalized: url=%q handle=%q", result.CanonicalChannelURL, result.ChannelHandle)
+	}
+	if result.Description == "" || strings.Contains(strings.ToLower(result.Description), "affiliate links") {
+		t.Fatalf("description was not sanitized: %q", result.Description)
+	}
+	if len(result.ScoreDimensions) < 6 || result.OpportunityScore.Score <= 0 || result.AnalysisConfidence.Score <= 0 {
+		t.Fatalf("missing score model: score=%+v confidence=%+v dims=%+v", result.OpportunityScore, result.AnalysisConfidence, result.ScoreDimensions)
+	}
+	if len(result.PerformanceCharts.UploadPerformance) == 0 || len(result.PerformanceCharts.UploadCadence) == 0 || len(result.PerformanceCharts.TopicPerformance) == 0 {
+		t.Fatalf("missing real chart data: %+v", result.PerformanceCharts)
+	}
+	if len(result.ChannelPillars) == 0 || strings.Contains(strings.ToLower(result.ChannelPillars[0].Name), "general viewers") {
+		t.Fatalf("bad pillars: %+v", result.ChannelPillars)
+	}
+	if result.RevenueEstimate.Source != "public_estimate" || !result.RevenueEstimate.ActualAnalyticsUnavailable || strings.Contains(strings.ToLower(result.RevenueEstimate.CalculationBasis), "actual earnings") {
+		t.Fatalf("bad revenue estimate: %+v", result.RevenueEstimate)
+	}
+	if len(result.TopVideoGroups) == 0 || len(result.GrowthOpportunities) == 0 || len(result.ContentPlan) != 4 {
+		t.Fatalf("missing strategy sections: groups=%+v opps=%+v plan=%+v", result.TopVideoGroups, result.GrowthOpportunities, result.ContentPlan)
+	}
+	blob, _ := json.Marshal(result.CtaContext)
+	lower := strings.ToLower(string(blob))
+	for _, rejected := range []string{"general viewers in this niche", "hypothetical", "api key", "prompt"} {
+		if strings.Contains(lower, rejected) {
+			t.Fatalf("CTA context leaked rejected text %q: %s", rejected, lower)
+		}
+	}
+}
+
+func TestChannelAnalyzerRejectsPlainSearchTerms(t *testing.T) {
+	provider := NewYouTubeProvider("yt-key", &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		t.Fatalf("provider should not be called for unsupported plain search terms: %s", req.URL.String())
+		return nil, nil
+	})})
+	result, err := provider.AnalyzeChannel(context.Background(), "MKBHD")
+	if err != nil {
+		t.Fatalf("AnalyzeChannel should return structured invalid result, got error: %v", err)
+	}
+	if result.Status != "invalid_input" || !strings.Contains(strings.ToLower(result.Message), "plain search terms") {
+		t.Fatalf("expected invalid plain search term: %+v", result)
+	}
+}
+
+func TestChannelScoreEvidenceCapForTinySamples(t *testing.T) {
+	now := func() time.Time { return mustTime("2026-07-10T00:00:00Z") }
+	video := ChannelVideoSummary{VideoID: "v1", Title: "AI Workflow", PublishedAt: "2026-07-09T00:00:00Z", Duration: "PT9M", Views: uint64Ptr(1000000)}
+	videos := enrichChannelVideos([]ChannelVideoSummary{video}, now)
+	channel := youtubeChannelItem{}
+	channel.Statistics.ViewCount = "1000000"
+	dims, score, confidence := buildChannelScoreModel(channel, videos, []ChannelContentPillar{{Name: "AI workflow", UploadCount: 1}}, KeywordIntelligence{PrimaryKeywords: []string{"ai workflow"}, MetadataStrengthScore: 80}, NicheAnalysis{PrimaryNiche: "AI tools", Confidence: 0.9}, now)
+	if len(dims) == 0 || score.Score > 55 || confidence.Score >= 70 {
+		t.Fatalf("small sample should cap score/confidence: score=%+v confidence=%+v dims=%+v", score, confidence, dims)
+	}
+}
+
+func uint64Ptr(v uint64) *uint64 {
+	return &v
+}
+
 func TestOpenAIEnhancementFallbackWorks(t *testing.T) {
 	t.Setenv("OPENAI_API_KEY", "bad-key")
 	provider := NewYouTubeProvider("yt-key", &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
