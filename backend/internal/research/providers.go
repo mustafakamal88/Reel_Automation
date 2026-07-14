@@ -902,10 +902,21 @@ func bestChannelThumbnail(item youtubeChannelItem) string {
 	return item.Snippet.Thumbnails.Default.URL
 }
 
+func truncateRunes(value string, limit int) string {
+	if limit <= 0 || value == "" {
+		return ""
+	}
+	runes := []rune(value)
+	if len(runes) <= limit {
+		return value
+	}
+	return string(runes[:limit])
+}
+
 func enrichChannelVideos(videos []ChannelVideoSummary, now func() time.Time) []ChannelVideoSummary {
 	out := make([]ChannelVideoSummary, len(videos))
 	for i, video := range videos {
-		video.Description = cleanMetadataText(video.Description)
+		video.Description = truncateRunes(cleanMetadataText(video.Description), 600)
 		video.Format = classifyVideoFormat(video.Duration, "https://www.youtube.com/watch?v="+video.VideoID)
 		video.CanonicalURL = "https://www.youtube.com/watch?v=" + video.VideoID
 		if video.Views != nil {
@@ -980,7 +991,7 @@ func buildChannelIdentityContext(title, handle, description string) channelIdent
 	addName(title)
 	addName(handle)
 	addName(strings.ReplaceAll(handle, "-", " "))
-	for _, token := range tokenizeUseful(description, map[string]bool{}) {
+	for _, token := range tokenizeUseful(truncateRunes(description, 1200), map[string]bool{}) {
 		ctx.Description[token] = true
 	}
 	for _, phrase := range extractCreatorNameVariants(description) {
@@ -1202,9 +1213,6 @@ func channelEvidenceTokens(videos []ChannelVideoSummary) (map[string]bool, map[s
 		for _, token := range tokenizeUseful(video.Title, map[string]bool{}) {
 			all[token] = true
 			title[token] = true
-		}
-		for _, token := range tokenizeUseful(video.Description, map[string]bool{}) {
-			all[token] = true
 		}
 	}
 	return all, title
