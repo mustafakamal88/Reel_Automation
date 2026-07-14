@@ -654,6 +654,26 @@ func TestChannelCadenceAndPlanVolumeUseSampledWindow(t *testing.T) {
 			}
 		}
 	}
+	weeklyVideos := []ChannelVideoSummary{
+		channelTestVideo("w1", "Phone Review 1", "", "2026-06-12T00:00:00Z", 100),
+		channelTestVideo("w2", "Phone Review 2", "", "2026-06-19T00:00:00Z", 100),
+		channelTestVideo("w3", "Phone Review 3", "", "2026-06-26T00:00:00Z", 100),
+		channelTestVideo("w4", "Phone Review 4", "", "2026-07-03T00:00:00Z", 100),
+	}
+	repeatedPlan := buildChannelContentPlan(weeklyVideos, weeklyVideos, []ChannelContentPillar{{Name: "phone reviews", UploadCount: 4, ShareOfUploads: 1}}, []ChannelOpportunity{{Title: "Repeat", SampleTitle: "What changed in Phone Reviews and why it matters", RecommendedFormat: "Long-form"}}, NicheAnalysis{}, now)
+	seenTitles := map[string]bool{}
+	for _, week := range repeatedPlan {
+		if week.WeekType != "Publishing week" {
+			continue
+		}
+		for _, idea := range week.Ideas {
+			key := strings.ToLower(idea.WorkingTitle)
+			if seenTitles[key] {
+				t.Fatalf("publishing plan reused title %q: %+v", idea.WorkingTitle, repeatedPlan)
+			}
+			seenTitles[key] = true
+		}
+	}
 }
 
 func TestChannelPackagingDistinguishesModelNumbersFromNumberLedTitles(t *testing.T) {

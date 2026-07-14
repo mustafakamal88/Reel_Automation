@@ -1911,8 +1911,18 @@ func buildChannelContentPlan(recentUploads, performanceSample []ChannelVideoSumm
 				pillar = pillars[uploadIndex%len(pillars)].Name
 			}
 			title := firstNonEmpty(opp.SampleTitle, naturalChannelTitle(pillar, "followup"))
-			for usedTitles[strings.ToLower(title)] {
-				title = naturalChannelTitle(pillar, "packaging")
+			if usedTitles[strings.ToLower(title)] {
+				alternates := []string{
+					naturalChannelTitle(pillar, "packaging"),
+					naturalChannelTitle(pillar, "beginner"),
+					fmt.Sprintf("%s: next test for week %d", applyAcronymCasing(normalizeChannelPillarName(pillar)), i),
+				}
+				for _, alternate := range alternates {
+					if !usedTitles[strings.ToLower(alternate)] {
+						title = alternate
+						break
+					}
+				}
 			}
 			ideas = append(ideas, ChannelPlanIdea{
 				WorkingTitle:      title,
