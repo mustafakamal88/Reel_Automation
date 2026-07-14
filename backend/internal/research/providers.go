@@ -1245,7 +1245,11 @@ func validChannelTopicPhrase(phrase string, titleTokens map[string]bool, identit
 }
 
 func genericChannelPillarPhrase(phrase string) bool {
-	switch normalizeTopicPhrase(phrase) {
+	normalized := normalizeTopicPhrase(phrase)
+	if strings.HasSuffix(normalized, " look") || strings.HasSuffix(normalized, " looks") {
+		return true
+	}
+	switch normalized {
 	case "biggest ever", "best ever", "most expensive", "first ever", "last ever":
 		return true
 	default:
