@@ -1,15 +1,23 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import {
   ApiError,
+  createContentProjectScene,
+  deleteContentProjectScene,
+  generateContentProjectScenes,
   getContentProject,
   importLegacyContentProject,
+  listContentProjectScenes,
+  reorderContentProjectScenes,
+  updateContentProjectScene,
   updateContentProject,
   type ContentProject,
+  type ContentProjectScene,
+  type ContentProjectScenePayload,
   type ContentProjectPayload,
   type ReelContentPackage,
   type TrendCandidate,
 } from '../lib/api/client';
-import type { StoredScriptPackage } from '../lib/storage';
+import type { ScenePlanDraft, StoredScriptPackage } from '../lib/storage';
 import { storage } from '../lib/storage';
 
 interface Props {
@@ -20,6 +28,11 @@ interface Props {
 
 type ScriptSectionID = 'hook' | 'script' | 'caption' | 'hashtags';
 type SaveState = 'saved' | 'dirty' | 'saving' | 'failed';
+type WorkspaceTab = 'script' | 'scenes';
+
+interface SceneDraft extends ContentProjectScene {
+  localOnly?: boolean;
+}
 
 type EvidenceRecord = Record<string, unknown>;
 
@@ -562,6 +575,104 @@ function durationTone(estimatedSeconds: number, targetSeconds: number): string {
   return 'neutral';
 }
 
+function sceneSignature(scenes: SceneDraft[]): string {
+  return JSON.stringify(scenes.map((scene, index) => ({
+    id: scene.localOnly ? `local-${index}` : scene.id,
+    title: scene.title,
+    spoken_text: scene.spoken_text,
+    on_screen_text: scene.on_screen_text,
+    visual_direction: scene.visual_direction,
+    broll_direction: scene.broll_direction,
+    camera_direction: scene.camera_direction,
+    transition_direction: scene.transition_direction,
+    planned_duration_seconds: scene.planned_duration_seconds,
+    production_notes: scene.production_notes,
+  })));
+}
+
+function scenePayload(scene: ContentProjectScene, position: number): ContentProjectScenePayload {
+  return {
+    position,
+    title: scene.title,
+    spoken_text: scene.spoken_text,
+    on_screen_text: scene.on_screen_text,
+    visual_direction: scene.visual_direction,
+    broll_direction: scene.broll_direction,
+    camera_direction: scene.camera_direction,
+    transition_direction: scene.transition_direction,
+    planned_duration_seconds: scene.planned_duration_seconds,
+    production_notes: scene.production_notes,
+  };
+}
+
+function emptyLocalScene(projectID: string, position: number): SceneDraft {
+  const now = new Date().toISOString();
+  return {
+    id: `local-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    project_id: projectID,
+    position,
+    title: '',
+    spoken_text: '',
+    on_screen_text: '',
+    visual_direction: '',
+    broll_direction: '',
+    camera_direction: '',
+    transition_direction: '',
+    planned_duration_seconds: 5,
+    production_notes: '',
+    created_at: now,
+    updated_at: now,
+    localOnly: true,
+  };
+}
+
+function cloneSceneForDraft(scene: ContentProjectScene, projectID: string, position: number): SceneDraft {
+  const now = new Date().toISOString();
+  return {
+    ...scene,
+    id: `local-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    project_id: projectID,
+    position,
+    title: scene.title ? `${scene.title} copy` : '',
+    created_at: now,
+    updated_at: now,
+    localOnly: true,
+  };
+}
+
+function renumberScenes(scenes: SceneDraft[]): SceneDraft[] {
+  return scenes.map((scene, index) => ({ ...scene, position: index + 1 }));
+}
+
+function sceneDurationSummary(scenes: ContentProjectScene[], targetSeconds: number) {
+  const total = scenes.reduce((sum, scene) => sum + Math.max(0, Number(scene.planned_duration_seconds) || 0), 0);
+  const delta = Math.round(total - targetSeconds);
+  let label = 'No target set';
+  let tone = 'neutral';
+  if (targetSeconds > 0) {
+    const abs = Math.abs(delta);
+    const threshold = Math.max(4, targetSeconds * 0.12);
+    if (abs <= threshold) {
+      label = 'Within target';
+      tone = 'ready';
+    } else if (delta > 0) {
+      label = `Approximately ${formatDuration(abs)} over target`;
+      tone = 'warning';
+    } else {
+      label = `Approximately ${formatDuration(abs)} under target`;
+    }
+  }
+  const warnings = scenes.flatMap((scene, index) => {
+    const sceneLabel = scene.title || `Scene ${index + 1}`;
+    if (!scene.planned_duration_seconds) return [`${sceneLabel} has no planned duration.`];
+    if (targetSeconds > 0 && scene.planned_duration_seconds > targetSeconds * 0.55 && scenes.length > 1) {
+      return [`${sceneLabel} uses most of the target duration.`];
+    }
+    return [];
+  });
+  return { total, delta, label, tone, warnings };
+}
+
 function buildProductionCopy(title: string, draft: ScriptDraft): string {
   const hashtagText = normalizeHashtags(draft.hashtags).map(tag => `#${tag}`).join(' ');
   const platformText = Object.entries(draft.platformText)
@@ -636,8 +747,18 @@ export function ScriptStudioPage({ latestScript, onUseInClipGenerator, onGoToTre
   const [projectError, setProjectError] = useState<string | null>(null);
   const [saveState, setSaveState] = useState<SaveState>('saved');
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [activeWorkspace, setActiveWorkspace] = useState<WorkspaceTab>('script');
+  const [scenes, setScenes] = useState<SceneDraft[]>([]);
+  const [deletedSceneIDs, setDeletedSceneIDs] = useState<string[]>([]);
+  const [scenesLoading, setScenesLoading] = useState(false);
+  const [sceneSaveState, setSceneSaveState] = useState<SaveState>('saved');
+  const [sceneSaveError, setSceneSaveError] = useState<string | null>(null);
+  const [sceneGenerateBusy, setSceneGenerateBusy] = useState(false);
+  const [sceneGenerateError, setSceneGenerateError] = useState<string | null>(null);
+  const [sceneRecoveryPrompt, setSceneRecoveryPrompt] = useState<ScenePlanDraft | null>(null);
   const [importBusy, setImportBusy] = useState(false);
   const [importError, setImportError] = useState<string | null>(null);
+  const savedSceneSignature = useRef('');
 
   useEffect(() => {
     if (!projectID) return;
@@ -660,6 +781,41 @@ export function ScriptStudioPage({ latestScript, onUseInClipGenerator, onGoToTre
       })
       .finally(() => {
         if (!cancelled) setProjectLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [projectID]);
+
+  useEffect(() => {
+    if (!projectID) return;
+    let cancelled = false;
+    setScenesLoading(true);
+    listContentProjectScenes(projectID)
+      .then(result => {
+        if (cancelled) return;
+        const ordered = renumberScenes(result.scenes.map(scene => ({ ...scene, localOnly: false })));
+        const signature = sceneSignature(ordered);
+        savedSceneSignature.current = signature;
+        setScenes(ordered);
+        setDeletedSceneIDs([]);
+        setSceneSaveState('saved');
+        setSceneSaveError(null);
+        const localDraft = storage.getScenePlanDraft(projectID);
+        if (localDraft && localDraft.savedSceneSignature === signature && localDraft.scenes.length > 0 && sceneSignature(localDraft.scenes) !== signature) {
+          setSceneRecoveryPrompt(localDraft);
+        } else {
+          setSceneRecoveryPrompt(null);
+        }
+      })
+      .catch(err => {
+        if (!cancelled) {
+          setSceneSaveError(errMsg(err, 'Scene plan could not be loaded.'));
+          setSceneSaveState('failed');
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setScenesLoading(false);
       });
     return () => {
       cancelled = true;
@@ -694,6 +850,25 @@ export function ScriptStudioPage({ latestScript, onUseInClipGenerator, onGoToTre
     });
   }
 
+  function updateScenes(updater: (current: SceneDraft[]) => SceneDraft[]) {
+    setScenes(current => {
+      const next = renumberScenes(updater(current));
+      setSceneSaveError(null);
+      setSceneGenerateError(null);
+      const nextSignature = sceneSignature(next);
+      setSceneSaveState(nextSignature === savedSceneSignature.current && deletedSceneIDs.length === 0 ? 'saved' : 'dirty');
+      if (projectID) {
+        storage.setScenePlanDraft(projectID, {
+          projectId: projectID,
+          scenes: next,
+          savedSceneSignature: savedSceneSignature.current,
+          updatedAt: new Date().toISOString(),
+        });
+      }
+      return next;
+    });
+  }
+
   async function saveProjectDraft(nextDraft = draft): Promise<ContentProject | null> {
     if (!project || !nextDraft) return null;
     setSaveState('saving');
@@ -713,11 +888,48 @@ export function ScriptStudioPage({ latestScript, onUseInClipGenerator, onGoToTre
     }
   }
 
+  async function saveScenePlan(nextScenes = scenes): Promise<ContentProjectScene[] | null> {
+    if (!project) return null;
+    setSceneSaveState('saving');
+    setSceneSaveError(null);
+    try {
+      for (const sceneID of deletedSceneIDs) {
+        await deleteContentProjectScene(project.id, sceneID);
+      }
+      const savedScenes: ContentProjectScene[] = [];
+      for (let index = 0; index < nextScenes.length; index += 1) {
+        const scene = nextScenes[index];
+        const payload = scenePayload(scene, index + 1);
+        const saved = scene.localOnly
+          ? await createContentProjectScene(project.id, payload)
+          : await updateContentProjectScene(project.id, scene.id, payload);
+        savedScenes.push(saved);
+      }
+      const reordered = savedScenes.length > 0
+        ? (await reorderContentProjectScenes(project.id, savedScenes.map(scene => scene.id))).scenes
+        : [];
+      const ordered = renumberScenes(reordered.map(scene => ({ ...scene, localOnly: false })));
+      savedSceneSignature.current = sceneSignature(ordered);
+      setScenes(ordered);
+      setDeletedSceneIDs([]);
+      setSceneSaveState('saved');
+      storage.clearScenePlanDraft(project.id);
+      const refreshedProject = await getContentProject(project.id);
+      setProject(refreshedProject);
+      return ordered;
+    } catch (err) {
+      setSceneSaveError(errMsg(err, 'Save failed. Your unsaved scene edits are still visible.'));
+      setSceneSaveState('failed');
+      return null;
+    }
+  }
+
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 's') {
         event.preventDefault();
-        void saveProjectDraft();
+        if (activeWorkspace === 'scenes') void saveScenePlan();
+        else void saveProjectDraft();
       }
     }
     window.addEventListener('keydown', handleKeyDown);
@@ -784,10 +996,19 @@ export function ScriptStudioPage({ latestScript, onUseInClipGenerator, onGoToTre
   }
 
   if (project && draft) {
+    const activeProject = project;
+    const activeDraft = draft;
     const sourceURL = project.source_reference;
     const updatedLabel = formatDate(project.updated_at);
     const targetLabel = project.target_duration_seconds ? formatDuration(project.target_duration_seconds) : 'No target';
     const estimateLabel = formatDuration(draftStats.estimatedSeconds);
+    const sceneStats = sceneDurationSummary(scenes, project.target_duration_seconds || 0);
+    const sceneStatusLabel: Record<SaveState, string> = {
+      saved: 'Scene plan saved',
+      dirty: 'Scene plan has unsaved changes',
+      saving: 'Saving scene plan...',
+      failed: 'Scene plan save failed',
+    };
     const statusLabel: Record<SaveState, string> = {
       saved: 'Saved',
       dirty: 'Unsaved changes',
@@ -806,6 +1027,10 @@ export function ScriptStudioPage({ latestScript, onUseInClipGenerator, onGoToTre
         ? await saveProjectDraft()
         : project;
       if (!latest) return;
+      const confirmedScenes = activeWorkspace === 'scenes' && (sceneSaveState === 'dirty' || sceneSaveState === 'failed')
+        ? await saveScenePlan()
+        : scenes.filter(scene => !scene.localOnly);
+      if (activeWorkspace === 'scenes' && !confirmedScenes) return;
       storage.setClipGeneratorHandoff({
         projectId: latest.id,
         title: latest.title,
@@ -813,9 +1038,81 @@ export function ScriptStudioPage({ latestScript, onUseInClipGenerator, onGoToTre
         script: latest.main_script || '',
         caption: latest.caption || '',
         platformText: latest.platform_text,
+        scenes: confirmedScenes || [],
+        totalPlannedDurationSeconds: (confirmedScenes || []).reduce((sum, scene) => sum + scene.planned_duration_seconds, 0),
+        targetDurationSeconds: latest.target_duration_seconds,
         savedAt: latest.updated_at,
       });
       onUseInClipGenerator?.();
+    }
+
+    function addScene() {
+      updateScenes(current => [...current, emptyLocalScene(activeProject.id, current.length + 1)]);
+    }
+
+    function duplicateScene(index: number) {
+      updateScenes(current => {
+        const copy = cloneSceneForDraft(current[index], activeProject.id, index + 2);
+        return [...current.slice(0, index + 1), copy, ...current.slice(index + 1)];
+      });
+    }
+
+    function deleteScene(index: number) {
+      const scene = scenes[index];
+      if (!window.confirm(`Delete ${scene.title || `Scene ${index + 1}`}?`)) return;
+      if (!scene.localOnly) {
+        setDeletedSceneIDs(current => Array.from(new Set([...current, scene.id])));
+      }
+      updateScenes(current => current.filter((_, sceneIndex) => sceneIndex !== index));
+    }
+
+    function moveScene(index: number, direction: -1 | 1) {
+      updateScenes(current => {
+        const next = [...current];
+        const target = index + direction;
+        if (target < 0 || target >= next.length) return current;
+        [next[index], next[target]] = [next[target], next[index]];
+        return next;
+      });
+    }
+
+    async function generateScenePlan() {
+      if (!activeDraft.mainScript.trim() && !activeDraft.hook.trim()) {
+        setSceneGenerateError('Save a script before generating a scene plan.');
+        return;
+      }
+      if (scenes.length > 0 && !window.confirm('Replace the current scene plan with a newly generated plan? Existing scenes will be kept if generation fails.')) return;
+      const latest = saveState === 'dirty' || saveState === 'failed' ? await saveProjectDraft() : project;
+      if (!latest) return;
+      setSceneGenerateBusy(true);
+      setSceneGenerateError(null);
+      try {
+        const result = await generateContentProjectScenes(latest.id, 'replace');
+        const ordered = renumberScenes(result.scenes.map(scene => ({ ...scene, localOnly: false })));
+        savedSceneSignature.current = sceneSignature(ordered);
+        setScenes(ordered);
+        setDeletedSceneIDs([]);
+        setSceneSaveState('saved');
+        storage.clearScenePlanDraft(latest.id);
+        const refreshedProject = await getContentProject(latest.id);
+        setProject(refreshedProject);
+      } catch (err) {
+        setSceneGenerateError(errMsg(err, 'Scene plan generation is unavailable. Existing scenes were not changed.'));
+      } finally {
+        setSceneGenerateBusy(false);
+      }
+    }
+
+    function restoreSceneDraft() {
+      if (!sceneRecoveryPrompt) return;
+      setScenes(renumberScenes(sceneRecoveryPrompt.scenes.map(scene => ({ ...scene, localOnly: scene.id.startsWith('local-') }))));
+      setSceneSaveState('dirty');
+      setSceneRecoveryPrompt(null);
+    }
+
+    function discardSceneDraft() {
+      storage.clearScenePlanDraft(activeProject.id);
+      setSceneRecoveryPrompt(null);
     }
 
     return (
@@ -846,13 +1143,36 @@ export function ScriptStudioPage({ latestScript, onUseInClipGenerator, onGoToTre
           </header>
 
           <nav className="script-action-bar script-lab-actions" aria-label="Script actions">
-            <button className="generate-btn idle" type="submit" disabled={saveState === 'saving' || saveState === 'saved'}>
-              {saveState === 'saving' ? 'Saving...' : 'Save'}
+            <div className="script-workspace-tabs" role="tablist" aria-label="Script Studio workspace">
+              <button className={activeWorkspace === 'script' ? 'active' : ''} type="button" role="tab" aria-selected={activeWorkspace === 'script'} onClick={() => setActiveWorkspace('script')}>Script</button>
+              <button className={activeWorkspace === 'scenes' ? 'active' : ''} type="button" role="tab" aria-selected={activeWorkspace === 'scenes'} onClick={() => setActiveWorkspace('scenes')}>Scene Plan</button>
+            </div>
+            <button
+              className="generate-btn idle"
+              type="button"
+              disabled={activeWorkspace === 'script' ? saveState === 'saving' || saveState === 'saved' : sceneSaveState === 'saving' || sceneSaveState === 'saved'}
+              onClick={() => activeWorkspace === 'script' ? void saveProjectDraft() : void saveScenePlan()}
+            >
+              {activeWorkspace === 'script'
+                ? (saveState === 'saving' ? 'Saving...' : 'Save')
+                : (sceneSaveState === 'saving' ? 'Saving...' : 'Save Scene Plan')}
             </button>
-            <button className="generate-btn secondary" type="button" onClick={() => void copyText(productionCopy)}>Copy all</button>
-            <button className="generate-btn secondary" type="button" onClick={() => void copyText(draft.hook)}>Copy hook</button>
-            <button className="generate-btn secondary" type="button" onClick={() => void copyText(draft.mainScript)}>Copy script</button>
-            <button className="generate-btn secondary" type="button" onClick={() => void copyText(draft.caption)}>Copy caption</button>
+            {activeWorkspace === 'script' && (
+              <>
+                <button className="generate-btn secondary" type="button" onClick={() => void copyText(productionCopy)}>Copy all</button>
+                <button className="generate-btn secondary" type="button" onClick={() => void copyText(draft.hook)}>Copy hook</button>
+                <button className="generate-btn secondary" type="button" onClick={() => void copyText(draft.mainScript)}>Copy script</button>
+                <button className="generate-btn secondary" type="button" onClick={() => void copyText(draft.caption)}>Copy caption</button>
+              </>
+            )}
+            {activeWorkspace === 'scenes' && (
+              <>
+                <button className="generate-btn secondary" type="button" onClick={() => void generateScenePlan()} disabled={sceneGenerateBusy || saveState === 'saving' || (!draft.hook.trim() && !draft.mainScript.trim())}>
+                  {sceneGenerateBusy ? 'Generating...' : 'Generate Scene Plan'}
+                </button>
+                <button className="generate-btn secondary" type="button" onClick={addScene}>Add Scene</button>
+              </>
+            )}
             {onUseInClipGenerator && (
               <button className="generate-btn secondary" type="button" onClick={() => void sendSavedProjectToClipGenerator()} disabled={saveState === 'saving'}>
                 Use in Clip Generator
@@ -861,8 +1181,21 @@ export function ScriptStudioPage({ latestScript, onUseInClipGenerator, onGoToTre
           </nav>
 
           {saveError && <div className="clip-error" role="alert">{saveError}</div>}
+          {sceneSaveError && activeWorkspace === 'scenes' && <div className="clip-error" role="alert">{sceneSaveError}</div>}
+          {sceneGenerateError && activeWorkspace === 'scenes' && <div className="clip-error" role="alert">{sceneGenerateError}</div>}
           {importError && <div className="clip-error" role="alert">{importError}</div>}
+          {sceneRecoveryPrompt && activeWorkspace === 'scenes' && (
+            <div className="scene-recovery-banner" role="alert">
+              <div>
+                <strong>Unsaved local scene edits found</strong>
+                <span>Restore them or keep the latest saved scene plan from the backend.</span>
+              </div>
+              <button className="generate-btn secondary" type="button" onClick={restoreSceneDraft}>Restore</button>
+              <button className="generate-btn secondary" type="button" onClick={discardSceneDraft}>Discard</button>
+            </div>
+          )}
 
+          {activeWorkspace === 'script' ? (
           <div className="script-lab-grid">
             <main className="script-editor-panel">
               <EditorField
@@ -975,6 +1308,126 @@ export function ScriptStudioPage({ latestScript, onUseInClipGenerator, onGoToTre
               <EvidencePanel evidence={evidence} />
             </aside>
           </div>
+          ) : (
+          <div className="scene-plan-grid">
+            <main className="scene-list-panel">
+              {scenesLoading && (
+                <div className="script-empty-state system-state is-empty" role="status">
+                  <div className="empty-title">Loading scene plan...</div>
+                  <div className="empty-desc">Fetching saved production scenes.</div>
+                </div>
+              )}
+              {!scenesLoading && scenes.length === 0 && (
+                <div className="script-empty-state system-state is-empty" role="status">
+                  <div className="empty-title">No scene plan yet.</div>
+                  <div className="empty-desc">Generate from the saved script or add scenes manually.</div>
+                  <button className="generate-btn idle" type="button" onClick={addScene}>Add first scene</button>
+                </div>
+              )}
+              {scenes.map((scene, index) => (
+                <article className="scene-editor" key={scene.id}>
+                  <div className="scene-editor-header">
+                    <div>
+                      <span>Scene {index + 1}</span>
+                      <input
+                        className="form-input"
+                        value={scene.title}
+                        maxLength={120}
+                        placeholder="Optional title"
+                        onChange={event => updateScenes(current => current.map(item => item.id === scene.id ? { ...item, title: event.target.value } : item))}
+                      />
+                    </div>
+                    <div className="scene-actions">
+                      <button type="button" className="mini-copy-btn" onClick={() => moveScene(index, -1)} disabled={index === 0}>Move up</button>
+                      <button type="button" className="mini-copy-btn" onClick={() => moveScene(index, 1)} disabled={index === scenes.length - 1}>Move down</button>
+                      <button type="button" className="mini-copy-btn" onClick={() => duplicateScene(index)}>Duplicate</button>
+                      <button type="button" className="mini-copy-btn danger" onClick={() => deleteScene(index)}>Delete</button>
+                    </div>
+                  </div>
+
+                  <div className="scene-primary-grid">
+                    <EditorField
+                      id={`scene-${scene.id}-spoken`}
+                      label="Spoken text"
+                      value={scene.spoken_text}
+                      rows={5}
+                      maxLength={5000}
+                      onChange={value => updateScenes(current => current.map(item => item.id === scene.id ? { ...item, spoken_text: value } : item))}
+                      onCopy={() => void copyText(scene.spoken_text)}
+                    />
+                    <div className="scene-side-fields">
+                      <label className="script-editor-field">
+                        <span className="script-editor-label-row"><span>Duration seconds</span></span>
+                        <input
+                          className="form-input"
+                          type="number"
+                          min={1}
+                          max={600}
+                          value={scene.planned_duration_seconds}
+                          onChange={event => updateScenes(current => current.map(item => item.id === scene.id ? { ...item, planned_duration_seconds: Math.max(1, Math.min(600, Number(event.target.value) || 1)) } : item))}
+                        />
+                      </label>
+                      <EditorField
+                        id={`scene-${scene.id}-onscreen`}
+                        label="On-screen text"
+                        value={scene.on_screen_text}
+                        rows={3}
+                        maxLength={500}
+                        onChange={value => updateScenes(current => current.map(item => item.id === scene.id ? { ...item, on_screen_text: value } : item))}
+                        onCopy={() => void copyText(scene.on_screen_text)}
+                      />
+                    </div>
+                  </div>
+
+                  <details className="scene-details">
+                    <summary>Production details</summary>
+                    <div className="scene-detail-grid">
+                      <EditorField id={`scene-${scene.id}-visual`} label="Visual direction" value={scene.visual_direction} rows={3} maxLength={2000} onChange={value => updateScenes(current => current.map(item => item.id === scene.id ? { ...item, visual_direction: value } : item))} onCopy={() => void copyText(scene.visual_direction)} />
+                      <EditorField id={`scene-${scene.id}-broll`} label="B-roll / supporting visual" value={scene.broll_direction} rows={3} maxLength={1200} onChange={value => updateScenes(current => current.map(item => item.id === scene.id ? { ...item, broll_direction: value } : item))} onCopy={() => void copyText(scene.broll_direction)} />
+                      <EditorField id={`scene-${scene.id}-camera`} label="Camera / framing" value={scene.camera_direction} rows={2} maxLength={1000} onChange={value => updateScenes(current => current.map(item => item.id === scene.id ? { ...item, camera_direction: value } : item))} onCopy={() => void copyText(scene.camera_direction)} />
+                      <EditorField id={`scene-${scene.id}-transition`} label="Transition" value={scene.transition_direction} rows={2} maxLength={700} onChange={value => updateScenes(current => current.map(item => item.id === scene.id ? { ...item, transition_direction: value } : item))} onCopy={() => void copyText(scene.transition_direction)} />
+                      <EditorField id={`scene-${scene.id}-notes`} label="Production notes" value={scene.production_notes} rows={3} maxLength={1500} onChange={value => updateScenes(current => current.map(item => item.id === scene.id ? { ...item, production_notes: value } : item))} onCopy={() => void copyText(scene.production_notes)} />
+                    </div>
+                  </details>
+                </article>
+              ))}
+            </main>
+
+            <aside className="script-lab-side scene-summary-panel" aria-label="Scene plan summary">
+              <section className="script-lab-card">
+                <div className="script-section-heading">
+                  <span>Scene Plan</span>
+                  <strong>{sceneStatusLabel[sceneSaveState]}</strong>
+                </div>
+                <div className="script-metric-grid">
+                  <div><span>Scenes</span><strong>{scenes.length}</strong></div>
+                  <div><span>Planned</span><strong>{formatDuration(sceneStats.total)}</strong></div>
+                </div>
+                <div className={`duration-meter ${sceneStats.tone}`}>
+                  <span>Target {targetLabel}</span>
+                  <strong>{sceneStats.label}</strong>
+                </div>
+                {sceneStats.warnings.length > 0 && (
+                  <ul className="scene-warning-list">
+                    {sceneStats.warnings.map(warning => <li key={warning}>{warning}</li>)}
+                  </ul>
+                )}
+              </section>
+              <section className="script-lab-card">
+                <div className="script-section-heading">
+                  <span>Project</span>
+                  <strong>Context</strong>
+                </div>
+                <div className="script-context-list">
+                  <StatusRow label="Stage" value={humanizeKey(project.current_stage)} />
+                  <StatusRow label="Status" value={humanizeKey(project.status)} />
+                  <StatusRow label="Format" value={humanizeKey(project.content_format)} />
+                  <StatusRow label="Saved" value={updatedLabel} />
+                </div>
+              </section>
+            </aside>
+          </div>
+          )}
         </form>
       </section>
     );

@@ -102,6 +102,7 @@ export function ClipStudioPage({ onNavigate }: Props) {
   const [error, setError] = useState<string | null>(null);
 
   const packageReady = clipPackageReady(result);
+  const handoffSceneTotal = handoff?.totalPlannedDurationSeconds || handoff?.scenes?.reduce((sum, scene) => sum + scene.planned_duration_seconds, 0) || 0;
   const connectedAccountPlatforms = connections.filter(conn => PUBLISH_PLATFORMS.includes(conn.platform as PublishPlatform) && conn.status === 'connected');
   const sourceStatus = useMemo(() => getClipSourceStatus(source, sourceUrl), [source, sourceUrl]);
   const generateDisabledReason = clipGenerateDisabledReason({ source, rightsConfirmed, prompt, busy, uploadBusy, urlImportBusy });
@@ -336,6 +337,23 @@ export function ClipStudioPage({ onNavigate }: Props) {
             <div className="clip-readiness-note ready">
               <div>Project handoff active</div>
               <p>This clip package is linked to {handoff.title}.</p>
+            </div>
+          )}
+
+          {handoff?.projectId && (handoff.scenes?.length ?? 0) > 0 && (
+            <div className="clip-scene-summary">
+              <div className="clip-scene-summary-header">
+                <strong>Scene plan received</strong>
+                <span>{handoff.scenes?.length} scene(s) · {handoffSceneTotal}s planned{handoff.targetDurationSeconds ? ` · ${handoff.targetDurationSeconds}s target` : ''}</span>
+              </div>
+              <ol>
+                {handoff.scenes?.slice(0, 6).map((scene, index) => (
+                  <li key={scene.id}>
+                    <span>{index + 1}. {scene.title || 'Untitled scene'}</span>
+                    <small>{scene.planned_duration_seconds}s</small>
+                  </li>
+                ))}
+              </ol>
             </div>
           )}
 

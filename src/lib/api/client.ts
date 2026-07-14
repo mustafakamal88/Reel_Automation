@@ -986,6 +986,36 @@ export interface ContentProjectPayload {
   platform_text?: Record<string, string>;
 }
 
+export interface ContentProjectScene {
+  id: string;
+  project_id: string;
+  position: number;
+  title: string;
+  spoken_text: string;
+  on_screen_text: string;
+  visual_direction: string;
+  broll_direction: string;
+  camera_direction: string;
+  transition_direction: string;
+  planned_duration_seconds: number;
+  production_notes: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ContentProjectScenePayload {
+  position?: number;
+  title?: string;
+  spoken_text?: string;
+  on_screen_text?: string;
+  visual_direction?: string;
+  broll_direction?: string;
+  camera_direction?: string;
+  transition_direction?: string;
+  planned_duration_seconds?: number;
+  production_notes?: string;
+}
+
 export interface LegacyContentProjectImportPayload {
   import_key?: string;
   title: string;
@@ -1031,6 +1061,30 @@ export async function archiveContentProject(id: string): Promise<ContentProject>
 
 export async function importLegacyContentProject(body: LegacyContentProjectImportPayload): Promise<ContentProject> {
   return apiFetch('/api/content-projects/import-legacy', { method: 'POST', body: JSON.stringify(body) });
+}
+
+export async function listContentProjectScenes(projectID: string): Promise<{ scenes: ContentProjectScene[] }> {
+  return apiFetch(`/api/content-projects/${encodeURIComponent(projectID)}/scenes`);
+}
+
+export async function createContentProjectScene(projectID: string, body: ContentProjectScenePayload): Promise<ContentProjectScene> {
+  return apiFetch(`/api/content-projects/${encodeURIComponent(projectID)}/scenes`, { method: 'POST', body: JSON.stringify(body) });
+}
+
+export async function updateContentProjectScene(projectID: string, sceneID: string, body: ContentProjectScenePayload): Promise<ContentProjectScene> {
+  return apiFetch(`/api/content-projects/${encodeURIComponent(projectID)}/scenes/${encodeURIComponent(sceneID)}`, { method: 'PATCH', body: JSON.stringify(body) });
+}
+
+export async function deleteContentProjectScene(projectID: string, sceneID: string): Promise<{ scenes: ContentProjectScene[] }> {
+  return apiFetch(`/api/content-projects/${encodeURIComponent(projectID)}/scenes/${encodeURIComponent(sceneID)}`, { method: 'DELETE' });
+}
+
+export async function reorderContentProjectScenes(projectID: string, sceneIDs: string[]): Promise<{ scenes: ContentProjectScene[] }> {
+  return apiFetch(`/api/content-projects/${encodeURIComponent(projectID)}/scenes/reorder`, { method: 'POST', body: JSON.stringify({ scene_ids: sceneIDs }) });
+}
+
+export async function generateContentProjectScenes(projectID: string, mode: 'replace' | 'append'): Promise<{ scenes: ContentProjectScene[] }> {
+  return apiFetch(`/api/content-projects/${encodeURIComponent(projectID)}/scenes/generate`, { method: 'POST', body: JSON.stringify({ mode }) });
 }
 
 export async function analyzeNicheOpportunities(body: NicheOpportunityRequest): Promise<NicheOpportunityResponse> {

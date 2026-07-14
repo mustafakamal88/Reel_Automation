@@ -109,10 +109,22 @@ func (s *Server) handleContentProjects(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleContentProjectRoute(w http.ResponseWriter, r *http.Request) {
-	id := strings.TrimPrefix(r.URL.Path, "/api/content-projects/")
-	id = strings.Trim(id, "/")
-	if id == "" || strings.Contains(id, "/") || !looksLikeUUID(id) {
+	rest := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/content-projects/"), "/")
+	parts := strings.Split(rest, "/")
+	id := ""
+	if len(parts) > 0 {
+		id = parts[0]
+	}
+	if id == "" || !looksLikeUUID(id) {
 		jsonErrorCode(w, "not_found", "content project not found", http.StatusNotFound)
+		return
+	}
+	if len(parts) > 1 {
+		if parts[1] == "scenes" {
+			s.handleContentProjectSceneRoute(w, r, id, parts[2:])
+			return
+		}
+		jsonErrorCode(w, "not_found", "content project route not found", http.StatusNotFound)
 		return
 	}
 	switch r.Method {

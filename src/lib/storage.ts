@@ -1,5 +1,5 @@
 import type { ApprovalStatus, Settings, View, WorkflowStatus } from '../types';
-import type { ReelContentPackage, TrendCandidate } from './api/client';
+import type { ContentProjectScene, ReelContentPackage, TrendCandidate } from './api/client';
 
 const STORAGE_VERSION = 'phase-4f-real-empty-state';
 const KEY_STORAGE_VERSION = 'trendcortex_storage_version';
@@ -10,6 +10,7 @@ const KEY_GENERATED = 'signal_generated';
 const KEY_WORKFLOW_STATUSES = 'signal_workflow_statuses';
 const KEY_SCRIPT_STUDIO = 'trendcortex_script_studio_package';
 const KEY_CLIP_HANDOFF = 'trendcortex_clip_generator_handoff';
+const KEY_SCENE_DRAFT_PREFIX = 'trendcortex_scene_plan_draft:';
 const KEY_ACTIVITY = 'trendcortex_activity';
 
 export interface StoredScriptPackage {
@@ -25,7 +26,17 @@ export interface ClipGeneratorHandoff {
   script?: string;
   caption?: string;
   platformText?: Record<string, string>;
+  scenes?: ContentProjectScene[];
+  totalPlannedDurationSeconds?: number;
+  targetDurationSeconds?: number;
   savedAt: string;
+}
+
+export interface ScenePlanDraft {
+  projectId: string;
+  scenes: ContentProjectScene[];
+  savedSceneSignature: string;
+  updatedAt: string;
 }
 
 export interface ActivityState {
@@ -249,6 +260,19 @@ export const storage = {
   },
   setClipGeneratorHandoff(v: ClipGeneratorHandoff): void {
     safeSet(KEY_CLIP_HANDOFF, v);
+  },
+  getScenePlanDraft(projectID: string): ScenePlanDraft | null {
+    return safeGet<ScenePlanDraft | null>(`${KEY_SCENE_DRAFT_PREFIX}${projectID}`, null);
+  },
+  setScenePlanDraft(projectID: string, v: ScenePlanDraft): void {
+    safeSet(`${KEY_SCENE_DRAFT_PREFIX}${projectID}`, v);
+  },
+  clearScenePlanDraft(projectID: string): void {
+    try {
+      localStorage.removeItem(`${KEY_SCENE_DRAFT_PREFIX}${projectID}`);
+    } catch {
+      // localStorage might be unavailable in some environments
+    }
   },
 
   getWorkflowStatuses(): Record<string, WorkflowStatus> {
