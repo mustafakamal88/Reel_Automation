@@ -27,7 +27,7 @@ const (
 
 var ErrNotConfigured = errors.New("research provider is not configured")
 
-const channelAnalysisSchemaVersion = "channel_analysis_v2_pillar_quality_cadence"
+const channelAnalysisSchemaVersion = "channel_analysis_v3_sample_separation"
 
 const (
 	ProviderErrorQuota       = "quota"
@@ -250,6 +250,7 @@ type ChannelAnalysisResult struct {
 	ScoreDimensions         []ScoreDimension       `json:"score_dimensions,omitempty"`
 	PerformanceMetrics      []PerformanceMetric    `json:"performance_metrics,omitempty"`
 	RevenueEstimate         RevenueEstimate        `json:"revenue_estimate,omitempty"`
+	MonthlyRevenueRunRate   RevenueEstimate        `json:"monthly_revenue_run_rate,omitempty"`
 	ChannelPillars          []ChannelContentPillar `json:"channel_pillars,omitempty"`
 	PerformanceCharts       ChannelCharts          `json:"performance_charts,omitempty"`
 	TopVideoGroups          []ChannelVideoGroup    `json:"top_video_groups,omitempty"`
@@ -357,6 +358,7 @@ type ChannelPlanWeek struct {
 	Week      int               `json:"week"`
 	Theme     string            `json:"theme"`
 	Cadence   string            `json:"cadence"`
+	WeekType  string            `json:"week_type,omitempty"`
 	Ideas     []ChannelPlanIdea `json:"ideas"`
 	Rationale string            `json:"rationale"`
 }
@@ -376,20 +378,30 @@ type ChannelCTAContext struct {
 }
 
 type ChannelAnalysisDetails struct {
-	SampledVideoCount    int      `json:"sampled_video_count"`
-	SampleStart          string   `json:"sample_start,omitempty"`
-	SampleEnd            string   `json:"sample_end,omitempty"`
-	SampleDateSpanDays   float64  `json:"sample_date_span_days,omitempty"`
-	UploadsPerMonth      float64  `json:"uploads_per_month,omitempty"`
-	UploadsPerWeek       float64  `json:"uploads_per_week,omitempty"`
-	CadenceConfidence    string   `json:"cadence_confidence,omitempty"`
-	ProviderAvailability string   `json:"provider_availability"`
-	HiddenMetricNotes    []string `json:"hidden_metric_notes,omitempty"`
-	ScoringMethodology   []string `json:"scoring_methodology,omitempty"`
-	TopicMethodology     []string `json:"topic_methodology,omitempty"`
-	RevenueMethodology   []string `json:"revenue_methodology,omitempty"`
-	ClassificationRules  []string `json:"classification_rules,omitempty"`
-	AnalysisTimestamp    string   `json:"analysis_timestamp"`
+	SampledVideoCount            int      `json:"sampled_video_count"`
+	RecentSampleCount            int      `json:"recent_sample_count,omitempty"`
+	PerformanceSampleCount       int      `json:"performance_sample_count,omitempty"`
+	SampleStart                  string   `json:"sample_start,omitempty"`
+	SampleEnd                    string   `json:"sample_end,omitempty"`
+	RecentSampleStart            string   `json:"recent_sample_start,omitempty"`
+	RecentSampleEnd              string   `json:"recent_sample_end,omitempty"`
+	PerformanceSampleStart       string   `json:"performance_sample_start,omitempty"`
+	PerformanceSampleEnd         string   `json:"performance_sample_end,omitempty"`
+	SampleDateSpanDays           float64  `json:"sample_date_span_days,omitempty"`
+	UploadsPerMonth              float64  `json:"uploads_per_month,omitempty"`
+	UploadsPerWeek               float64  `json:"uploads_per_week,omitempty"`
+	MedianUploadIntervalDays     float64  `json:"median_upload_interval_days,omitempty"`
+	CadenceAvailable             bool     `json:"cadence_available"`
+	CadenceMethodology           string   `json:"cadence_methodology,omitempty"`
+	RecommendedUploadsNext30Days int      `json:"recommended_uploads_next_30_days,omitempty"`
+	CadenceConfidence            string   `json:"cadence_confidence,omitempty"`
+	ProviderAvailability         string   `json:"provider_availability"`
+	HiddenMetricNotes            []string `json:"hidden_metric_notes,omitempty"`
+	ScoringMethodology           []string `json:"scoring_methodology,omitempty"`
+	TopicMethodology             []string `json:"topic_methodology,omitempty"`
+	RevenueMethodology           []string `json:"revenue_methodology,omitempty"`
+	ClassificationRules          []string `json:"classification_rules,omitempty"`
+	AnalysisTimestamp            string   `json:"analysis_timestamp"`
 }
 
 type ChannelCacheInfo struct {
@@ -712,8 +724,9 @@ func (p *YouTubeProvider) AnalyzeChannel(ctx context.Context, channelURL string)
 	topVideos, _ := p.fetchChannelVideos(ctx, channelID, "viewCount", 25)
 	recentVideos = enrichChannelVideos(recentVideos, p.now)
 	topVideos = enrichChannelVideos(topVideos, p.now)
-	videos := mergeChannelVideos(recentVideos, topVideos)
-	videos = enrichChannelVideos(videos, p.now)
+	recentUploadSample := recentUploadSample(recentVideos, 20)
+	performanceSample := mergeChannelVideos(recentUploadSample, topVideos)
+	performanceSample = enrichChannelVideos(performanceSample, p.now)
 	handle := firstNonEmpty(channel.Snippet.CustomURL, resolved.Handle)
 	identity := buildChannelIdentityContext(channel.Snippet.Title, handle, channel.Snippet.Description)
 	keywordIntel := ExtractKeywordIntelligence(KeywordExtractionInput{
@@ -721,42 +734,43 @@ func (p *YouTubeProvider) AnalyzeChannel(ctx context.Context, channelURL string)
 		Description:       cleanMetadataText(channel.Snippet.Description),
 		ChannelTitle:      channel.Snippet.Title,
 		TopicDetails:      channel.TopicDetails.TopicCategories,
-		RecentVideoTitles: videoTitles(videos),
+		RecentVideoTitles: videoTitles(performanceSample),
 	})
-	keywordIntel = sanitizeChannelKeywordIntelligence(keywordIntel, videos, identity)
+	keywordIntel = sanitizeChannelKeywordIntelligence(keywordIntel, performanceSample, identity)
 	keywordIntel = p.enhanceChannelKeywords(ctx, keywordIntel, channel.Snippet.Title)
-	keywordIntel = sanitizeChannelKeywordIntelligence(keywordIntel, videos, identity)
+	keywordIntel = sanitizeChannelKeywordIntelligence(keywordIntel, performanceSample, identity)
 	keywords := append(append([]string{}, keywordIntel.PrimaryKeywords...), keywordIntel.SecondaryKeywords...)
 	nicheAnalysis := ClassifyNiche(KeywordExtractionInput{
 		Title:             channel.Snippet.Title,
 		Description:       channel.Snippet.Description,
 		ChannelTitle:      channel.Snippet.Title,
 		TopicDetails:      channel.TopicDetails.TopicCategories,
-		RecentVideoTitles: videoTitles(videos),
+		RecentVideoTitles: videoTitles(performanceSample),
 	}, keywordIntel)
-	pillarObjects := buildChannelPillars(keywordIntel, videos, identity)
+	pillarObjects := buildChannelPillars(keywordIntel, performanceSample, identity)
 	pillars := topPillarNames(pillarObjects, 6)
-	keywords = sanitizeChannelKeywordList(keywords, videos, identity, 12)
-	assignVideoPillars(videos, pillarObjects)
-	assignVideoPillars(recentVideos, pillarObjects)
+	keywords = sanitizeChannelKeywordList(keywords, performanceSample, identity, 12)
+	assignVideoPillars(performanceSample, pillarObjects)
+	assignVideoPillars(recentUploadSample, pillarObjects)
 	assignVideoPillars(topVideos, pillarObjects)
-	viewDistribution, ratio := channelSignals(channel.Statistics.SubscriberCount, videos)
-	performanceDistribution := PerformanceDistribution(videos)
-	patterns := titlePatterns(videos)
-	formats := formatPatternsFromVideos(videos)
+	viewDistribution, ratio := channelSignals(channel.Statistics.SubscriberCount, performanceSample)
+	performanceDistribution := PerformanceDistribution(performanceSample)
+	patterns := titlePatterns(performanceSample)
+	formats := formatPatternsFromVideos(performanceSample)
 	channelOpps := ChannelOpportunities(nicheAnalysis, pillars, keywordIntel)
 	ideas := SuggestedChannelIdeas(nicheAnalysis, keywordIntel, pillars)
 	shortIdeas := SuggestedShortClipIdeas(nicheAnalysis, keywordIntel, pillars)
-	dimensions, opportunityScore, analysisConfidence := buildChannelScoreModel(channel, videos, pillarObjects, keywordIntel, nicheAnalysis, p.now)
-	performanceMetrics := channelPerformanceMetrics(videos, channel.Statistics.SubscriberCount, p.now)
-	revenueEstimate := estimateChannelRevenue(channel, videos, nicheAnalysis)
-	charts := buildChannelCharts(videos, pillarObjects)
-	videoGroups := buildChannelVideoGroups(videos)
-	packaging := buildChannelPackaging(videos, pillarObjects)
+	dimensions, opportunityScore, analysisConfidence := buildChannelScoreModel(channel, recentUploadSample, performanceSample, pillarObjects, keywordIntel, nicheAnalysis, p.now)
+	performanceMetrics := channelPerformanceMetrics(recentUploadSample, performanceSample, channel.Statistics.SubscriberCount, p.now)
+	revenueEstimate := estimateChannelRevenue(performanceSample, nicheAnalysis)
+	monthlyRunRate := estimateChannelMonthlyRunRate(recentUploadSample, nicheAnalysis, p.now)
+	charts := buildChannelCharts(recentUploadSample, performanceSample, pillarObjects)
+	videoGroups := buildChannelVideoGroups(performanceSample)
+	packaging := buildChannelPackaging(performanceSample, pillarObjects)
 	growthOpps := buildChannelGrowthOpportunities(nicheAnalysis, pillarObjects, videoGroups, packaging)
-	growthOpps = sanitizeChannelGrowthOpportunities(growthOpps, pillarObjects, videos, identity)
-	contentPlan := buildChannelContentPlan(videos, pillarObjects, growthOpps, nicheAnalysis, p.now)
-	details := buildChannelAnalysisDetails(videos, channel, p.now)
+	growthOpps = sanitizeChannelGrowthOpportunities(growthOpps, pillarObjects, performanceSample, identity)
+	contentPlan := buildChannelContentPlan(recentUploadSample, performanceSample, pillarObjects, growthOpps, nicheAnalysis, p.now)
+	details := buildChannelAnalysisDetails(recentUploadSample, performanceSample, channel, p.now)
 	canonicalURL := "https://www.youtube.com/channel/" + channelID
 	cacheKey := "youtube_channel:" + channelAnalysisSchemaVersion + ":" + channelID
 	score := float64(opportunityScore.Score)
@@ -779,7 +793,7 @@ func (p *YouTubeProvider) AnalyzeChannel(ctx context.Context, channelURL string)
 		VideoCount:          parseUintPtr(channel.Statistics.VideoCount),
 		Country:             country,
 		PublicTopicDetails:  channel.TopicDetails.TopicCategories,
-		RecentVideos:        recentVideos,
+		RecentVideos:        recentUploadSample,
 		TopVideosSummary:    topNChannelVideos(topVideos, 10),
 		ChannelSnapshot: map[string]any{
 			"subscribers":           parseUintPtr(channel.Statistics.SubscriberCount),
@@ -788,20 +802,20 @@ func (p *YouTubeProvider) AnalyzeChannel(ctx context.Context, channelURL string)
 			"country":               country,
 			"channel_age":           channelAge(channel.Snippet.PublishedAt, p.now),
 			"created_at":            channel.Snippet.PublishedAt,
-			"last_public_upload_at": latestVideoDate(videos),
-			"recent_upload_cadence": uploadFrequency(videos, p.now),
-			"primary_format":        primaryChannelFormat(videos),
+			"last_public_upload_at": latestVideoDate(recentUploadSample),
+			"recent_upload_cadence": uploadFrequency(recentUploadSample, p.now),
+			"primary_format":        primaryChannelFormat(performanceSample),
 			"dominant_topic":        firstPhrase(pillars),
 		},
 		ChannelNiche:            nicheAnalysis.PrimaryNiche,
 		NicheAnalysis:           nicheAnalysis,
 		ContentPillars:          pillars,
 		KeywordIntelligence:     keywordIntel,
-		KeywordClusters:         ChannelKeywordClusters(keywordIntel, videos),
+		KeywordClusters:         ChannelKeywordClusters(keywordIntel, performanceSample),
 		FormatPatterns:          formats,
 		TitlePatterns:           patterns,
 		PerformanceDistribution: performanceDistribution,
-		UploadFrequency:         uploadFrequency(videos, p.now),
+		UploadFrequency:         uploadFrequency(recentUploadSample, p.now),
 		TopVideoTopics:          topN(keywords, 8),
 		RepeatedKeywords:        keywords,
 		ViewDistribution:        viewDistribution,
@@ -815,6 +829,7 @@ func (p *YouTubeProvider) AnalyzeChannel(ctx context.Context, channelURL string)
 		ScoreDimensions:         dimensions,
 		PerformanceMetrics:      performanceMetrics,
 		RevenueEstimate:         revenueEstimate,
+		MonthlyRevenueRunRate:   monthlyRunRate,
 		ChannelPillars:          pillarObjects,
 		PerformanceCharts:       charts,
 		TopVideoGroups:          videoGroups,
@@ -854,9 +869,9 @@ func (p *YouTubeProvider) AnalyzeChannel(ctx context.Context, channelURL string)
 			ScoreReason:    reason,
 		},
 	}
-	result.Opportunities = sanitizeChannelOpportunityStrings(result.Opportunities, pillarObjects, videos, identity)
-	result.SuggestedContentIdeas = sanitizeChannelIdeaStrings(result.SuggestedContentIdeas, pillarObjects, videos, identity, 10)
-	result.SuggestedShortClipIdeas = sanitizeChannelIdeaStrings(result.SuggestedShortClipIdeas, pillarObjects, videos, identity, 10)
+	result.Opportunities = sanitizeChannelOpportunityStrings(result.Opportunities, pillarObjects, performanceSample, identity)
+	result.SuggestedContentIdeas = sanitizeChannelIdeaStrings(result.SuggestedContentIdeas, pillarObjects, performanceSample, identity, 10)
+	result.SuggestedShortClipIdeas = sanitizeChannelIdeaStrings(result.SuggestedShortClipIdeas, pillarObjects, performanceSample, identity, 10)
 	result.CtaContext.PublicDataLimitations = result.Limitations
 	return result, nil
 }
@@ -889,6 +904,27 @@ func enrichChannelVideos(videos []ChannelVideoSummary, now func() time.Time) []C
 		out[i] = video
 	}
 	return out
+}
+
+func recentUploadSample(videos []ChannelVideoSummary, limit int) []ChannelVideoSummary {
+	dated := []ChannelVideoSummary{}
+	seen := map[string]bool{}
+	for _, video := range videos {
+		if video.VideoID == "" || seen[video.VideoID] || video.PublishedAt == "" {
+			continue
+		}
+		if _, err := time.Parse(time.RFC3339, video.PublishedAt); err != nil {
+			continue
+		}
+		seen[video.VideoID] = true
+		dated = append(dated, video)
+	}
+	sort.Slice(dated, func(i, j int) bool { return dated[i].PublishedAt > dated[j].PublishedAt })
+	if limit > 0 && len(dated) > limit {
+		dated = dated[:limit]
+	}
+	sort.Slice(dated, func(i, j int) bool { return dated[i].PublishedAt < dated[j].PublishedAt })
+	return dated
 }
 
 func assignVideoPillars(videos []ChannelVideoSummary, pillars []ChannelContentPillar) {
@@ -1006,6 +1042,9 @@ func buildChannelPillars(kw KeywordIntelligence, videos []ChannelVideoSummary, i
 		if len(matches) < 2 {
 			continue
 		}
+		if !durableChannelPillar(name, matches, total) {
+			continue
+		}
 		views := videoViewFloats(matches)
 		median := medianFloatPtr(views)
 		strongest := strongestVideo(matches, "views_per_day")
@@ -1110,7 +1149,7 @@ func channelThematicPillarSeeds(videos []ChannelVideoSummary) []string {
 		add("smartphone reviews", hasPhone && hasReview)
 		add("camera comparisons", strings.Contains(lower, "camera") && containsAnyNormalized(lower, []string{"test", "comparison", "versus", "vs", "review"}))
 		add("Apple product reviews", containsAnyNormalized(lower, []string{"iphone", "ios", "macbook", "apple", "airpod"}) && containsAnyNormalized(lower, []string{"review", "hands on", "feature", "test"}))
-		add("electric vehicles", containsAnyNormalized(lower, []string{"electric car", "electric vehicle", "tesla", "robotaxi", "ev"}))
+		add("electric vehicles", containsAnyNormalized(lower, []string{"electric car", "electric vehicle", "tesla", "robotaxi", "ev"}) && containsAnyNormalized(lower, []string{"review", "test", "explained", "tech", "driving", "drive", "autonomous", "vehicle", "car"}))
 		add("AI and computer science", containsAnyNormalized(lower, []string{"ai", "algorithm", "quantum", "turing", "computer", "coding", "code"}))
 		add("AI creator workflows", containsAnyNormalized(lower, []string{"ai", "automation", "workflow", "system"}) && containsAnyNormalized(lower, []string{"creator", "youtube", "video"}))
 		add("programming concepts", containsAnyNormalized(lower, []string{"code", "coding", "programming", "compiler", "database"}))
@@ -1200,7 +1239,7 @@ func validChannelTopicPhrase(phrase string, titleTokens map[string]bool, identit
 
 func recognizedChannelPillar(phrase string) bool {
 	switch normalizeTopicPhrase(phrase) {
-	case "smartphone review", "camera comparison", "apple product review", "electric vehicle", "ai and computer science", "ai creator workflow", "programming concept", "challenge video", "large scale giveaway":
+	case "smartphone review", "smartphone reviews", "camera comparison", "camera comparisons", "apple product review", "apple product reviews", "electric vehicle", "electric vehicles", "ai and computer science", "ai creator workflow", "ai creator workflows", "programming concept", "programming concepts", "challenge video", "challenge videos", "large scale giveaway", "large scale giveaways":
 		return true
 	default:
 		return false
@@ -1279,26 +1318,62 @@ func channelPhraseMatchesVideo(phrase string, video ChannelVideoSummary) bool {
 	normalized := normalizeTopicPhrase(phrase)
 	title := normalizeTopicPhrase(video.Title)
 	switch normalized {
-	case "smartphone review":
+	case "smartphone review", "smartphone reviews":
 		return containsAnyNormalized(title, []string{"phone", "iphone", "android", "smartphone"}) && containsAnyNormalized(title, []string{"review", "test", "hands on", "camera"})
-	case "camera comparison":
+	case "camera comparison", "camera comparisons":
 		return strings.Contains(title, "camera") && containsAnyNormalized(title, []string{"test", "comparison", "versus", "vs", "review"})
-	case "apple product review":
+	case "apple product review", "apple product reviews":
 		return containsAnyNormalized(title, []string{"iphone", "ios", "macbook", "apple", "airpod"}) && containsAnyNormalized(title, []string{"review", "hands on", "feature", "test"})
-	case "electric vehicle":
-		return containsAnyNormalized(title, []string{"electric car", "electric vehicle", "tesla", "robotaxi", "ev"})
+	case "electric vehicle", "electric vehicles":
+		return containsAnyNormalized(title, []string{"electric car", "electric vehicle", "tesla", "robotaxi", "ev"}) && containsAnyNormalized(title, []string{"review", "test", "explained", "tech", "driving", "drive", "autonomous", "vehicle", "car"})
 	case "ai and computer science":
 		return containsAnyNormalized(title, []string{"ai", "algorithm", "quantum", "turing", "computer", "coding", "code"})
-	case "ai creator workflow":
+	case "ai creator workflow", "ai creator workflows":
 		return containsAnyNormalized(title, []string{"ai", "automation", "workflow", "system"}) && containsAnyNormalized(title, []string{"creator", "youtube", "video"})
-	case "programming concept":
+	case "programming concept", "programming concepts":
 		return containsAnyNormalized(title, []string{"code", "coding", "programming", "compiler", "database"})
-	case "challenge video":
+	case "challenge video", "challenge videos":
 		return containsAnyNormalized(title, []string{"challenge", "last to", "last leave", "circle", "wins", "survive", "survival"})
-	case "large scale giveaway":
+	case "large scale giveaway", "large scale giveaways":
 		return containsAnyNormalized(title, []string{"money", "giveaway", "prize", "win", "wins"}) && containsAnyNormalized(title, []string{"challenge", "last", "circle", "people", "days"})
 	default:
 		return channelPhraseSupportedByTitle(phrase, tokenSet(tokenizeUseful(video.Title, map[string]bool{})))
+	}
+}
+
+func durableChannelPillar(name string, matches []ChannelVideoSummary, total int) bool {
+	if len(matches) < 2 || total <= 0 {
+		return false
+	}
+	dates := map[string]bool{}
+	for _, video := range matches {
+		if t, err := time.Parse(time.RFC3339, video.PublishedAt); err == nil {
+			dates[t.Format("2006-01-02")] = true
+		}
+	}
+	if len(dates) < 2 {
+		return false
+	}
+	share := float64(len(matches)) / float64(total)
+	normalized := normalizeChannelPillarName(name)
+	switch normalized {
+	case "challenge videos", "large scale giveaways":
+		return len(matches) >= 2 && share >= 0.06
+	case "electric vehicles":
+		if len(matches) < 3 || share < 0.10 {
+			return false
+		}
+		editorial := 0
+		for _, video := range matches {
+			title := normalizeTopicPhrase(video.Title)
+			if containsAnyNormalized(title, []string{"review", "test", "explained", "tech", "driving", "drive", "autonomous", "vehicle", "car"}) &&
+				!containsAnyNormalized(title, []string{"giveaway", "wins", "prize", "challenge"}) {
+				editorial++
+			}
+		}
+		return editorial >= 2
+	default:
+		return len(matches) >= 2 && share >= 0.06
 	}
 }
 
@@ -1330,9 +1405,9 @@ func pillarRecommendation(name, status string) string {
 	}
 }
 
-func buildChannelScoreModel(channel youtubeChannelItem, videos []ChannelVideoSummary, pillars []ChannelContentPillar, kw KeywordIntelligence, niche NicheAnalysis, now func() time.Time) ([]ScoreDimension, ScoreDimension, ScoreDimension) {
-	metrics := channelRawMetrics(videos, channel.Statistics.SubscriberCount, now)
-	sampleSize := len(videoViewFloats(videos))
+func buildChannelScoreModel(channel youtubeChannelItem, recentUploads, performanceSample []ChannelVideoSummary, pillars []ChannelContentPillar, kw KeywordIntelligence, niche NicheAnalysis, now func() time.Time) ([]ScoreDimension, ScoreDimension, ScoreDimension) {
+	metrics := channelRawMetrics(recentUploads, performanceSample, channel.Statistics.SubscriberCount, now)
+	sampleSize := len(videoViewFloats(performanceSample))
 	topicClarity := clampInt(25 + len(pillars)*10 + int(niche.Confidence*14))
 	if len(kw.PrimaryKeywords) >= 4 {
 		topicClarity += 8
@@ -1340,12 +1415,12 @@ func buildChannelScoreModel(channel youtubeChannelItem, videos []ChannelVideoSum
 	if len(pillars) == 0 {
 		topicClarity = minInt(topicClarity, 42)
 	}
-	packaging := scorePackaging(videos)
+	packaging := scorePackaging(performanceSample)
 	consistency := scoreConsistency(metrics.uploadsPerMonth, metrics.daysSinceLastUpload)
-	repeatability := scoreRepeatability(videos, pillars)
-	momentum := scoreMomentum(videos)
-	formatEfficiency := scoreFormatEfficiency(videos)
-	monetisation := monetisationPotentialScore(niche, primaryChannelFormat(videos), parseUintPtr(channel.Statistics.ViewCount))
+	repeatability := scoreRepeatability(performanceSample, pillars)
+	momentum := scoreMomentum(recentUploads)
+	formatEfficiency := scoreFormatEfficiency(performanceSample)
+	monetisation := monetisationPotentialScore(niche, primaryChannelFormat(performanceSample), parseUintPtr(channel.Statistics.ViewCount))
 	evidence := 35
 	if sampleSize >= 8 {
 		evidence += 22
@@ -1356,17 +1431,17 @@ func buildChannelScoreModel(channel youtubeChannelItem, videos []ChannelVideoSum
 	if channel.Statistics.SubscriberCount != "" {
 		evidence += 8
 	}
-	if visibleEngagementCount(videos) >= 6 {
+	if visibleEngagementCount(performanceSample) >= 6 {
 		evidence += 10
 	}
 	evidence = clampInt(evidence)
 	dims := []ScoreDimension{
 		scoreDimension("topic_clarity", "Topic clarity", topicClarity, "Measures whether titles, channel description, topics, and repeated phrases point to a coherent creator lane.", firstPhrase(kw.PrimaryKeywords)),
 		scoreDimension("packaging_strength", "Packaging strength", packaging, "Title structure score from specificity, numbers, questions, repeated winning forms, and avoidable repetition. Thumbnail claims are limited to URL availability.", ""),
-		scoreDimension("publishing_consistency", "Publishing consistency", consistency, "Uses dated public uploads in the sampled set: uploads per month and days since last public upload.", fmt.Sprintf("%.1f uploads/month", metrics.uploadsPerMonth)),
+		scoreDimension("publishing_consistency", "Publishing consistency", consistency, "Uses only the recent upload sample: median interval and days since last public upload.", metrics.cadenceEvidence),
 		scoreDimension("content_repeatability", "Content repeatability", repeatability, "Rewards repeatable pillars with multiple uploads and resists one-off outlier dependence.", fmt.Sprintf("%d pillars", len(pillars))),
-		scoreDimension("format_efficiency", "Format efficiency", formatEfficiency, "Compares median views per detected format only when duration classification is available.", primaryChannelFormat(videos)),
-		scoreDimension("recent_momentum", "Recent momentum", momentum, "Uses recent views-per-day and share of sampled uploads above the sample median. It does not infer subscriber growth history.", ""),
+		scoreDimension("format_efficiency", "Format efficiency", formatEfficiency, "Compares median views per detected format only when duration classification is available.", primaryChannelFormat(performanceSample)),
+		scoreDimension("recent_momentum", "Recent momentum", momentum, "Uses only recent-upload views per day and share of recent uploads above their median. It does not infer subscriber growth history.", ""),
 		scoreDimension("monetisation_potential", "Monetisation potential", monetisation, "Estimated from public views, detected format, and broad niche RPM assumptions. It is not actual revenue.", niche.PrimaryNiche),
 		scoreDimension("evidence_quality", "Evidence quality", evidence, "Caps the overall score when public evidence is incomplete or visible engagement counts are hidden.", fmt.Sprintf("%d sampled videos", sampleSize)),
 	}
@@ -1395,10 +1470,12 @@ type channelMetrics struct {
 	likesPer1000        *float64
 	commentsPer1000     *float64
 	subscriberViewRatio *float64
+	cadenceAvailable    bool
+	cadenceEvidence     string
 }
 
-func channelRawMetrics(videos []ChannelVideoSummary, subscribersRaw string, now func() time.Time) channelMetrics {
-	views := videoViewFloats(videos)
+func channelRawMetrics(recentUploads, performanceSample []ChannelVideoSummary, subscribersRaw string, now func() time.Time) channelMetrics {
+	views := videoViewFloats(performanceSample)
 	metrics := channelMetrics{medianViews: medianFloat(views), avgViews: averageFloat(views)}
 	if len(views) > 0 {
 		above := 0
@@ -1409,11 +1486,14 @@ func channelRawMetrics(videos []ChannelVideoSummary, subscribersRaw string, now 
 		}
 		metrics.aboveMedianShare = float64(above) / float64(len(views))
 	}
-	likesRate, commentsRate := engagementRates(videos)
+	likesRate, commentsRate := engagementRates(performanceSample)
 	metrics.likesPer1000 = likesRate
 	metrics.commentsPer1000 = commentsRate
-	metrics.medianDuration = medianDurationSeconds(videos)
-	metrics.uploadsPerMonth, metrics.daysSinceLastUpload = cadenceMetrics(videos, now)
+	metrics.medianDuration = medianDurationSeconds(performanceSample)
+	cadence := sampledCadenceSummary(recentUploads, now)
+	metrics.uploadsPerMonth, metrics.daysSinceLastUpload = cadence.UploadsPerMonth, cadence.DaysSinceLast
+	metrics.cadenceAvailable = cadence.Available
+	metrics.cadenceEvidence = cadence.Methodology
 	if subs := parseUintPtr(subscribersRaw); subs != nil && *subs > 0 && metrics.medianViews > 0 {
 		ratio := metrics.medianViews / float64(*subs)
 		metrics.subscriberViewRatio = &ratio
@@ -1421,8 +1501,8 @@ func channelRawMetrics(videos []ChannelVideoSummary, subscribersRaw string, now 
 	return metrics
 }
 
-func channelPerformanceMetrics(videos []ChannelVideoSummary, subscribersRaw string, now func() time.Time) []PerformanceMetric {
-	m := channelRawMetrics(videos, subscribersRaw, now)
+func channelPerformanceMetrics(recentUploads, performanceSample []ChannelVideoSummary, subscribersRaw string, now func() time.Time) []PerformanceMetric {
+	m := channelRawMetrics(recentUploads, performanceSample, subscribersRaw, now)
 	out := []PerformanceMetric{}
 	if m.avgViews > 0 {
 		out = append(out, PerformanceMetric{ID: "average_views", Label: "Average views", Value: formatFloat(m.avgViews, 0), RawValue: m.avgViews, Score: scoreViewsPerDay(m.avgViews / 30), Explanation: "Raw metric from sampled public videos. Median should be preferred when outliers dominate."})
@@ -1437,7 +1517,9 @@ func channelPerformanceMetrics(videos []ChannelVideoSummary, subscribersRaw stri
 		out = append(out, PerformanceMetric{ID: "comments_per_1000_views", Label: "Comments per 1,000 views", Value: formatFloat(*m.commentsPer1000, 1), RawValue: *m.commentsPer1000, Score: scoreRate(*m.commentsPer1000, 0.5, 10), Explanation: "Visible comments per 1,000 public views. Hidden comments are unavailable, not zero."})
 	}
 	if m.uploadsPerMonth > 0 {
-		out = append(out, PerformanceMetric{ID: "uploads_per_month", Label: "Uploads per month", Value: formatFloat(m.uploadsPerMonth, 1), RawValue: m.uploadsPerMonth, Score: scoreConsistency(m.uploadsPerMonth, m.daysSinceLastUpload), Explanation: "Dated public uploads per month within the sampled set."})
+		out = append(out, PerformanceMetric{ID: "uploads_per_month", Label: "Uploads per month", Value: formatFloat(m.uploadsPerMonth, 1), RawValue: m.uploadsPerMonth, Score: scoreConsistency(m.uploadsPerMonth, m.daysSinceLastUpload), Explanation: "Median interval from the recent upload sample only; historical top videos are excluded."})
+	} else if !m.cadenceAvailable {
+		out = append(out, PerformanceMetric{ID: "uploads_per_month", Label: "Uploads per month", Value: "Insufficient recent upload data", RawValue: 0, Score: 25, Explanation: "At least two dated recent uploads are required for cadence."})
 	}
 	if m.medianDuration > 0 {
 		out = append(out, PerformanceMetric{ID: "median_duration", Label: "Median duration", Value: formatDurationSeconds(int(m.medianDuration)), RawValue: m.medianDuration, Score: 50, Explanation: "Raw median duration from public contentDetails. It is not normalized as a quality score."})
@@ -1451,33 +1533,25 @@ func channelPerformanceMetrics(videos []ChannelVideoSummary, subscribersRaw stri
 	return out
 }
 
-func estimateChannelRevenue(channel youtubeChannelItem, videos []ChannelVideoSummary, niche NicheAnalysis) RevenueEstimate {
+func estimateChannelRevenue(videos []ChannelVideoSummary, niche NicheAnalysis) RevenueEstimate {
 	format := primaryChannelFormat(videos)
 	rpmLow, rpmHigh := rpmRange(niche, format)
 	if format == "short_form" {
 		rpmLow *= 0.12
 		rpmHigh *= 0.18
 	}
-	totalViews := parseUintPtr(channel.Statistics.ViewCount)
-	publicViews := uint64(0)
-	if totalViews != nil {
-		publicViews = *totalViews
-	}
-	recentViews := uint64(0)
+	sampledViews := uint64(0)
 	for _, video := range videos {
 		if video.Views != nil {
-			recentViews += *video.Views
+			sampledViews += *video.Views
 		}
 	}
-	sampledLow := float64(recentViews) / 1000 * rpmLow
-	sampledHigh := float64(recentViews) / 1000 * rpmHigh
-	months := maxFloat(1, cadenceObservationMonths(videos))
-	runRateLow := sampledLow / months
-	runRateHigh := sampledHigh / months
+	sampledLow := float64(sampledViews) / 1000 * rpmLow
+	sampledHigh := float64(sampledViews) / 1000 * rpmHigh
 	low := sampledLow
 	high := sampledHigh
 	confidence := 38
-	if recentViews > 0 {
+	if sampledViews > 0 {
 		confidence += 12
 	}
 	if len(videos) >= 10 {
@@ -1492,7 +1566,7 @@ func estimateChannelRevenue(channel youtubeChannelItem, videos []ChannelVideoSum
 	confidence = clampInt(confidence)
 	return RevenueEstimate{
 		Source:                     "public_estimate",
-		ModelType:                  "sampled_recent_public_views_x_estimated_rpm_range",
+		ModelType:                  "sampled_video_views_x_estimated_rpm_range",
 		Currency:                   "USD",
 		Low:                        roundMoney(low),
 		Midpoint:                   roundMoney((low + high) / 2),
@@ -1503,16 +1577,69 @@ func estimateChannelRevenue(channel youtubeChannelItem, videos []ChannelVideoSum
 		EstimatedRevenuePer1000:    fmt.Sprintf("$%.2f–$%.2f estimated RPM", rpmLow, rpmHigh),
 		Confidence:                 ratingForScore(confidence),
 		ConfidenceScore:            confidence,
-		CalculationBasis:           fmt.Sprintf("Primary range uses %s sampled public views multiplied by a broad estimated RPM range. Approximate current monthly run-rate from the sampled window is %s. The rough lifetime public-view ad revenue proxy is secondary and low confidence because historical format mix is unknown; visible channel lifetime views are %s.", formatUint(recentViews), formatMoneyRange(runRateLow, runRateHigh), formatUint(publicViews)),
-		Assumptions:                []string{"Only sampled public views are used for the primary range.", "RPM varies by audience geography, ad fill, topic, format, seasonality, and monetisation eligibility.", "A lifetime public-view proxy is not actual earnings and is de-emphasized when historical format mix is unknown."},
+		CalculationBasis:           fmt.Sprintf("Uses %s public views across the performance sample multiplied by a broad estimated RPM range. This is a sampled-video advertising proxy, not recent monthly revenue or actual YouTube revenue.", formatUint(sampledViews)),
+		Assumptions:                []string{"Only videos in the performance sample are included.", "RPM varies by audience geography, ad fill, topic, format, seasonality, and monetisation eligibility.", "Historical top-video views may be included here for performance context, but they are excluded from current cadence and monthly run-rate."},
 		Exclusions:                 []string{"Actual YouTube Analytics revenue", "Sponsorships", "Affiliate revenue", "Memberships", "Merchandise", "Courses", "Private, deleted, hidden, or unlisted videos", "Invalid traffic and Premium adjustments"},
 		MonetisationEligibility:    "Unknown from public metadata",
 		ActualAnalyticsUnavailable: true,
 	}
 }
 
-func buildChannelCharts(videos []ChannelVideoSummary, pillars []ChannelContentPillar) ChannelCharts {
-	sorted := append([]ChannelVideoSummary{}, videos...)
+func estimateChannelMonthlyRunRate(recentUploads []ChannelVideoSummary, niche NicheAnalysis, now func() time.Time) RevenueEstimate {
+	format := primaryChannelFormat(recentUploads)
+	rpmLow, rpmHigh := rpmRange(niche, format)
+	if format == "short_form" {
+		rpmLow *= 0.12
+		rpmHigh *= 0.18
+	}
+	recentViews := uint64(0)
+	for _, video := range recentUploads {
+		if video.Views != nil {
+			recentViews += *video.Views
+		}
+	}
+	cadence := sampledCadenceSummary(recentUploads, now)
+	months := maxFloat(1, cadence.SpanDays/30.4375)
+	low := float64(recentViews) / 1000 * rpmLow / months
+	high := float64(recentViews) / 1000 * rpmHigh / months
+	confidence := 30
+	if cadence.Available {
+		confidence += 16
+	}
+	if len(recentUploads) >= 8 {
+		confidence += 10
+	}
+	if recentViews > 0 {
+		confidence += 10
+	}
+	confidence = clampInt(confidence)
+	basis := "Insufficient recent upload data for a current monthly run-rate."
+	if recentViews > 0 {
+		basis = fmt.Sprintf("Uses %s public views from the recent upload sample over a %.1f-month observation window, multiplied by a broad estimated RPM range. Historical top-video views are excluded. This is not actual YouTube revenue.", formatUint(recentViews), months)
+	}
+	return RevenueEstimate{
+		Source:                     "public_estimate",
+		ModelType:                  "recent_upload_views_monthly_run_rate_x_estimated_rpm_range",
+		Currency:                   "USD",
+		Low:                        roundMoney(low),
+		Midpoint:                   roundMoney((low + high) / 2),
+		High:                       roundMoney(high),
+		FormattedRange:             formatMoneyRange(low, high),
+		RPMLow:                     roundMoney(rpmLow),
+		RPMHigh:                    roundMoney(rpmHigh),
+		EstimatedRevenuePer1000:    fmt.Sprintf("$%.2f–$%.2f estimated RPM", rpmLow, rpmHigh),
+		Confidence:                 ratingForScore(confidence),
+		ConfidenceScore:            confidence,
+		CalculationBasis:           basis,
+		Assumptions:                []string{"Only recent-upload sample views are included.", "Observation window comes from recent upload dates only.", "RPM is estimated from broad topic and format assumptions."},
+		Exclusions:                 []string{"Actual YouTube Analytics revenue", "Historical top-video views", "Sponsorships", "Affiliate revenue", "Memberships", "Merchandise", "Private, deleted, hidden, or unlisted videos"},
+		MonetisationEligibility:    "Unknown from public metadata",
+		ActualAnalyticsUnavailable: true,
+	}
+}
+
+func buildChannelCharts(recentUploads, performanceSample []ChannelVideoSummary, pillars []ChannelContentPillar) ChannelCharts {
+	sorted := append([]ChannelVideoSummary{}, recentUploads...)
 	sort.Slice(sorted, func(i, j int) bool { return sorted[i].PublishedAt < sorted[j].PublishedAt })
 	perf := []ChannelChartPoint{}
 	for _, video := range sorted {
@@ -1522,13 +1649,13 @@ func buildChannelCharts(videos []ChannelVideoSummary, pillars []ChannelContentPi
 		perf = append(perf, ChannelChartPoint{Label: formatPublishedDate(video.PublishedAt), Date: video.PublishedAt, Title: video.Title, Views: video.Views, Value: float64(*video.Views), Duration: formatISO8601Duration(video.Duration), Format: video.Format, Pillar: video.Pillar, VideoID: video.VideoID})
 	}
 	dist := []ChannelChartPoint{}
-	views := videoViewFloats(videos)
+	views := videoViewFloats(performanceSample)
 	sort.Float64s(views)
 	for i, v := range views {
 		dist = append(dist, ChannelChartPoint{Label: fmt.Sprintf("Rank %d by views", i+1), Value: v, Description: "Individual sampled video views sorted ascending"})
 	}
 	cadenceCounts := map[string]int{}
-	for _, video := range videos {
+	for _, video := range recentUploads {
 		if t, err := time.Parse(time.RFC3339, video.PublishedAt); err == nil {
 			key := t.Format("Jan 2006")
 			cadenceCounts[key]++
@@ -1547,7 +1674,7 @@ func buildChannelCharts(videos []ChannelVideoSummary, pillars []ChannelContentPi
 		}
 	}
 	formatMedian := map[string][]float64{}
-	for _, video := range videos {
+	for _, video := range performanceSample {
 		if video.Views != nil && video.Format != "" && video.Format != "unknown" {
 			formatMedian[video.Format] = append(formatMedian[video.Format], float64(*video.Views))
 		}
@@ -1698,20 +1825,29 @@ func buildChannelGrowthOpportunities(niche NicheAnalysis, pillars []ChannelConte
 	return out
 }
 
-func buildChannelContentPlan(videos []ChannelVideoSummary, pillars []ChannelContentPillar, opps []ChannelOpportunity, niche NicheAnalysis, now func() time.Time) []ChannelPlanWeek {
-	uploadsPerMonth, _ := cadenceMetrics(videos, now)
-	recommendedUploads := recommendedMonthlyUploads(uploadsPerMonth, videos)
+func buildChannelContentPlan(recentUploads, performanceSample []ChannelVideoSummary, pillars []ChannelContentPillar, opps []ChannelOpportunity, niche NicheAnalysis, now func() time.Time) []ChannelPlanWeek {
+	cadence := sampledCadenceSummary(recentUploads, now)
+	recommendedUploads := recommendedMonthlyUploads(cadence, performanceSample)
 	core := firstPhraseFromPillars(pillars)
 	if core == "" {
 		core = "validated topic"
+	}
+	types := []string{"Publishing week", "Research/preparation week", "Packaging test week", "Review/repurpose week"}
+	themes := []string{"Proven-topic follow-up", "Research adjacent angles", "Packaging test", "Review and repurpose"}
+	target := "Insufficient recent upload data; use the next 30 days for preparation until cadence is clear."
+	if cadence.Available {
+		target = fmt.Sprintf("Recommended publishing target: %d upload%s in the next 30 days.", recommendedUploads, pluralSuffix(recommendedUploads))
 	}
 	weeks := []ChannelPlanWeek{}
 	usedTitles := map[string]bool{}
 	uploadIndex := 0
 	for i := 1; i <= 4; i++ {
-		theme := []string{"Proven-topic follow-up", "Packaging test", "Adjacent topic expansion", "Review and repurpose"}[i-1]
+		theme := themes[i-1]
+		weekType := types[i-1]
 		ideas := []ChannelPlanIdea{}
 		if uploadIndex < recommendedUploads {
+			theme = "Proven-topic follow-up"
+			weekType = "Publishing week"
 			opp := ChannelOpportunity{RecommendedFormat: "Long-form", Title: theme}
 			if len(opps) > 0 {
 				opp = opps[uploadIndex%len(opps)]
@@ -1737,21 +1873,25 @@ func buildChannelContentPlan(videos []ChannelVideoSummary, pillars []ChannelCont
 			uploadIndex++
 		} else {
 			ideas = append(ideas, ChannelPlanIdea{
-				WorkingTitle:      []string{"Package the next upload", "Research adjacent angles", "Repurpose the strongest upload", "Review performance and decide the next test"}[i-1],
+				WorkingTitle:      []string{"Package the next upload", "Research adjacent angles", "Run one title and thumbnail test", "Review performance and decide the next test"}[i-1],
 				ContentPillar:     core,
 				Format:            "Preparation",
-				Objective:         theme,
+				Objective:         weekType,
 				Evidence:          "Cadence does not support inventing an extra upload this week.",
 				HookDirection:     "Use this week to improve the next publishable concept instead of forcing volume.",
 				RecommendedTiming: fmt.Sprintf("Week %d", i),
 			})
 		}
-		weeks = append(weeks, ChannelPlanWeek{Week: i, Theme: theme, Cadence: fmt.Sprintf("%d recommended upload(s) in 30 days", recommendedUploads), Ideas: ideas, Rationale: "Cadence is based on recent public publishing volume; preparation weeks are used when the sample does not support weekly uploads."})
+		weeks = append(weeks, ChannelPlanWeek{Week: i, Theme: theme, Cadence: target, WeekType: weekType, Ideas: ideas, Rationale: "Cadence is based on recent public uploads only; preparation weeks are not counted as upload recommendations."})
 	}
 	return weeks
 }
 
-func recommendedMonthlyUploads(uploadsPerMonth float64, videos []ChannelVideoSummary) int {
+func recommendedMonthlyUploads(cadence sampledCadence, videos []ChannelVideoSummary) int {
+	if !cadence.Available {
+		return 0
+	}
+	uploadsPerMonth := cadence.UploadsPerMonth
 	if primaryChannelFormat(videos) == "short_form" && uploadsPerMonth >= 12 {
 		return minInt(12, int(uploadsPerMonth+0.5))
 	}
@@ -1767,6 +1907,13 @@ func recommendedMonthlyUploads(uploadsPerMonth float64, videos []ChannelVideoSum
 	default:
 		return 4
 	}
+}
+
+func pluralSuffix(n int) string {
+	if n == 1 {
+		return ""
+	}
+	return "s"
 }
 
 func buildChannelCTAContext(channelID, title, canonical string, pillars []ChannelContentPillar, opps []ChannelOpportunity, metrics []PerformanceMetric, limitations []string) ChannelCTAContext {
@@ -1960,34 +2107,46 @@ func topNChannelOpportunities(values []ChannelOpportunity, n int) []ChannelOppor
 	return out
 }
 
-func buildChannelAnalysisDetails(videos []ChannelVideoSummary, channel youtubeChannelItem, now func() time.Time) ChannelAnalysisDetails {
+func buildChannelAnalysisDetails(recentUploads, performanceSample []ChannelVideoSummary, channel youtubeChannelItem, now func() time.Time) ChannelAnalysisDetails {
 	hidden := []string{}
 	if channel.Statistics.SubscriberCount == "" {
 		hidden = append(hidden, "Subscriber count is hidden or unavailable.")
 	}
-	if visibleLikesCount(videos) < len(videos) {
+	if visibleLikesCount(performanceSample) < len(performanceSample) {
 		hidden = append(hidden, "Some like counts are hidden or unavailable and are not treated as zero.")
 	}
-	if visibleCommentsCount(videos) < len(videos) {
+	if visibleCommentsCount(performanceSample) < len(performanceSample) {
 		hidden = append(hidden, "Some comment counts are hidden or unavailable and are not treated as zero.")
 	}
-	start, end := sampleRange(videos)
-	cadence := sampledCadenceSummary(videos, now)
+	recentStart, recentEnd := sampleRange(recentUploads)
+	performanceStart, performanceEnd := sampleRange(performanceSample)
+	cadence := sampledCadenceSummary(recentUploads, now)
+	recommended := recommendedMonthlyUploads(cadence, performanceSample)
 	return ChannelAnalysisDetails{
-		SampledVideoCount:    len(videos),
-		SampleStart:          start,
-		SampleEnd:            end,
-		SampleDateSpanDays:   round1(cadence.SpanDays),
-		UploadsPerMonth:      round1(cadence.UploadsPerMonth),
-		UploadsPerWeek:       round1(cadence.UploadsPerWeek),
-		CadenceConfidence:    cadence.Confidence,
-		ProviderAvailability: "youtube_data_api_public_metadata",
-		HiddenMetricNotes:    hidden,
-		ScoringMethodology:   []string{"Channel opportunity is bounded 0-100.", "Weights: topic clarity, packaging, consistency, repeatability, format efficiency, momentum, monetisation potential, and evidence quality.", "Evidence quality caps low-sample or hidden-stat analyses."},
-		TopicMethodology:     []string{"Pillars are derived from sampled upload titles first, with channel identity, handle, creator-name variants, biography fragments, category-only terms, and description-only phrases removed.", "Rendered pillars require title evidence, supporting uploads, positive upload share, median views from supporting videos, and shared phrase-quality validation.", "OpenAI-enhanced phrases cannot bypass deterministic pillar validation."},
-		RevenueMethodology:   []string{"Primary range uses sampled recent public views multiplied by broad estimated RPM ranges.", "The rough lifetime public-view ad revenue proxy is secondary and low confidence when historical format mix is unknown.", "Actual YouTube Analytics and non-ad revenue are excluded."},
-		ClassificationRules:  []string{"Short-form: duration up to 180 seconds.", "Long-form: duration above 180 seconds.", "Livestream only when duration/source signals support it; otherwise unknown."},
-		AnalysisTimestamp:    now().Format(time.RFC3339),
+		SampledVideoCount:            len(performanceSample),
+		RecentSampleCount:            len(recentUploads),
+		PerformanceSampleCount:       len(performanceSample),
+		SampleStart:                  performanceStart,
+		SampleEnd:                    performanceEnd,
+		RecentSampleStart:            recentStart,
+		RecentSampleEnd:              recentEnd,
+		PerformanceSampleStart:       performanceStart,
+		PerformanceSampleEnd:         performanceEnd,
+		SampleDateSpanDays:           round1(cadence.SpanDays),
+		UploadsPerMonth:              round1(cadence.UploadsPerMonth),
+		UploadsPerWeek:               round1(cadence.UploadsPerWeek),
+		MedianUploadIntervalDays:     round1(cadence.MedianIntervalDays),
+		CadenceAvailable:             cadence.Available,
+		CadenceMethodology:           cadence.Methodology,
+		RecommendedUploadsNext30Days: recommended,
+		CadenceConfidence:            cadence.Confidence,
+		ProviderAvailability:         "Public YouTube metadata available",
+		HiddenMetricNotes:            hidden,
+		ScoringMethodology:           []string{"Channel opportunity is bounded 0-100.", "Weights: topic clarity, packaging, consistency, repeatability, format efficiency, momentum, monetisation potential, and evidence quality.", "Evidence quality caps low-sample or hidden-stat analyses."},
+		TopicMethodology:             []string{"Pillars are derived from repeated public title evidence, with channel identity, handle, creator-name variants, biography fragments, category-only terms, and description-only phrases removed.", "Rendered pillars require multiple supporting uploads, separate publishing dates, positive upload share, median views from supporting videos, and phrase-quality validation.", "A subject/object that appears incidentally does not qualify unless it recurs as an editorial theme or format."},
+		RevenueMethodology:           []string{"Estimated ad revenue across sampled videos uses the performance sample and broad estimated RPM ranges.", "Current estimated monthly run-rate uses only the recent upload sample and excludes historical top-video views.", "Both figures are public metadata proxies, not actual YouTube revenue."},
+		ClassificationRules:          []string{"Short-form: duration up to 180 seconds.", "Long-form: duration above 180 seconds.", "Livestream only when duration/source signals support it; otherwise unknown."},
+		AnalysisTimestamp:            now().Format(time.RFC3339),
 	}
 }
 
@@ -2097,52 +2256,80 @@ func cadenceMetrics(videos []ChannelVideoSummary, now func() time.Time) (float64
 }
 
 type sampledCadence struct {
-	Count           int
-	Oldest          time.Time
-	Newest          time.Time
-	SpanDays        float64
-	UploadsPerMonth float64
-	UploadsPerWeek  float64
-	DaysSinceLast   float64
-	Confidence      string
+	Count              int
+	Oldest             time.Time
+	Newest             time.Time
+	SpanDays           float64
+	MedianIntervalDays float64
+	UploadsPerMonth    float64
+	UploadsPerWeek     float64
+	DaysSinceLast      float64
+	Available          bool
+	Confidence         string
+	Methodology        string
 }
 
 func sampledCadenceSummary(videos []ChannelVideoSummary, now func() time.Time) sampledCadence {
-	var newest, oldest time.Time
-	count := 0
+	dates := []time.Time{}
 	for _, video := range videos {
 		t, err := time.Parse(time.RFC3339, video.PublishedAt)
 		if err != nil {
 			continue
 		}
-		count++
-		if newest.IsZero() || t.After(newest) {
-			newest = t
-		}
-		if oldest.IsZero() || t.Before(oldest) {
-			oldest = t
-		}
+		dates = append(dates, t)
 	}
+	sort.Slice(dates, func(i, j int) bool { return dates[i].Before(dates[j]) })
+	count := len(dates)
 	if count == 0 {
-		return sampledCadence{}
+		return sampledCadence{Confidence: "Unavailable", Methodology: "Insufficient recent upload data: no dated recent public uploads were available."}
 	}
+	oldest := dates[0]
+	newest := dates[count-1]
 	spanDays := newest.Sub(oldest).Hours() / 24
-	observationDays := spanDays
-	if observationDays < 30 {
-		observationDays = 30
-	}
-	uploadsPerMonth := float64(count) / (observationDays / 30)
 	daysSinceLast := now().Sub(newest).Hours() / 24
 	if daysSinceLast < 0 {
 		daysSinceLast = 0
 	}
+	if count < 2 {
+		return sampledCadence{Count: count, Oldest: oldest, Newest: newest, SpanDays: spanDays, DaysSinceLast: daysSinceLast, Confidence: "Unavailable", Methodology: "Insufficient recent upload data: at least two dated recent uploads are required for cadence."}
+	}
+	intervals := []float64{}
+	for i := 1; i < len(dates); i++ {
+		days := dates[i].Sub(dates[i-1]).Hours() / 24
+		if days > 0 {
+			intervals = append(intervals, days)
+		}
+	}
+	if len(intervals) == 0 {
+		return sampledCadence{Count: count, Oldest: oldest, Newest: newest, SpanDays: spanDays, DaysSinceLast: daysSinceLast, Confidence: "Unavailable", Methodology: "Insufficient recent upload data: dated uploads did not produce positive intervals."}
+	}
+	prelimMedian := medianFloat(intervals)
+	filtered := []float64{}
+	gapCap := maxFloat(90, prelimMedian*4)
+	for _, days := range intervals {
+		if days <= gapCap {
+			filtered = append(filtered, days)
+		}
+	}
+	if len(filtered) < 1 {
+		filtered = intervals
+	}
+	medianInterval := medianFloat(filtered)
+	if medianInterval <= 0 {
+		return sampledCadence{Count: count, Oldest: oldest, Newest: newest, SpanDays: spanDays, DaysSinceLast: daysSinceLast, Confidence: "Unavailable", Methodology: "Insufficient recent upload data: cadence interval could not be calculated."}
+	}
+	uploadsPerMonth := 30.4375 / medianInterval
+	if uploadsPerMonth > 60 {
+		uploadsPerMonth = 60
+	}
 	confidence := "Low"
-	if count >= 12 && spanDays >= 60 {
+	if count >= 12 && len(filtered) >= 8 {
 		confidence = "Good"
-	} else if (count >= 4 && spanDays >= 21) || (count >= 3 && spanDays >= 30) {
+	} else if count >= 4 && len(filtered) >= 3 {
 		confidence = "Moderate"
 	}
-	return sampledCadence{Count: count, Oldest: oldest, Newest: newest, SpanDays: spanDays, UploadsPerMonth: uploadsPerMonth, UploadsPerWeek: uploadsPerMonth / 4.345, DaysSinceLast: daysSinceLast, Confidence: confidence}
+	method := fmt.Sprintf("Median interval %.1f days from %d adjacent recent-upload interval(s); %d extreme gap(s) excluded.", medianInterval, len(filtered), len(intervals)-len(filtered))
+	return sampledCadence{Count: count, Oldest: oldest, Newest: newest, SpanDays: spanDays, MedianIntervalDays: medianInterval, UploadsPerMonth: uploadsPerMonth, UploadsPerWeek: uploadsPerMonth / 4.345, DaysSinceLast: daysSinceLast, Available: true, Confidence: confidence, Methodology: method}
 }
 
 func cadenceObservationMonths(videos []ChannelVideoSummary) float64 {
@@ -3374,14 +3561,11 @@ func titlePatterns(videos []ChannelVideoSummary) []string {
 }
 
 func uploadFrequency(videos []ChannelVideoSummary, now func() time.Time) string {
-	if len(videos) < 2 {
-		return "Not enough recent public videos to estimate upload frequency."
-	}
 	summary := sampledCadenceSummary(videos, now)
-	if summary.Count == 0 {
-		return "Not enough dated public videos to estimate upload frequency."
+	if !summary.Available {
+		return "Insufficient recent upload data."
 	}
-	return fmt.Sprintf("Approximately %.1f public uploads per month (%.1f per week) across %d sampled uploads from %s to %s. Cadence confidence: %s.", summary.UploadsPerMonth, summary.UploadsPerWeek, summary.Count, summary.Oldest.Format("2 Jan 2006"), summary.Newest.Format("2 Jan 2006"), summary.Confidence)
+	return fmt.Sprintf("Approximately %.1f public uploads per month (%.1f per week), based on a %.1f-day median interval across %d recent uploads from %s to %s. Cadence confidence: %s.", summary.UploadsPerMonth, summary.UploadsPerWeek, summary.MedianIntervalDays, summary.Count, summary.Oldest.Format("2 Jan 2006"), summary.Newest.Format("2 Jan 2006"), summary.Confidence)
 }
 
 func channelSignals(subscribersRaw string, videos []ChannelVideoSummary) (map[string]any, *float64) {

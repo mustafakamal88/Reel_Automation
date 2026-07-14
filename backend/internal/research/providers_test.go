@@ -553,7 +553,7 @@ func TestChannelScoreEvidenceCapForTinySamples(t *testing.T) {
 	videos := enrichChannelVideos([]ChannelVideoSummary{video}, now)
 	channel := youtubeChannelItem{}
 	channel.Statistics.ViewCount = "1000000"
-	dims, score, confidence := buildChannelScoreModel(channel, videos, []ChannelContentPillar{{Name: "AI workflow", UploadCount: 1}}, KeywordIntelligence{PrimaryKeywords: []string{"ai workflow"}, MetadataStrengthScore: 80}, NicheAnalysis{PrimaryNiche: "AI tools", Confidence: 0.9}, now)
+	dims, score, confidence := buildChannelScoreModel(channel, videos, videos, []ChannelContentPillar{{Name: "AI workflow", UploadCount: 1}}, KeywordIntelligence{PrimaryKeywords: []string{"ai workflow"}, MetadataStrengthScore: 80}, NicheAnalysis{PrimaryNiche: "AI tools", Confidence: 0.9}, now)
 	if len(dims) == 0 || score.Score > 55 || confidence.Score >= 70 {
 		t.Fatalf("small sample should cap score/confidence: score=%+v confidence=%+v dims=%+v", score, confidence, dims)
 	}
@@ -616,7 +616,7 @@ func TestChannelCadenceAndPlanVolumeUseSampledWindow(t *testing.T) {
 		channelTestVideo("v3", "Laptop Review", "", "2026-05-01T00:00:00Z", 100),
 	}
 	summary := sampledCadenceSummary(videos, now)
-	if summary.UploadsPerMonth < 1.4 || summary.UploadsPerMonth > 1.6 || summary.Confidence != "Moderate" {
+	if summary.UploadsPerMonth < 0.9 || summary.UploadsPerMonth > 1.1 || summary.MedianIntervalDays < 30 || summary.MedianIntervalDays > 31 || summary.Confidence != "Low" {
 		t.Fatalf("bad cadence summary: %+v", summary)
 	}
 	shortWindow := []ChannelVideoSummary{
@@ -624,10 +624,10 @@ func TestChannelCadenceAndPlanVolumeUseSampledWindow(t *testing.T) {
 		channelTestVideo("v2", "Camera Review", "", "2026-07-03T00:00:00Z", 100),
 	}
 	shortSummary := sampledCadenceSummary(shortWindow, now)
-	if shortSummary.UploadsPerMonth != 2 {
-		t.Fatalf("short sampled window should use 30-day minimum, got %+v", shortSummary)
+	if shortSummary.UploadsPerMonth < 15 || shortSummary.UploadsPerMonth > 16 {
+		t.Fatalf("short sampled window should use median interval, got %+v", shortSummary)
 	}
-	plan := buildChannelContentPlan(videos, []ChannelContentPillar{{Name: "phone reviews", UploadCount: 2, ShareOfUploads: 0.67}}, nil, NicheAnalysis{}, now)
+	plan := buildChannelContentPlan(videos, videos, []ChannelContentPillar{{Name: "phone reviews", UploadCount: 2, ShareOfUploads: 0.67}}, nil, NicheAnalysis{}, now)
 	uploads := 0
 	for _, week := range plan {
 		for _, idea := range week.Ideas {
@@ -637,7 +637,16 @@ func TestChannelCadenceAndPlanVolumeUseSampledWindow(t *testing.T) {
 		}
 	}
 	if uploads != 2 {
-		t.Fatalf("plan upload volume = %d, want 2: %+v", uploads, plan)
+		t.Fatalf("plan upload volume = %d, want 2 from monthly cadence: %+v", uploads, plan)
+	}
+	for _, week := range plan {
+		if week.WeekType != "Publishing week" {
+			for _, idea := range week.Ideas {
+				if idea.Format != "Preparation" {
+					t.Fatalf("preparation week counted as upload: %+v", week)
+				}
+			}
+		}
 	}
 }
 
@@ -669,20 +678,114 @@ func TestChannelChartsRevenueAndDetailsAreCautious(t *testing.T) {
 		channelTestVideo("v2", "Phone Camera Test", "", "2026-06-01T00:00:00Z", 200000),
 	}, now)
 	pillars := []ChannelContentPillar{{Name: "phone reviews", UploadCount: 2, ShareOfUploads: 1, MedianViews: float64Ptr(150000)}}
-	charts := buildChannelCharts(videos, pillars)
+	charts := buildChannelCharts(videos, videos, pillars)
 	if charts.FormatPerformance[0].Label != "Long-form" || charts.FormatPerformance[0].Description == "" {
 		t.Fatalf("bad format chart label: %+v", charts.FormatPerformance)
 	}
 	channel := youtubeChannelItem{}
 	channel.Statistics.ViewCount = "5000000000"
-	revenue := estimateChannelRevenue(channel, videos, NicheAnalysis{PrimaryNiche: "technology"})
-	if revenue.ModelType != "sampled_recent_public_views_x_estimated_rpm_range" || !strings.Contains(strings.ToLower(revenue.CalculationBasis), "rough lifetime public-view ad revenue proxy") {
+	revenue := estimateChannelRevenue(videos, NicheAnalysis{PrimaryNiche: "technology"})
+	if revenue.ModelType != "sampled_video_views_x_estimated_rpm_range" || !strings.Contains(strings.ToLower(revenue.CalculationBasis), "sampled-video advertising proxy") {
 		t.Fatalf("revenue methodology is not cautious: %+v", revenue)
 	}
-	details := buildChannelAnalysisDetails(videos, channel, now)
+	details := buildChannelAnalysisDetails(videos, videos, channel, now)
 	if details.UploadsPerMonth <= 0 || details.CadenceConfidence == "" {
 		t.Fatalf("missing cadence details: %+v", details)
 	}
+}
+
+func TestChannelRecentCadenceExcludesHistoricalTopVideos(t *testing.T) {
+	now := func() time.Time { return mustTime("2026-07-14T00:00:00Z") }
+	recent := enrichChannelVideos([]ChannelVideoSummary{
+		channelTestVideo("r1", "Weekly Phone Review 1", "", "2026-06-15T00:00:00Z", 100000),
+		channelTestVideo("r2", "Weekly Phone Review 2", "", "2026-06-22T00:00:00Z", 120000),
+		channelTestVideo("r3", "Weekly Phone Review 3", "", "2026-06-29T00:00:00Z", 130000),
+		channelTestVideo("r4", "Weekly Phone Review 4", "", "2026-07-06T00:00:00Z", 140000),
+		channelTestVideo("r5", "Weekly Phone Review 5", "", "2026-07-13T00:00:00Z", 150000),
+	}, now)
+	performance := mergeChannelVideos(recent, enrichChannelVideos([]ChannelVideoSummary{
+		channelTestVideo("oldtop", "Old Viral Phone Review", "", "2018-03-09T00:00:00Z", 90000000),
+	}, now))
+	recentSummary := sampledCadenceSummary(recent, now)
+	if recentSummary.UploadsPerMonth < 4.0 || recentSummary.UploadsPerMonth > 4.6 {
+		t.Fatalf("recent cadence = %+v, want weekly cadence around 4.3/month", recentSummary)
+	}
+	metrics := channelPerformanceMetrics(recent, performance, "", now)
+	got := metrics[0]
+	for _, metric := range metrics {
+		if metric.ID == "uploads_per_month" {
+			got = metric
+			break
+		}
+	}
+	if got.RawValue < 4.0 || got.RawValue > 4.6 {
+		t.Fatalf("uploads/month used historical top video: %+v", got)
+	}
+	charts := buildChannelCharts(recent, performance, nil)
+	for _, point := range charts.UploadCadence {
+		if strings.Contains(point.Label, "2018") {
+			t.Fatalf("cadence chart included historical top video: %+v", charts.UploadCadence)
+		}
+	}
+}
+
+func TestChannelCadenceRequiresTwoRecentDates(t *testing.T) {
+	now := func() time.Time { return mustTime("2026-07-14T00:00:00Z") }
+	summary := sampledCadenceSummary([]ChannelVideoSummary{
+		channelTestVideo("r1", "One Recent Upload", "", "2026-07-13T00:00:00Z", 100000),
+	}, now)
+	if summary.Available || summary.UploadsPerMonth != 0 || !strings.Contains(strings.ToLower(summary.Methodology), "insufficient recent upload data") {
+		t.Fatalf("single upload should be unavailable: %+v", summary)
+	}
+	metrics := channelPerformanceMetrics([]ChannelVideoSummary{channelTestVideo("r1", "One Recent Upload", "", "2026-07-13T00:00:00Z", 100000)}, nil, "", now)
+	if metricValueForTest(metrics, "uploads_per_month") != "Insufficient recent upload data" {
+		t.Fatalf("metric should be honest unavailable: %+v", metrics)
+	}
+}
+
+func TestChannelMonthlyRunRateExcludesHistoricalTopViews(t *testing.T) {
+	now := func() time.Time { return mustTime("2026-07-14T00:00:00Z") }
+	recent := enrichChannelVideos([]ChannelVideoSummary{
+		channelTestVideo("r1", "Weekly Phone Review 1", "", "2026-07-01T00:00:00Z", 100000),
+		channelTestVideo("r2", "Weekly Phone Review 2", "", "2026-07-08T00:00:00Z", 100000),
+	}, now)
+	performance := mergeChannelVideos(recent, []ChannelVideoSummary{channelTestVideo("oldtop", "Old Viral Phone Review", "", "2018-03-09T00:00:00Z", 100000000)})
+	sampled := estimateChannelRevenue(performance, NicheAnalysis{PrimaryNiche: "technology"})
+	runRate := estimateChannelMonthlyRunRate(recent, NicheAnalysis{PrimaryNiche: "technology"}, now)
+	if sampled.Low <= runRate.Low {
+		t.Fatalf("sampled lifetime proxy should include old top views separately: sampled=%+v runRate=%+v", sampled, runRate)
+	}
+	if strings.Contains(runRate.CalculationBasis, "100,200,000") || !strings.Contains(strings.ToLower(runRate.CalculationBasis), "historical top-video views are excluded") {
+		t.Fatalf("run-rate basis did not exclude top views: %+v", runRate)
+	}
+}
+
+func TestChannelIncidentalSubjectsDoNotBecomeDurablePillars(t *testing.T) {
+	now := func() time.Time { return mustTime("2026-07-14T00:00:00Z") }
+	videos := enrichChannelVideos([]ChannelVideoSummary{
+		channelTestVideo("v1", "I Gave Away A Tesla In A Challenge", "", "2026-07-01T00:00:00Z", 10000000),
+		channelTestVideo("v2", "Last To Leave The Tesla Wins", "", "2026-06-01T00:00:00Z", 9000000),
+		channelTestVideo("v3", "Survive 100 Hours In A Circle Challenge", "", "2026-05-01T00:00:00Z", 8000000),
+		channelTestVideo("v4", "I Gave Away $1,000,000", "", "2026-04-01T00:00:00Z", 7000000),
+	}, now)
+	identity := buildChannelIdentityContext("Challenge Creator", "@challenge", "")
+	pillars := buildChannelPillars(KeywordIntelligence{}, videos, identity)
+	names := strings.ToLower(strings.Join(topPillarNames(pillars, 10), " "))
+	if strings.Contains(names, "electric vehicle") {
+		t.Fatalf("incidental object became pillar: %+v", pillars)
+	}
+	if !strings.Contains(names, "challenge") {
+		t.Fatalf("expected durable format pillar to remain: %+v", pillars)
+	}
+}
+
+func metricValueForTest(metrics []PerformanceMetric, id string) string {
+	for _, metric := range metrics {
+		if metric.ID == id {
+			return metric.Value
+		}
+	}
+	return ""
 }
 
 func uint64Ptr(v uint64) *uint64 {

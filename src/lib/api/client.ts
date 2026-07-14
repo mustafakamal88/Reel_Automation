@@ -1170,6 +1170,7 @@ export interface YouTubeChannelAnalysisResponse {
   score_dimensions?: ScoreDimension[];
   performance_metrics?: PerformanceMetric[];
   revenue_estimate?: RevenueEstimate;
+  monthly_revenue_run_rate?: RevenueEstimate;
   channel_pillars?: ChannelContentPillar[];
   performance_charts?: ChannelCharts;
   top_video_groups?: ChannelVideoGroup[];
@@ -1277,6 +1278,7 @@ export interface ChannelPlanWeek {
   week: number;
   theme: string;
   cadence: string;
+  week_type?: string;
   ideas: ChannelPlanIdea[];
   rationale: string;
 }
@@ -1297,11 +1299,21 @@ export interface ChannelCTAContext {
 
 export interface ChannelAnalysisDetails {
   sampled_video_count: number;
+  recent_sample_count?: number;
+  performance_sample_count?: number;
   sample_start?: string;
   sample_end?: string;
+  recent_sample_start?: string;
+  recent_sample_end?: string;
+  performance_sample_start?: string;
+  performance_sample_end?: string;
   sample_date_span_days?: number;
   uploads_per_month?: number;
   uploads_per_week?: number;
+  median_upload_interval_days?: number;
+  cadence_available?: boolean;
+  cadence_methodology?: string;
+  recommended_uploads_next_30_days?: number;
   cadence_confidence?: string;
   provider_availability: string;
   hidden_metric_notes?: string[];

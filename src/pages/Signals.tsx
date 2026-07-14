@@ -1325,11 +1325,11 @@ function ChannelHero({ result }: { result: YouTubeChannelAnalysisResponse }) {
         <ChannelMetric label="Subscribers" value={formatCompactNumber(result.subscribers)} detail={formatCount(result.subscribers)} />
         <ChannelMetric label="Public views" value={formatCompactNumber(result.views)} detail={formatCount(result.views)} />
         <ChannelMetric label="Public videos" value={formatCompactNumber(result.video_count)} detail={formatCount(result.video_count)} />
-        <ChannelMetric label="Cadence" value={metricValue(result.performance_metrics, 'uploads_per_month')} detail="Uploads/month from sample" />
+        <ChannelMetric label="Cadence" value={metricValue(result.performance_metrics, 'uploads_per_month')} detail="Uploads/month from recent uploads" />
       </div>
       <div className="channel-hero-cards">
         <ChannelMetric label="Analysis confidence" value={`${result.analysis_confidence?.score ?? 0}/100`} detail={result.analysis_confidence?.rating} />
-        <ChannelMetric label="Recent ad proxy" value={displayCompactRevenueRange(result.revenue_estimate)} detail={result.revenue_estimate?.confidence} />
+        <ChannelMetric label="Sampled ad proxy" value={displayCompactRevenueRange(result.revenue_estimate)} detail={result.revenue_estimate?.confidence} />
         <ChannelMetric label="Publishing consistency" value={`${scoreById(result, 'publishing_consistency')}/100`} detail={ratingForScore(scoreById(result, 'publishing_consistency'))} />
         <ChannelMetric label="Recent momentum" value={`${scoreById(result, 'recent_momentum')}/100`} detail={ratingForScore(scoreById(result, 'recent_momentum'))} />
       </div>
@@ -1380,7 +1380,7 @@ function ChannelChartsSection({ result }: { result: YouTubeChannelAnalysisRespon
       <div className="channel-chart-grid">
         <ChannelBars title="Recent upload performance" points={charts?.upload_performance ?? []} mode="timeline" unit="views" />
         <ChannelBars title="Views distribution" points={charts?.views_distribution ?? []} mode="distribution" unit="views" note="Each bar is one sampled video ranked by visible public views." />
-        <ChannelBars title="Upload cadence" points={charts?.upload_cadence ?? []} mode="cadence" unit="uploads" />
+        <ChannelBars title="Upload cadence" points={charts?.upload_cadence ?? []} mode="cadence" unit="uploads" note="Recent upload dates only; historical top videos are excluded." />
         <ChannelBars title="Topic performance" points={topicPoints} mode="topic" unit="median views" />
         {(charts?.format_performance ?? []).length > 1 && <ChannelBars title="Format performance" points={charts?.format_performance ?? []} mode="format" unit="median views" />}
       </div>
@@ -1412,11 +1412,12 @@ function ChannelBars({ title, points, mode, unit, note }: { title: string; point
 
 function ChannelRevenueSection({ result }: { result: YouTubeChannelAnalysisResponse }) {
   const estimate = result.revenue_estimate;
+  const runRate = result.monthly_revenue_run_rate;
   if (!estimate) {
     return (
       <section className="video-section revenue-potential-card">
         <div className="video-section-heading"><span>Revenue proxy</span><h3>Estimated range unavailable</h3></div>
-        <p className="muted-note">The public channel sample is not enough to create a cautious recent ad-revenue proxy.</p>
+        <p className="muted-note">The public channel sample is not enough to create a cautious advertising proxy.</p>
       </section>
     );
   }
@@ -1424,7 +1425,7 @@ function ChannelRevenueSection({ result }: { result: YouTubeChannelAnalysisRespo
   return (
     <section className="video-section revenue-potential-card" aria-labelledby="channel-revenue-title">
       <div className="video-section-heading">
-        <span>Recent sampled ad revenue proxy</span>
+        <span>Estimated ad revenue across sampled videos</span>
         <h3 id="channel-revenue-title">{displayRevenueRange(estimate)}</h3>
       </div>
       <div className="revenue-premium-grid">
@@ -1442,15 +1443,25 @@ function ChannelRevenueSection({ result }: { result: YouTubeChannelAnalysisRespo
         <div className="revenue-facts">
           <div><span>RPM range</span><strong className="revenue-rpm-value">{displayRPMRange(estimate)}</strong></div>
           <div><span>Proxy confidence</span><strong>{estimate.confidence}</strong></div>
-          <div><span>Basis</span><strong>Sampled public views × estimated RPM</strong></div>
+          <div><span>Sample basis</span><strong>Performance sample views × estimated RPM</strong></div>
         </div>
       </div>
       <p>{concise(estimate.calculation_basis, 180)}</p>
+      {runRate && (
+        <div className="channel-run-rate-card">
+          <div>
+            <span>Current estimated monthly run-rate</span>
+            <strong>{displayRevenueRange(runRate)}</strong>
+          </div>
+          <p>{concise(runRate.calculation_basis, 190)}</p>
+          <MetricGrid values={{ 'Views used': runRate.calculation_basis?.match(/Uses ([^ ]+(?: [^ ]+)*) public views/)?.[1] || 'Recent upload sample', 'Observation window': result.analysis_details?.recent_sample_start && result.analysis_details?.recent_sample_end ? `${formatDateLabel(result.analysis_details.recent_sample_start)} to ${formatDateLabel(result.analysis_details.recent_sample_end)}` : 'Recent upload sample', 'RPM range': displayRPMRange(runRate), 'Actual YouTube revenue': runRate.actual_analytics_unavailable ? 'Not included' : undefined }} />
+        </div>
+      )}
       <details className="video-details-accordion">
         <summary>How this proxy was calculated</summary>
         <SectionList label="Assumptions" items={estimate.assumptions ?? []} />
         <SectionList label="Exclusions" items={estimate.exclusions ?? []} />
-        <MetricGrid values={{ 'Calculation basis': 'Sampled public views × estimated RPM', 'Exact analytics unavailable': estimate.actual_analytics_unavailable ? 'Yes' : undefined, 'Monetisation eligibility': estimate.monetisation_eligibility }} />
+        <MetricGrid values={{ 'Calculation basis': 'Performance sample views × estimated RPM', 'Views used': estimate.calculation_basis?.match(/Uses ([^ ]+(?: [^ ]+)*) public views/)?.[1] || 'Performance sample', 'Observation window': result.analysis_details?.performance_sample_start && result.analysis_details?.performance_sample_end ? `${formatDateLabel(result.analysis_details.performance_sample_start)} to ${formatDateLabel(result.analysis_details.performance_sample_end)}` : 'Performance sample', 'Exact analytics unavailable': estimate.actual_analytics_unavailable ? 'Yes' : undefined, 'Monetisation eligibility': estimate.monetisation_eligibility }} />
       </details>
     </section>
   );
@@ -1525,10 +1536,12 @@ function ChannelOpportunitiesSection({ result }: { result: YouTubeChannelAnalysi
 
 function ChannelPlanSection({ result }: { result: YouTubeChannelAnalysisResponse }) {
   const weeks = dedupeChannelPlan(result.content_plan ?? []);
+  const target = weeks.find(week => week.cadence)?.cadence || (Number.isFinite(result.analysis_details?.recommended_uploads_next_30_days) ? `Recommended publishing target: ${result.analysis_details?.recommended_uploads_next_30_days} uploads in the next 30 days.` : '');
   return (
     <section className="video-section channel-section" aria-labelledby="channel-plan-title">
       <div className="video-section-heading"><span>30-day content plan</span><h3 id="channel-plan-title">A realistic next month from current cadence</h3></div>
-      <div className="channel-plan-grid">{weeks.map(week => <article className="channel-plan-week" key={week.week}><span>Week {week.week}</span><h4>{week.theme}</h4><small>{week.cadence}</small>{week.ideas.map(idea => <div className="channel-plan-idea" key={idea.working_title}><strong>{idea.working_title}</strong><p>{idea.objective} · {idea.hook_direction}</p><small>{idea.content_pillar} · {idea.format} · {idea.recommended_timing}</small></div>)}<p>{week.rationale}</p></article>)}</div>
+      {target && <p className="channel-plan-target">{target}</p>}
+      <div className="channel-plan-grid">{weeks.map(week => <article className="channel-plan-week" key={week.week}><span>Week {week.week}</span><h4>{week.theme}</h4><small>{week.week_type || 'Preparation week'}</small>{week.ideas.map(idea => <div className="channel-plan-idea" key={idea.working_title}><strong>{idea.working_title}</strong><p>{idea.objective} · {idea.hook_direction}</p><small>{idea.content_pillar} · {idea.format} · {idea.recommended_timing}</small></div>)}<p>{week.rationale}</p></article>)}</div>
     </section>
   );
 }
@@ -1560,7 +1573,8 @@ function ChannelDetails({ result }: { result: YouTubeChannelAnalysisResponse }) 
     <section className="analysis-details-bottom">
       <details className="video-details-accordion">
         <summary>Analysis details</summary>
-        <MetricGrid values={{ 'Sampled videos': details?.sampled_video_count, 'Sample start': formatDateLabel(details?.sample_start), 'Sample end': formatDateLabel(details?.sample_end), Provider: details?.provider_availability, 'Cache version': result.cache?.schema_version || result.schema_version, 'Cache freshness': result.cache?.freshness, 'Analyzed at': formatCacheTime(details?.analysis_timestamp) }} />
+        <MetricGrid values={{ 'Recent upload sample': details?.recent_sample_count, 'Recent sample start': formatDateLabel(details?.recent_sample_start), 'Recent sample end': formatDateLabel(details?.recent_sample_end), 'Performance sample': details?.performance_sample_count ?? details?.sampled_video_count, 'Performance sample start': formatDateLabel(details?.performance_sample_start || details?.sample_start), 'Performance sample end': formatDateLabel(details?.performance_sample_end || details?.sample_end), 'Uploads per month': details?.cadence_available ? details?.uploads_per_month : 'Insufficient recent upload data', 'Median upload interval': details?.median_upload_interval_days ? `${details.median_upload_interval_days} days` : 'Unavailable', 'Recommended 30-day uploads': details?.recommended_uploads_next_30_days, 'Analyzed at': formatCacheTime(details?.analysis_timestamp) }} />
+        {details?.cadence_methodology && <TextBlock label="Cadence methodology" value={details.cadence_methodology} />}
         <SectionList label="Hidden metric limitations" items={details?.hidden_metric_notes ?? []} />
         <SectionList label="Scoring methodology" items={details?.scoring_methodology ?? []} />
         <SectionList label="Topic methodology" items={details?.topic_methodology ?? []} />

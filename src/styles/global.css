@@ -6736,6 +6736,11 @@ button.generate-btn.secondary:disabled {
   gap: 12px;
 }
 
+.channel-chart-card:has(.is-format),
+.channel-chart-card:has(.is-topic) {
+  grid-column: 1 / -1;
+}
+
 .channel-chart-card {
   min-width: 0;
   display: grid;
@@ -6775,6 +6780,7 @@ button.generate-btn.secondary:disabled {
   align-items: end;
   gap: 8px;
   overflow: visible;
+  padding: 8px 2px 0;
 }
 
 .channel-bar-wrap {
@@ -6804,7 +6810,7 @@ button.generate-btn.secondary:disabled {
 }
 
 .channel-bar-wrap small {
-  min-height: 28px;
+  min-height: 34px;
   overflow: visible;
   color: var(--text-dim);
   font-size: 9.5px;
@@ -6814,11 +6820,51 @@ button.generate-btn.secondary:disabled {
   white-space: normal;
 }
 
+.channel-run-rate-card {
+  display: grid;
+  gap: 10px;
+  padding: 13px;
+  border: 1px solid var(--border-inner);
+  border-radius: 8px;
+  background: rgba(8, 12, 16, 0.34);
+}
+
+.channel-run-rate-card > div:first-child {
+  display: grid;
+  gap: 4px;
+}
+
+.channel-run-rate-card span {
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  text-transform: uppercase;
+}
+
+.channel-run-rate-card strong {
+  color: var(--text-primary);
+  font-size: 22px;
+  line-height: 1.1;
+}
+
+.channel-run-rate-card p,
+.channel-plan-target {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
 .channel-pillar-grid,
-.channel-video-grid,
-.channel-plan-grid {
+.channel-video-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.channel-plan-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 12px;
 }
 
@@ -6957,9 +7003,12 @@ button.generate-btn.secondary:disabled {
   .channel-hero,
   .channel-chart-grid,
   .channel-pillar-grid,
-  .channel-video-grid,
-  .channel-plan-grid {
+  .channel-video-grid {
     grid-template-columns: 1fr;
+  }
+
+  .channel-plan-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .channel-hero-score {
@@ -7000,7 +7049,7 @@ button.generate-btn.secondary:disabled {
 
   .channel-bars {
     height: 190px;
-    gap: 6px;
+    gap: 5px;
   }
 
   .channel-bar-value,
@@ -7011,6 +7060,10 @@ button.generate-btn.secondary:disabled {
   .channel-analysis-results .creative-tabs {
     justify-content: flex-start;
     padding-bottom: 4px;
+  }
+
+  .channel-plan-grid {
+    grid-template-columns: 1fr;
   }
 }
 
