@@ -6736,6 +6736,7 @@ button.generate-btn.secondary:disabled {
   gap: 12px;
 }
 
+.channel-chart-card:has(.is-cadence),
 .channel-chart-card:has(.is-format),
 .channel-chart-card:has(.is-topic) {
   grid-column: 1 / -1;
