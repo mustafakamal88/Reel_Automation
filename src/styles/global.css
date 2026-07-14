@@ -2864,7 +2864,7 @@ textarea:focus {
 }
 
 .video-revenue-card strong,
-.revenue-rpm-value {
+.video-revenue-card .revenue-rpm-value {
   white-space: nowrap;
   overflow-wrap: normal;
 }
@@ -3028,6 +3028,17 @@ textarea:focus {
 
 .revenue-facts div {
   align-content: start;
+  overflow: hidden;
+}
+
+.revenue-facts strong {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  word-break: normal;
+}
+
+.revenue-facts .revenue-rpm-value {
+  white-space: normal;
 }
 
 .future-scenario {
