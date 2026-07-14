@@ -559,8 +559,142 @@ func TestChannelScoreEvidenceCapForTinySamples(t *testing.T) {
 	}
 }
 
+func TestChannelPillarsExcludeCreatorIdentityAndRequireTitleEvidence(t *testing.T) {
+	now := func() time.Time { return mustTime("2026-07-10T00:00:00Z") }
+	videos := enrichChannelVideos([]ChannelVideoSummary{
+		channelTestVideo("v1", "iPhone 20 Review: What Actually Changed", "Marques Brownlee reviews a phone.", "2026-07-01T00:00:00Z", 9000000),
+		channelTestVideo("v2", "Android Phone Camera Test", "Consumer electronics from a YouTuber geek tech head internet personality.", "2026-06-15T00:00:00Z", 7000000),
+		channelTestVideo("v3", "Folding Phone Review After One Month", "Marques Brownlee hosts this video.", "2026-06-01T00:00:00Z", 6000000),
+	}, now)
+	identity := buildChannelIdentityContext("MKBHD", "@mkbhd", "Marques Brownlee is a YouTuber, geek, tech head and internet personality.")
+	kw := KeywordIntelligence{PrimaryKeywords: []string{"marque brownlee", "consumer electronic", "tuber geek consumer electronic", "phone review", "smartphone review"}}
+	pillars := buildChannelPillars(kw, videos, identity)
+	joined := strings.ToLower(strings.Join(topPillarNames(pillars, 10), " "))
+	for _, forbidden := range []string{"marque brownlee", "tuber geek", "internet personality", "consumer electronic"} {
+		if strings.Contains(joined, forbidden) {
+			t.Fatalf("identity/biography phrase leaked into pillars %q: %+v", forbidden, pillars)
+		}
+	}
+	if len(pillars) == 0 {
+		t.Fatalf("expected evidence-backed phone pillar")
+	}
+	for _, pillar := range pillars {
+		if pillar.ShareOfUploads <= 0 || pillar.UploadCount == 0 || pillar.MedianViews == nil {
+			t.Fatalf("pillar lacks real support: %+v", pillar)
+		}
+	}
+	if normalizeChannelPillarName("consumer electronic") != "consumer electronics" {
+		t.Fatalf("consumer electronics normalization failed")
+	}
+	if validChannelTopicPhrase("electronic tech head internet", tokenSet(tokenizeUseful("phone review camera test", nil)), identity) {
+		t.Fatalf("noun-pile/biography phrase was accepted")
+	}
+}
+
+func TestChannelDownstreamSanitizesMalformedIdentityRecommendations(t *testing.T) {
+	identity := buildChannelIdentityContext("MKBHD", "@mkbhd", "Marques Brownlee is a YouTuber and internet personality.")
+	videos := []ChannelVideoSummary{channelTestVideo("v1", "iPhone Camera Review", "", "2026-07-01T00:00:00Z", 1000000)}
+	pillars := []ChannelContentPillar{{Name: "phone reviews", UploadCount: 2, ShareOfUploads: 1}}
+	opps := sanitizeChannelGrowthOpportunities([]ChannelOpportunity{
+		{Title: "Bad", Why: "Expand the proven pillar: marque brownlee", SampleTitle: "How to marque brownlee", NextAction: "The next step after Marque Brownlee", RecommendedFormat: "Long-form"},
+		{Title: "Duplicate", Why: "Expand the proven pillar: marque brownlee", SampleTitle: "Marque Brownlee for beginners", NextAction: "The next step after Marque Brownlee", RecommendedFormat: "Long-form"},
+	}, pillars, videos, identity)
+	blob, _ := json.Marshal(opps)
+	lower := strings.ToLower(string(blob))
+	for _, forbidden := range []string{"how to marque brownlee", "marque brownlee for beginners", "the next step after marque brownlee"} {
+		if strings.Contains(lower, forbidden) {
+			t.Fatalf("malformed recommendation leaked: %q in %s", forbidden, lower)
+		}
+	}
+}
+
+func TestChannelCadenceAndPlanVolumeUseSampledWindow(t *testing.T) {
+	now := func() time.Time { return mustTime("2026-07-10T00:00:00Z") }
+	videos := []ChannelVideoSummary{
+		channelTestVideo("v1", "Phone Review", "", "2026-07-01T00:00:00Z", 100),
+		channelTestVideo("v2", "Camera Review", "", "2026-06-01T00:00:00Z", 100),
+		channelTestVideo("v3", "Laptop Review", "", "2026-05-01T00:00:00Z", 100),
+	}
+	summary := sampledCadenceSummary(videos, now)
+	if summary.UploadsPerMonth < 1.4 || summary.UploadsPerMonth > 1.6 || summary.Confidence != "Moderate" {
+		t.Fatalf("bad cadence summary: %+v", summary)
+	}
+	shortWindow := []ChannelVideoSummary{
+		channelTestVideo("v1", "Phone Review", "", "2026-07-01T00:00:00Z", 100),
+		channelTestVideo("v2", "Camera Review", "", "2026-07-03T00:00:00Z", 100),
+	}
+	shortSummary := sampledCadenceSummary(shortWindow, now)
+	if shortSummary.UploadsPerMonth != 2 {
+		t.Fatalf("short sampled window should use 30-day minimum, got %+v", shortSummary)
+	}
+	plan := buildChannelContentPlan(videos, []ChannelContentPillar{{Name: "phone reviews", UploadCount: 2, ShareOfUploads: 0.67}}, nil, NicheAnalysis{}, now)
+	uploads := 0
+	for _, week := range plan {
+		for _, idea := range week.Ideas {
+			if idea.Format != "Preparation" {
+				uploads++
+			}
+		}
+	}
+	if uploads != 2 {
+		t.Fatalf("plan upload volume = %d, want 2: %+v", uploads, plan)
+	}
+}
+
+func TestChannelPackagingDistinguishesModelNumbersFromNumberLedTitles(t *testing.T) {
+	modelTitles := []ChannelVideoSummary{
+		channelTestVideo("v1", "iPhone 17 Review", "", "2026-07-01T00:00:00Z", 100),
+		channelTestVideo("v2", "M4 MacBook Air Review", "", "2026-07-02T00:00:00Z", 100),
+		channelTestVideo("v3", "Nothing Phone 4b Camera Test", "", "2026-07-03T00:00:00Z", 100),
+	}
+	pkg := buildChannelPackaging(modelTitles, nil)
+	if pkg.NumberTitleShare != 0 || pkg.StrongestPattern == "Number-led titles" {
+		t.Fatalf("model numbers counted as number-led titles: %+v", pkg)
+	}
+	listTitles := []ChannelVideoSummary{
+		channelTestVideo("v1", "5 Features You Need", "", "2026-07-01T00:00:00Z", 100),
+		channelTestVideo("v2", "10 Mistakes to Avoid", "", "2026-07-02T00:00:00Z", 100),
+		channelTestVideo("v3", "3 Reasons This Works", "", "2026-07-03T00:00:00Z", 100),
+	}
+	pkg = buildChannelPackaging(listTitles, nil)
+	if pkg.NumberTitleShare != 1 || pkg.StrongestPattern != "Number-led titles" {
+		t.Fatalf("true numbered-list titles not detected: %+v", pkg)
+	}
+}
+
+func TestChannelChartsRevenueAndDetailsAreCautious(t *testing.T) {
+	now := func() time.Time { return mustTime("2026-07-10T00:00:00Z") }
+	videos := enrichChannelVideos([]ChannelVideoSummary{
+		channelTestVideo("v1", "Phone Review", "", "2026-07-01T00:00:00Z", 100000),
+		channelTestVideo("v2", "Phone Camera Test", "", "2026-06-01T00:00:00Z", 200000),
+	}, now)
+	pillars := []ChannelContentPillar{{Name: "phone reviews", UploadCount: 2, ShareOfUploads: 1, MedianViews: float64Ptr(150000)}}
+	charts := buildChannelCharts(videos, pillars)
+	if charts.FormatPerformance[0].Label != "Long-form" || charts.FormatPerformance[0].Description == "" {
+		t.Fatalf("bad format chart label: %+v", charts.FormatPerformance)
+	}
+	channel := youtubeChannelItem{}
+	channel.Statistics.ViewCount = "5000000000"
+	revenue := estimateChannelRevenue(channel, videos, NicheAnalysis{PrimaryNiche: "technology"})
+	if revenue.ModelType != "sampled_recent_public_views_x_estimated_rpm_range" || !strings.Contains(strings.ToLower(revenue.CalculationBasis), "rough lifetime public-view ad revenue proxy") {
+		t.Fatalf("revenue methodology is not cautious: %+v", revenue)
+	}
+	details := buildChannelAnalysisDetails(videos, channel, now)
+	if details.UploadsPerMonth <= 0 || details.CadenceConfidence == "" {
+		t.Fatalf("missing cadence details: %+v", details)
+	}
+}
+
 func uint64Ptr(v uint64) *uint64 {
 	return &v
+}
+
+func float64Ptr(v float64) *float64 {
+	return &v
+}
+
+func channelTestVideo(id, title, description, published string, views uint64) ChannelVideoSummary {
+	return ChannelVideoSummary{VideoID: id, Title: title, Description: description, PublishedAt: published, Duration: "PT8M", Views: uint64Ptr(views)}
 }
 
 func TestOpenAIEnhancementFallbackWorks(t *testing.T) {

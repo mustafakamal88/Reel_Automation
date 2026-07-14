@@ -27,7 +27,7 @@ const (
 
 var ErrNotConfigured = errors.New("research provider is not configured")
 
-const channelAnalysisSchemaVersion = "channel_analysis_v1_launch_intelligence"
+const channelAnalysisSchemaVersion = "channel_analysis_v2_pillar_quality_cadence"
 
 const (
 	ProviderErrorQuota       = "quota"
@@ -379,6 +379,10 @@ type ChannelAnalysisDetails struct {
 	SampledVideoCount    int      `json:"sampled_video_count"`
 	SampleStart          string   `json:"sample_start,omitempty"`
 	SampleEnd            string   `json:"sample_end,omitempty"`
+	SampleDateSpanDays   float64  `json:"sample_date_span_days,omitempty"`
+	UploadsPerMonth      float64  `json:"uploads_per_month,omitempty"`
+	UploadsPerWeek       float64  `json:"uploads_per_week,omitempty"`
+	CadenceConfidence    string   `json:"cadence_confidence,omitempty"`
 	ProviderAvailability string   `json:"provider_availability"`
 	HiddenMetricNotes    []string `json:"hidden_metric_notes,omitempty"`
 	ScoringMethodology   []string `json:"scoring_methodology,omitempty"`
@@ -710,6 +714,8 @@ func (p *YouTubeProvider) AnalyzeChannel(ctx context.Context, channelURL string)
 	topVideos = enrichChannelVideos(topVideos, p.now)
 	videos := mergeChannelVideos(recentVideos, topVideos)
 	videos = enrichChannelVideos(videos, p.now)
+	handle := firstNonEmpty(channel.Snippet.CustomURL, resolved.Handle)
+	identity := buildChannelIdentityContext(channel.Snippet.Title, handle, channel.Snippet.Description)
 	keywordIntel := ExtractKeywordIntelligence(KeywordExtractionInput{
 		Title:             channel.Snippet.Title,
 		Description:       cleanMetadataText(channel.Snippet.Description),
@@ -717,9 +723,9 @@ func (p *YouTubeProvider) AnalyzeChannel(ctx context.Context, channelURL string)
 		TopicDetails:      channel.TopicDetails.TopicCategories,
 		RecentVideoTitles: videoTitles(videos),
 	})
-	keywordIntel = removeChannelIdentityKeywords(keywordIntel, channel.Snippet.Title)
+	keywordIntel = sanitizeChannelKeywordIntelligence(keywordIntel, videos, identity)
 	keywordIntel = p.enhanceChannelKeywords(ctx, keywordIntel, channel.Snippet.Title)
-	keywordIntel = removeChannelIdentityKeywords(keywordIntel, channel.Snippet.Title)
+	keywordIntel = sanitizeChannelKeywordIntelligence(keywordIntel, videos, identity)
 	keywords := append(append([]string{}, keywordIntel.PrimaryKeywords...), keywordIntel.SecondaryKeywords...)
 	nicheAnalysis := ClassifyNiche(KeywordExtractionInput{
 		Title:             channel.Snippet.Title,
@@ -728,11 +734,9 @@ func (p *YouTubeProvider) AnalyzeChannel(ctx context.Context, channelURL string)
 		TopicDetails:      channel.TopicDetails.TopicCategories,
 		RecentVideoTitles: videoTitles(videos),
 	}, keywordIntel)
-	pillars := topN(keywordIntel.PrimaryKeywords, 6)
-	if len(pillars) == 0 {
-		pillars = topN(keywords, 6)
-	}
-	pillarObjects := buildChannelPillars(pillars, videos)
+	pillarObjects := buildChannelPillars(keywordIntel, videos, identity)
+	pillars := topPillarNames(pillarObjects, 6)
+	keywords = sanitizeChannelKeywordList(keywords, videos, identity, 12)
 	assignVideoPillars(videos, pillarObjects)
 	assignVideoPillars(recentVideos, pillarObjects)
 	assignVideoPillars(topVideos, pillarObjects)
@@ -750,13 +754,13 @@ func (p *YouTubeProvider) AnalyzeChannel(ctx context.Context, channelURL string)
 	videoGroups := buildChannelVideoGroups(videos)
 	packaging := buildChannelPackaging(videos, pillarObjects)
 	growthOpps := buildChannelGrowthOpportunities(nicheAnalysis, pillarObjects, videoGroups, packaging)
+	growthOpps = sanitizeChannelGrowthOpportunities(growthOpps, pillarObjects, videos, identity)
 	contentPlan := buildChannelContentPlan(videos, pillarObjects, growthOpps, nicheAnalysis, p.now)
 	details := buildChannelAnalysisDetails(videos, channel, p.now)
 	canonicalURL := "https://www.youtube.com/channel/" + channelID
 	cacheKey := "youtube_channel:" + channelAnalysisSchemaVersion + ":" + channelID
 	score := float64(opportunityScore.Score)
 	reason := opportunityScore.Explanation
-	handle := firstNonEmpty(channel.Snippet.CustomURL, resolved.Handle)
 	country := firstNonEmpty(channel.Snippet.Country, channel.BrandingSettings.Channel.Country)
 	result = ChannelAnalysisResult{
 		Status:              StatusOK,
@@ -832,7 +836,7 @@ func (p *YouTubeProvider) AnalyzeChannel(ctx context.Context, channelURL string)
 			"Public metadata only: official YouTube Data API fields are used; no scraping, downloads, private analytics, retention, revenue, or traffic sources.",
 			"Keyword clusters and strategy are inferred from public titles, descriptions, topics, tags where available, and visible counts; no exact search ranking keywords are claimed.",
 			"Recent/top video selection is based on official API responses and available public counts.",
-			"Public channel revenue is an estimate from visible views and broad RPM assumptions, not actual YouTube earnings.",
+			"Revenue ranges are public-view advertising proxies from sampled videos and conservative RPM assumptions, not actual YouTube earnings.",
 		},
 		Metadata: ProviderResultMetadata{
 			SourceProvider: "youtube_data_api",
@@ -850,6 +854,9 @@ func (p *YouTubeProvider) AnalyzeChannel(ctx context.Context, channelURL string)
 			ScoreReason:    reason,
 		},
 	}
+	result.Opportunities = sanitizeChannelOpportunityStrings(result.Opportunities, pillarObjects, videos, identity)
+	result.SuggestedContentIdeas = sanitizeChannelIdeaStrings(result.SuggestedContentIdeas, pillarObjects, videos, identity, 10)
+	result.SuggestedShortClipIdeas = sanitizeChannelIdeaStrings(result.SuggestedShortClipIdeas, pillarObjects, videos, identity, 10)
 	result.CtaContext.PublicDataLimitations = result.Limitations
 	return result, nil
 }
@@ -891,25 +898,99 @@ func assignVideoPillars(videos []ChannelVideoSummary, pillars []ChannelContentPi
 }
 
 func matchPillar(video ChannelVideoSummary, pillars []ChannelContentPillar) string {
-	lower := strings.ToLower(video.Title + " " + video.Description)
+	titleTokens := tokenSet(tokenizeUseful(video.Title, map[string]bool{}))
 	for _, pillar := range pillars {
-		if strings.Contains(lower, strings.ToLower(pillar.Name)) {
+		if channelPhraseSupportedByTitle(pillar.Name, titleTokens) {
 			return pillar.Name
 		}
-		for _, token := range strings.Fields(strings.ToLower(pillar.Name)) {
-			if len(token) > 3 && strings.Contains(lower, token) {
-				return pillar.Name
-			}
-		}
-	}
-	if len(pillars) > 0 {
-		return pillars[0].Name
 	}
 	return ""
 }
 
-func buildChannelPillars(seed []string, videos []ChannelVideoSummary) []ChannelContentPillar {
-	candidates := validatePhraseList(seed, nil, nil, 6, true)
+type channelIdentityContext struct {
+	Names       map[string]bool
+	Tokens      map[string]bool
+	Description map[string]bool
+}
+
+func buildChannelIdentityContext(title, handle, description string) channelIdentityContext {
+	ctx := channelIdentityContext{Names: map[string]bool{}, Tokens: map[string]bool{}, Description: map[string]bool{}}
+	addName := func(raw string) {
+		cleaned := normalizeTopicPhrase(strings.TrimPrefix(strings.ToLower(raw), "@"))
+		if cleaned == "" {
+			return
+		}
+		ctx.Names[cleaned] = true
+		for _, token := range tokenizeUseful(cleaned, map[string]bool{}) {
+			ctx.Tokens[token] = true
+		}
+	}
+	addName(title)
+	addName(handle)
+	addName(strings.ReplaceAll(handle, "-", " "))
+	for _, token := range tokenizeUseful(description, map[string]bool{}) {
+		ctx.Description[token] = true
+	}
+	for _, phrase := range extractCreatorNameVariants(description) {
+		addName(phrase)
+	}
+	return ctx
+}
+
+func extractCreatorNameVariants(description string) []string {
+	cleaned := cleanMetadataText(description)
+	out := []string{}
+	patterns := []*regexp.Regexp{
+		regexp.MustCompile(`(?i)\b(?:hosted by|created by|creator|founder|by)\s+([A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z]+){0,2})\b`),
+		regexp.MustCompile(`(?i)\b([A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z]+){1,2})\s+(?:is|,)\s+(?:a|an)?\s*(?:youtuber|creator|internet personality|reviewer|host)\b`),
+	}
+	for _, pattern := range patterns {
+		for _, match := range pattern.FindAllStringSubmatch(cleaned, -1) {
+			if len(match) > 1 {
+				out = append(out, match[1])
+			}
+		}
+	}
+	return out
+}
+
+func sanitizeChannelKeywordIntelligence(kw KeywordIntelligence, videos []ChannelVideoSummary, identity channelIdentityContext) KeywordIntelligence {
+	kw.PrimaryKeywords = sanitizeChannelKeywordList(kw.PrimaryKeywords, videos, identity, 6)
+	kw.SecondaryKeywords = sanitizeChannelKeywordList(kw.SecondaryKeywords, videos, identity, 10)
+	kw.LongTailPhrases = sanitizeChannelKeywordList(kw.LongTailPhrases, videos, identity, 8)
+	kw.PrimaryTopics = kw.PrimaryKeywords
+	kw.SupportingTerms = kw.SecondaryKeywords
+	kw.SearchPhrases = kw.LongTailPhrases
+	return kw
+}
+
+func sanitizeChannelKeywordList(values []string, videos []ChannelVideoSummary, identity channelIdentityContext, limit int) []string {
+	_, titleTokens := channelEvidenceTokens(videos)
+	out := []string{}
+	for _, value := range values {
+		phrase := normalizeChannelPillarName(value)
+		if !validChannelTopicPhrase(phrase, titleTokens, identity) || nearDuplicateSelected(phrase, out) {
+			continue
+		}
+		out = append(out, applyAcronymCasing(phrase))
+		if limit > 0 && len(out) >= limit {
+			break
+		}
+	}
+	return out
+}
+
+func buildChannelPillars(kw KeywordIntelligence, videos []ChannelVideoSummary, identity channelIdentityContext) []ChannelContentPillar {
+	_, titleTokens := channelEvidenceTokens(videos)
+	seed := channelPillarSeeds(kw, videos, identity)
+	candidates := []string{}
+	for _, raw := range seed {
+		name := normalizeChannelPillarName(raw)
+		if !validChannelTopicPhrase(name, titleTokens, identity) || nearDuplicateSelected(name, candidates) {
+			continue
+		}
+		candidates = append(candidates, name)
+	}
 	if len(candidates) == 0 {
 		return []ChannelContentPillar{}
 	}
@@ -918,16 +999,12 @@ func buildChannelPillars(seed []string, videos []ChannelVideoSummary) []ChannelC
 	for _, name := range candidates {
 		matches := []ChannelVideoSummary{}
 		for _, video := range videos {
-			if strings.Contains(strings.ToLower(video.Title+" "+video.Description), strings.ToLower(name)) || phraseOverlapsSimple(name, video.Title) {
+			if channelPhraseMatchesVideo(name, video) {
 				matches = append(matches, video)
 			}
 		}
-		if len(matches) == 0 {
-			for _, video := range videos {
-				if phraseOverlapsSimple(name, video.Title) || phraseOverlapsSimple(name, video.Description) {
-					matches = append(matches, video)
-				}
-			}
+		if len(matches) < 2 {
+			continue
 		}
 		views := videoViewFloats(matches)
 		median := medianFloatPtr(views)
@@ -955,6 +1032,9 @@ func buildChannelPillars(seed []string, videos []ChannelVideoSummary) []ChannelC
 		if total > 0 {
 			share = float64(len(matches)) / float64(total)
 		}
+		if share <= 0 || median == nil || strongest == nil {
+			continue
+		}
 		out = append(out, ChannelContentPillar{
 			Name:              applyAcronymCasing(name),
 			ShareOfUploads:    share,
@@ -966,18 +1046,275 @@ func buildChannelPillars(seed []string, videos []ChannelVideoSummary) []ChannelC
 			Recommendation:    pillarRecommendation(name, status),
 		})
 	}
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].UploadCount == out[j].UploadCount && out[i].MedianViews != nil && out[j].MedianViews != nil {
+			return *out[i].MedianViews > *out[j].MedianViews
+		}
+		return out[i].UploadCount > out[j].UploadCount
+	})
+	if len(out) > 5 {
+		out = out[:5]
+	}
 	return out
 }
 
-func phraseOverlapsSimple(a, b string) bool {
-	ta := tokenizeUseful(a, map[string]bool{})
-	tb := tokenSet(tokenizeUseful(b, map[string]bool{}))
-	for _, token := range ta {
-		if len(token) > 3 && tb[token] {
+func channelPillarSeeds(kw KeywordIntelligence, videos []ChannelVideoSummary, identity channelIdentityContext) []string {
+	seeds := append(append([]string{}, kw.PrimaryKeywords...), kw.SecondaryKeywords...)
+	seeds = append(seeds, kw.LongTailPhrases...)
+	seeds = append(channelThematicPillarSeeds(videos), seeds...)
+	freq := map[string]int{}
+	for _, video := range videos {
+		tokens := tokenizeUseful(video.Title, identity.Tokens)
+		for n := 2; n <= 4; n++ {
+			for _, phrase := range ngrams(tokens, n) {
+				name := normalizeChannelPillarName(phrase)
+				if name != "" {
+					freq[name]++
+				}
+			}
+		}
+	}
+	type item struct {
+		phrase string
+		count  int
+	}
+	items := []item{}
+	for phrase, count := range freq {
+		if count > 0 {
+			items = append(items, item{phrase: phrase, count: count})
+		}
+	}
+	sort.Slice(items, func(i, j int) bool {
+		if items[i].count == items[j].count {
+			return len(items[i].phrase) < len(items[j].phrase)
+		}
+		return items[i].count > items[j].count
+	})
+	for _, item := range items {
+		seeds = append(seeds, item.phrase)
+	}
+	return seeds
+}
+
+func channelThematicPillarSeeds(videos []ChannelVideoSummary) []string {
+	counts := map[string]int{}
+	add := func(name string, ok bool) {
+		if ok {
+			counts[name]++
+		}
+	}
+	for _, video := range videos {
+		lower := normalizeTopicPhrase(video.Title)
+		hasPhone := containsAnyNormalized(lower, []string{"phone", "iphone", "android", "smartphone"})
+		hasReview := containsAnyNormalized(lower, []string{"review", "test", "hands on", "camera"})
+		add("smartphone reviews", hasPhone && hasReview)
+		add("camera comparisons", strings.Contains(lower, "camera") && containsAnyNormalized(lower, []string{"test", "comparison", "versus", "vs", "review"}))
+		add("Apple product reviews", containsAnyNormalized(lower, []string{"iphone", "ios", "macbook", "apple", "airpod"}) && containsAnyNormalized(lower, []string{"review", "hands on", "feature", "test"}))
+		add("electric vehicles", containsAnyNormalized(lower, []string{"electric car", "electric vehicle", "tesla", "robotaxi", "ev"}))
+		add("AI and computer science", containsAnyNormalized(lower, []string{"ai", "algorithm", "quantum", "turing", "computer", "coding", "code"}))
+		add("AI creator workflows", containsAnyNormalized(lower, []string{"ai", "automation", "workflow", "system"}) && containsAnyNormalized(lower, []string{"creator", "youtube", "video"}))
+		add("programming concepts", containsAnyNormalized(lower, []string{"code", "coding", "programming", "compiler", "database"}))
+		add("challenge videos", containsAnyNormalized(lower, []string{"challenge", "last to", "last leave", "circle", "wins", "survive", "survival"}))
+		add("large scale giveaways", containsAnyNormalized(lower, []string{"money", "giveaway", "prize", "win", "wins"}) && containsAnyNormalized(lower, []string{"challenge", "last", "circle", "people", "days"}))
+	}
+	out := []string{}
+	for name, count := range counts {
+		if count >= 2 {
+			out = append(out, name)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+func containsAnyNormalized(text string, needles []string) bool {
+	text = normalizeTopicPhrase(text)
+	for _, needle := range needles {
+		if strings.Contains(text, normalizeTopicPhrase(needle)) {
 			return true
 		}
 	}
 	return false
+}
+
+func channelEvidenceTokens(videos []ChannelVideoSummary) (map[string]bool, map[string]bool) {
+	all := map[string]bool{}
+	title := map[string]bool{}
+	for _, video := range videos {
+		for _, token := range tokenizeUseful(video.Title, map[string]bool{}) {
+			all[token] = true
+			title[token] = true
+		}
+		for _, token := range tokenizeUseful(video.Description, map[string]bool{}) {
+			all[token] = true
+		}
+	}
+	return all, title
+}
+
+func normalizeChannelPillarName(value string) string {
+	phrase := normalizeTopicPhrase(value)
+	replacements := map[string]string{
+		"consumer electronic":     "consumer electronics",
+		"smartphone review":       "smartphone reviews",
+		"phone review":            "phone reviews",
+		"electric vehicle":        "electric vehicles",
+		"electric vehicle review": "electric vehicle reviews",
+		"car review":              "car reviews",
+		"camera comparison":       "camera comparisons",
+		"camera test":             "camera tests",
+		"product review":          "product reviews",
+		"challenge video":         "challenge videos",
+		"large scale giveaway":    "large scale giveaways",
+	}
+	if replacement, ok := replacements[phrase]; ok {
+		return replacement
+	}
+	return phrase
+}
+
+func validChannelTopicPhrase(phrase string, titleTokens map[string]bool, identity channelIdentityContext) bool {
+	phrase = normalizeChannelPillarName(phrase)
+	recognized := recognizedChannelPillar(phrase)
+	if recognized && !channelBiographyFragment(phrase) && !channelNounPile(phrase) {
+		return true
+	}
+	if !ValidCreatorPhrase(phrase, nil, nil, true) || (!recognized && channelIdentityPhrase(phrase, identity)) || channelBiographyFragment(phrase) || channelNounPile(phrase) {
+		return false
+	}
+	words := strings.Fields(phrase)
+	if len(words) < 2 || len(words) > 5 {
+		return false
+	}
+	supported := 0
+	for _, word := range words {
+		if titleTokens[word] || isKnownAcronym(word) {
+			supported++
+		}
+	}
+	if supported == 0 && recognized {
+		return true
+	}
+	return supported >= minInt(2, len(words))
+}
+
+func recognizedChannelPillar(phrase string) bool {
+	switch normalizeTopicPhrase(phrase) {
+	case "smartphone review", "camera comparison", "apple product review", "electric vehicle", "ai and computer science", "ai creator workflow", "programming concept", "challenge video", "large scale giveaway":
+		return true
+	default:
+		return false
+	}
+}
+
+func channelIdentityPhrase(phrase string, identity channelIdentityContext) bool {
+	phrase = normalizeTopicPhrase(phrase)
+	if identity.Names[phrase] {
+		return true
+	}
+	words := strings.Fields(phrase)
+	if len(words) == 0 {
+		return true
+	}
+	identityHits := 0
+	for _, word := range words {
+		if identity.Tokens[word] {
+			identityHits++
+		}
+	}
+	return identityHits > 0
+}
+
+func channelBiographyFragment(phrase string) bool {
+	lower := normalizeTopicPhrase(phrase)
+	for _, term := range []string{"youtuber", "you tuber", "internet personality", "tech head", "geek", "host", "reviewer", "influencer"} {
+		if strings.Contains(lower, term) {
+			return true
+		}
+	}
+	words := strings.Fields(lower)
+	if len(words) <= 2 && (strings.Contains(lower, "creator") || strings.Contains(lower, "channel")) {
+		return true
+	}
+	for _, term := range []string{"cooked", "driving", "reach", "leave", "wins", "win", "work"} {
+		if len(words) <= 3 && containsAnyNormalized(lower, []string{term}) {
+			return true
+		}
+	}
+	return false
+}
+
+func channelNounPile(phrase string) bool {
+	words := strings.Fields(normalizeTopicPhrase(phrase))
+	if len(words) < 4 {
+		return false
+	}
+	generic := 0
+	for _, word := range words {
+		if lowInformationWords[word] || word == "tech" || word == "technology" || word == "consumer" || word == "electronic" || word == "electronics" || word == "content" || word == "video" {
+			generic++
+		}
+	}
+	return generic >= len(words)-1
+}
+
+func channelPhraseSupportedByTitle(phrase string, titleTokens map[string]bool) bool {
+	words := strings.Fields(normalizeTopicPhrase(phrase))
+	if len(words) == 0 {
+		return false
+	}
+	hits := 0
+	for _, word := range words {
+		if titleTokens[word] || singularPluralTokenHit(word, titleTokens) {
+			hits++
+		}
+	}
+	if len(words) <= 2 {
+		return hits == len(words)
+	}
+	return hits >= len(words)-1
+}
+
+func channelPhraseMatchesVideo(phrase string, video ChannelVideoSummary) bool {
+	normalized := normalizeTopicPhrase(phrase)
+	title := normalizeTopicPhrase(video.Title)
+	switch normalized {
+	case "smartphone review":
+		return containsAnyNormalized(title, []string{"phone", "iphone", "android", "smartphone"}) && containsAnyNormalized(title, []string{"review", "test", "hands on", "camera"})
+	case "camera comparison":
+		return strings.Contains(title, "camera") && containsAnyNormalized(title, []string{"test", "comparison", "versus", "vs", "review"})
+	case "apple product review":
+		return containsAnyNormalized(title, []string{"iphone", "ios", "macbook", "apple", "airpod"}) && containsAnyNormalized(title, []string{"review", "hands on", "feature", "test"})
+	case "electric vehicle":
+		return containsAnyNormalized(title, []string{"electric car", "electric vehicle", "tesla", "robotaxi", "ev"})
+	case "ai and computer science":
+		return containsAnyNormalized(title, []string{"ai", "algorithm", "quantum", "turing", "computer", "coding", "code"})
+	case "ai creator workflow":
+		return containsAnyNormalized(title, []string{"ai", "automation", "workflow", "system"}) && containsAnyNormalized(title, []string{"creator", "youtube", "video"})
+	case "programming concept":
+		return containsAnyNormalized(title, []string{"code", "coding", "programming", "compiler", "database"})
+	case "challenge video":
+		return containsAnyNormalized(title, []string{"challenge", "last to", "last leave", "circle", "wins", "survive", "survival"})
+	case "large scale giveaway":
+		return containsAnyNormalized(title, []string{"money", "giveaway", "prize", "win", "wins"}) && containsAnyNormalized(title, []string{"challenge", "last", "circle", "people", "days"})
+	default:
+		return channelPhraseSupportedByTitle(phrase, tokenSet(tokenizeUseful(video.Title, map[string]bool{})))
+	}
+}
+
+func singularPluralTokenHit(word string, tokens map[string]bool) bool {
+	if tokens[word] {
+		return true
+	}
+	if strings.HasSuffix(word, "s") && tokens[strings.TrimSuffix(word, "s")] {
+		return true
+	}
+	return tokens[word+"s"]
+}
+
+func channelSingleUploadCanQualify(name string, video ChannelVideoSummary) bool {
+	titleTokens := tokenSet(tokenizeUseful(video.Title, map[string]bool{}))
+	return channelPhraseSupportedByTitle(name, titleTokens) && video.Views != nil && *video.Views > 0
 }
 
 func pillarRecommendation(name, status string) string {
@@ -996,9 +1333,12 @@ func pillarRecommendation(name, status string) string {
 func buildChannelScoreModel(channel youtubeChannelItem, videos []ChannelVideoSummary, pillars []ChannelContentPillar, kw KeywordIntelligence, niche NicheAnalysis, now func() time.Time) ([]ScoreDimension, ScoreDimension, ScoreDimension) {
 	metrics := channelRawMetrics(videos, channel.Statistics.SubscriberCount, now)
 	sampleSize := len(videoViewFloats(videos))
-	topicClarity := clampInt(35 + len(pillars)*8 + int(niche.Confidence*20))
+	topicClarity := clampInt(25 + len(pillars)*10 + int(niche.Confidence*14))
 	if len(kw.PrimaryKeywords) >= 4 {
 		topicClarity += 8
+	}
+	if len(pillars) == 0 {
+		topicClarity = minInt(topicClarity, 42)
 	}
 	packaging := scorePackaging(videos)
 	consistency := scoreConsistency(metrics.uploadsPerMonth, metrics.daysSinceLastUpload)
@@ -1031,6 +1371,9 @@ func buildChannelScoreModel(channel youtubeChannelItem, videos []ChannelVideoSum
 		scoreDimension("evidence_quality", "Evidence quality", evidence, "Caps the overall score when public evidence is incomplete or visible engagement counts are hidden.", fmt.Sprintf("%d sampled videos", sampleSize)),
 	}
 	weighted := float64(topicClarity)*0.14 + float64(packaging)*0.12 + float64(consistency)*0.14 + float64(repeatability)*0.14 + float64(formatEfficiency)*0.10 + float64(momentum)*0.14 + float64(monetisation)*0.10 + float64(evidence)*0.12
+	if len(pillars) == 0 && weighted > 58 {
+		weighted = 58
+	}
 	if evidence < 50 && weighted > 62 {
 		weighted = 62
 	}
@@ -1126,10 +1469,15 @@ func estimateChannelRevenue(channel youtubeChannelItem, videos []ChannelVideoSum
 			recentViews += *video.Views
 		}
 	}
-	low := float64(publicViews) / 1000 * rpmLow
-	high := float64(publicViews) / 1000 * rpmHigh
-	confidence := 42
-	if publicViews > 0 {
+	sampledLow := float64(recentViews) / 1000 * rpmLow
+	sampledHigh := float64(recentViews) / 1000 * rpmHigh
+	months := maxFloat(1, cadenceObservationMonths(videos))
+	runRateLow := sampledLow / months
+	runRateHigh := sampledHigh / months
+	low := sampledLow
+	high := sampledHigh
+	confidence := 38
+	if recentViews > 0 {
 		confidence += 12
 	}
 	if len(videos) >= 10 {
@@ -1144,7 +1492,7 @@ func estimateChannelRevenue(channel youtubeChannelItem, videos []ChannelVideoSum
 	confidence = clampInt(confidence)
 	return RevenueEstimate{
 		Source:                     "public_estimate",
-		ModelType:                  "public_channel_views_x_estimated_rpm_range",
+		ModelType:                  "sampled_recent_public_views_x_estimated_rpm_range",
 		Currency:                   "USD",
 		Low:                        roundMoney(low),
 		Midpoint:                   roundMoney((low + high) / 2),
@@ -1155,8 +1503,8 @@ func estimateChannelRevenue(channel youtubeChannelItem, videos []ChannelVideoSum
 		EstimatedRevenuePer1000:    fmt.Sprintf("$%.2f–$%.2f estimated RPM", rpmLow, rpmHigh),
 		Confidence:                 ratingForScore(confidence),
 		ConfidenceScore:            confidence,
-		CalculationBasis:           fmt.Sprintf("Estimated lifetime public ad revenue uses %s public channel views multiplied by a broad estimated RPM range. Sampled recent videos account for %s public views but are not treated as a complete history.", formatUint(publicViews), formatUint(recentViews)),
-		Assumptions:                []string{"Only public views are used.", "RPM varies by audience geography, ad fill, topic, format, seasonality, and monetisation eligibility.", "Short-form RPM is lowered only when sampled duration classification indicates a Shorts-heavy channel."},
+		CalculationBasis:           fmt.Sprintf("Primary range uses %s sampled public views multiplied by a broad estimated RPM range. Approximate current monthly run-rate from the sampled window is %s. The rough lifetime public-view ad revenue proxy is secondary and low confidence because historical format mix is unknown; visible channel lifetime views are %s.", formatUint(recentViews), formatMoneyRange(runRateLow, runRateHigh), formatUint(publicViews)),
+		Assumptions:                []string{"Only sampled public views are used for the primary range.", "RPM varies by audience geography, ad fill, topic, format, seasonality, and monetisation eligibility.", "A lifetime public-view proxy is not actual earnings and is de-emphasized when historical format mix is unknown."},
 		Exclusions:                 []string{"Actual YouTube Analytics revenue", "Sponsorships", "Affiliate revenue", "Memberships", "Merchandise", "Courses", "Private, deleted, hidden, or unlisted videos", "Invalid traffic and Premium adjustments"},
 		MonetisationEligibility:    "Unknown from public metadata",
 		ActualAnalyticsUnavailable: true,
@@ -1177,12 +1525,12 @@ func buildChannelCharts(videos []ChannelVideoSummary, pillars []ChannelContentPi
 	views := videoViewFloats(videos)
 	sort.Float64s(views)
 	for i, v := range views {
-		dist = append(dist, ChannelChartPoint{Label: fmt.Sprintf("Video %d", i+1), Value: v})
+		dist = append(dist, ChannelChartPoint{Label: fmt.Sprintf("Rank %d by views", i+1), Value: v, Description: "Individual sampled video views sorted ascending"})
 	}
 	cadenceCounts := map[string]int{}
 	for _, video := range videos {
 		if t, err := time.Parse(time.RFC3339, video.PublishedAt); err == nil {
-			key := t.Format("2006-01")
+			key := t.Format("Jan 2006")
 			cadenceCounts[key]++
 		}
 	}
@@ -1206,7 +1554,7 @@ func buildChannelCharts(videos []ChannelVideoSummary, pillars []ChannelContentPi
 	}
 	formatPoints := []ChannelChartPoint{}
 	for _, key := range mapKeysFloatSlice(formatMedian) {
-		formatPoints = append(formatPoints, ChannelChartPoint{Label: strings.ReplaceAll(key, "_", " "), Value: medianFloat(formatMedian[key])})
+		formatPoints = append(formatPoints, ChannelChartPoint{Label: formatVideoFormatLabel(key), Value: medianFloat(formatMedian[key]), Description: fmt.Sprintf("%d sampled video(s)", len(formatMedian[key]))})
 	}
 	return ChannelCharts{UploadPerformance: perf, ViewsDistribution: dist, UploadCadence: cadence, TopicPerformance: topic, FormatPerformance: formatPoints}
 }
@@ -1254,7 +1602,7 @@ func buildChannelPackaging(videos []ChannelVideoSummary, pillars []ChannelConten
 		if strings.Contains(title, "?") {
 			questions++
 		}
-		if regexp.MustCompile(`\d`).MatchString(title) {
+		if isTrueNumberLedTitle(title) {
 			numbers++
 		}
 		if video.ThumbnailURL != "" {
@@ -1291,11 +1639,25 @@ func buildChannelPackaging(videos []ChannelVideoSummary, pillars []ChannelConten
 	}
 }
 
+func isTrueNumberLedTitle(title string) bool {
+	lower := strings.ToLower(strings.TrimSpace(title))
+	if regexp.MustCompile(`^\s*\d+\s+`).MatchString(lower) {
+		return true
+	}
+	if regexp.MustCompile(`\b\d+\s+(features|mistakes|reasons|ways|tips|steps|things|questions|lessons|rules|changes|problems|ideas)\b`).MatchString(lower) {
+		return true
+	}
+	if regexp.MustCompile(`\b(top|best)\s+\d+\b`).MatchString(lower) {
+		return true
+	}
+	return false
+}
+
 func buildChannelGrowthOpportunities(niche NicheAnalysis, pillars []ChannelContentPillar, groups []ChannelVideoGroup, packaging ChannelPackaging) []ChannelOpportunity {
 	out := []ChannelOpportunity{}
 	core := firstPhraseFromPillars(pillars)
 	if core == "" {
-		core = firstNonEmpty(niche.SpecificTopic, niche.SubNiche, niche.PrimaryNiche)
+		core = "a validated high-performing subject"
 	}
 	bestEvidence := []string{}
 	if len(groups) > 0 && len(groups[0].Videos) > 0 {
@@ -1308,7 +1670,7 @@ func buildChannelGrowthOpportunities(niche NicheAnalysis, pillars []ChannelConte
 		RecommendedFormat: "Long-form follow-up with a Shorts cutdown",
 		SuggestedAudience: firstNonEmpty(niche.TargetAudience, niche.AudienceType, "Current viewers"),
 		Confidence:        "Good",
-		SampleTitle:       "The next step after " + titleCase(core),
+		SampleTitle:       naturalChannelTitle(core, "followup"),
 		NextAction:        "Choose the strongest recent winner and make a direct follow-up with a sharper payoff.",
 	})
 	if packaging.WeakestHabit != "" {
@@ -1319,7 +1681,7 @@ func buildChannelGrowthOpportunities(niche NicheAnalysis, pillars []ChannelConte
 			RecommendedFormat: primaryOpportunityFormat(groups),
 			SuggestedAudience: firstNonEmpty(niche.TargetAudience, "Search-led viewers"),
 			Confidence:        "Moderate",
-			SampleTitle:       "How to " + core + " without the common mistake",
+			SampleTitle:       naturalChannelTitle(core, "packaging"),
 			NextAction:        "Rewrite one upcoming title with a clearer viewer problem and outcome.",
 		})
 	}
@@ -1330,7 +1692,7 @@ func buildChannelGrowthOpportunities(niche NicheAnalysis, pillars []ChannelConte
 		RecommendedFormat: "Beginner guide",
 		SuggestedAudience: "New viewers entering " + firstNonEmpty(niche.PrimaryNiche, "this topic"),
 		Confidence:        "Moderate",
-		SampleTitle:       titleCase(core) + " for beginners: the simple version",
+		SampleTitle:       naturalChannelTitle(core, "beginner"),
 		NextAction:        "Turn the strongest pillar into a glossary, checklist, or first-principles explainer.",
 	})
 	return out
@@ -1338,36 +1700,73 @@ func buildChannelGrowthOpportunities(niche NicheAnalysis, pillars []ChannelConte
 
 func buildChannelContentPlan(videos []ChannelVideoSummary, pillars []ChannelContentPillar, opps []ChannelOpportunity, niche NicheAnalysis, now func() time.Time) []ChannelPlanWeek {
 	uploadsPerMonth, _ := cadenceMetrics(videos, now)
-	ideasPerWeek := 1
-	if uploadsPerMonth >= 8 {
-		ideasPerWeek = 2
-	}
+	recommendedUploads := recommendedMonthlyUploads(uploadsPerMonth, videos)
 	core := firstPhraseFromPillars(pillars)
 	if core == "" {
-		core = firstNonEmpty(niche.SpecificTopic, niche.SubNiche, niche.PrimaryNiche, "core topic")
+		core = "validated topic"
 	}
 	weeks := []ChannelPlanWeek{}
+	usedTitles := map[string]bool{}
+	uploadIndex := 0
 	for i := 1; i <= 4; i++ {
-		theme := []string{"Proven-topic follow-up", "Packaging test", "Adjacent topic expansion", "Remake or series continuation"}[i-1]
+		theme := []string{"Proven-topic follow-up", "Packaging test", "Adjacent topic expansion", "Review and repurpose"}[i-1]
 		ideas := []ChannelPlanIdea{}
-		for j := 0; j < ideasPerWeek; j++ {
+		if uploadIndex < recommendedUploads {
 			opp := ChannelOpportunity{RecommendedFormat: "Long-form", Title: theme}
 			if len(opps) > 0 {
-				opp = opps[(i+j-1)%len(opps)]
+				opp = opps[uploadIndex%len(opps)]
+			}
+			pillar := core
+			if len(pillars) > 0 {
+				pillar = pillars[uploadIndex%len(pillars)].Name
+			}
+			title := firstNonEmpty(opp.SampleTitle, naturalChannelTitle(pillar, "followup"))
+			for usedTitles[strings.ToLower(title)] {
+				title = naturalChannelTitle(pillar, "packaging")
 			}
 			ideas = append(ideas, ChannelPlanIdea{
-				WorkingTitle:      firstNonEmpty(opp.SampleTitle, fmt.Sprintf("%s: %s", theme, titleCase(core))),
-				ContentPillar:     core,
+				WorkingTitle:      title,
+				ContentPillar:     pillar,
 				Format:            firstNonEmpty(opp.RecommendedFormat, "Long-form"),
 				Objective:         opp.Title,
 				Evidence:          strings.Join(topN(opp.Evidence, 2), " · "),
 				HookDirection:     "Open with the viewer problem, then show the concrete payoff.",
-				RecommendedTiming: fmt.Sprintf("Week %d, slot %d", i, j+1),
+				RecommendedTiming: fmt.Sprintf("Week %d", i),
+			})
+			usedTitles[strings.ToLower(title)] = true
+			uploadIndex++
+		} else {
+			ideas = append(ideas, ChannelPlanIdea{
+				WorkingTitle:      []string{"Package the next upload", "Research adjacent angles", "Repurpose the strongest upload", "Review performance and decide the next test"}[i-1],
+				ContentPillar:     core,
+				Format:            "Preparation",
+				Objective:         theme,
+				Evidence:          "Cadence does not support inventing an extra upload this week.",
+				HookDirection:     "Use this week to improve the next publishable concept instead of forcing volume.",
+				RecommendedTiming: fmt.Sprintf("Week %d", i),
 			})
 		}
-		weeks = append(weeks, ChannelPlanWeek{Week: i, Theme: theme, Cadence: fmt.Sprintf("%d upload(s)", ideasPerWeek), Ideas: ideas, Rationale: "Cadence is based on recent public publishing volume; no calendar dates are invented."})
+		weeks = append(weeks, ChannelPlanWeek{Week: i, Theme: theme, Cadence: fmt.Sprintf("%d recommended upload(s) in 30 days", recommendedUploads), Ideas: ideas, Rationale: "Cadence is based on recent public publishing volume; preparation weeks are used when the sample does not support weekly uploads."})
 	}
 	return weeks
+}
+
+func recommendedMonthlyUploads(uploadsPerMonth float64, videos []ChannelVideoSummary) int {
+	if primaryChannelFormat(videos) == "short_form" && uploadsPerMonth >= 12 {
+		return minInt(12, int(uploadsPerMonth+0.5))
+	}
+	switch {
+	case uploadsPerMonth < 0.75:
+		return 1
+	case uploadsPerMonth < 1.75:
+		return 2
+	case uploadsPerMonth < 3:
+		return 2
+	case uploadsPerMonth < 6:
+		return 4
+	default:
+		return 4
+	}
 }
 
 func buildChannelCTAContext(channelID, title, canonical string, pillars []ChannelContentPillar, opps []ChannelOpportunity, metrics []PerformanceMetric, limitations []string) ChannelCTAContext {
@@ -1398,6 +1797,169 @@ func buildChannelCTAContext(channelID, title, canonical string, pillars []Channe
 	}
 }
 
+func sanitizeChannelGrowthOpportunities(opps []ChannelOpportunity, pillars []ChannelContentPillar, videos []ChannelVideoSummary, identity channelIdentityContext) []ChannelOpportunity {
+	validPillars := topPillarNames(pillars, 5)
+	fallback := firstVideoSubject(videos, identity)
+	out := []ChannelOpportunity{}
+	seen := map[string]bool{}
+	for _, opp := range opps {
+		opp.Why = sanitizeChannelText(opp.Why, validPillars, fallback, identity)
+		opp.SampleTitle = sanitizeChannelGeneratedTitle(opp.SampleTitle, validPillars, fallback, identity)
+		opp.NextAction = sanitizeChannelText(opp.NextAction, validPillars, fallback, identity)
+		key := strings.ToLower(opp.Title + "|" + opp.SampleTitle)
+		if opp.SampleTitle == "" || seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, opp)
+	}
+	if len(out) == 0 && fallback != "" {
+		out = append(out, ChannelOpportunity{
+			Title:             "Use a specific high-performing subject",
+			Why:               "The sampled metadata does not support clean repeatable pillars, so the next idea should come from a specific video subject.",
+			Evidence:          topVideoTitles(videos, 2),
+			RecommendedFormat: "Long-form",
+			SuggestedAudience: "Current viewers",
+			Confidence:        "Limited",
+			SampleTitle:       naturalChannelTitle(fallback, "followup"),
+			NextAction:        "Choose one high-performing sampled upload and make a direct, evidence-based follow-up.",
+		})
+	}
+	return topNChannelOpportunities(out, 4)
+}
+
+func sanitizeChannelOpportunityStrings(values []string, pillars []ChannelContentPillar, videos []ChannelVideoSummary, identity channelIdentityContext) []string {
+	valid := topPillarNames(pillars, 5)
+	fallback := firstVideoSubject(videos, identity)
+	out := []string{}
+	for _, value := range values {
+		cleaned := sanitizeChannelText(value, valid, fallback, identity)
+		if cleaned != "" && !nearDuplicateSelected(cleaned, out) {
+			out = append(out, cleaned)
+		}
+	}
+	return out
+}
+
+func sanitizeChannelIdeaStrings(values []string, pillars []ChannelContentPillar, videos []ChannelVideoSummary, identity channelIdentityContext, limit int) []string {
+	valid := topPillarNames(pillars, 5)
+	fallback := firstVideoSubject(videos, identity)
+	out := []string{}
+	for _, value := range values {
+		cleaned := sanitizeChannelGeneratedTitle(value, valid, fallback, identity)
+		if cleaned != "" && !nearDuplicateSelected(cleaned, out) {
+			out = append(out, cleaned)
+		}
+		if limit > 0 && len(out) >= limit {
+			break
+		}
+	}
+	return out
+}
+
+func sanitizeChannelText(value string, validPillars []string, fallback string, identity channelIdentityContext) string {
+	value = strings.TrimSpace(cleanupGeneratedText(value))
+	if value == "" {
+		return ""
+	}
+	lower := strings.ToLower(value)
+	if channelTextContainsIdentityTopic(lower, identity) || malformedChannelRecommendation(lower) {
+		if fallback == "" && len(validPillars) > 0 {
+			fallback = validPillars[0]
+		}
+		if fallback == "" {
+			return ""
+		}
+		return "Use a specific sampled subject such as " + applyAcronymCasing(fallback) + " instead of channel identity or biography language."
+	}
+	return value
+}
+
+func sanitizeChannelGeneratedTitle(value string, validPillars []string, fallback string, identity channelIdentityContext) string {
+	value = strings.TrimSpace(cleanupGeneratedText(value))
+	if fallback == "" && len(validPillars) > 0 {
+		fallback = validPillars[0]
+	}
+	if value == "" || malformedTitle(value) || malformedChannelRecommendation(strings.ToLower(value)) || channelTextContainsIdentityTopic(strings.ToLower(value), identity) {
+		if fallback == "" {
+			return ""
+		}
+		return naturalChannelTitle(fallback, "followup")
+	}
+	return value
+}
+
+func channelTextContainsIdentityTopic(lower string, identity channelIdentityContext) bool {
+	normalized := normalizeTopicPhrase(lower)
+	for name := range identity.Names {
+		if name != "" && strings.Contains(normalized, name) {
+			return true
+		}
+	}
+	return false
+}
+
+func malformedChannelRecommendation(lower string) bool {
+	for _, pattern := range []string{"how to marque", "for beginners", "next step after"} {
+		if strings.Contains(lower, pattern) && regexp.MustCompile(`(?i)\b(marque|brownlee|youtuber|internet personality|tech head)\b`).MatchString(lower) {
+			return true
+		}
+	}
+	return regexp.MustCompile(`(?i)\bhow to\s+[a-z]+(?:\s+[a-z]+)?\s*$`).MatchString(lower)
+}
+
+func naturalChannelTitle(topic, mode string) string {
+	topic = applyAcronymCasing(normalizeChannelPillarName(topic))
+	if topic == "" {
+		topic = "this topic"
+	}
+	switch mode {
+	case "beginner":
+		return "A practical beginner guide to " + topic
+	case "packaging":
+		return "What viewers need to know before choosing " + topic
+	default:
+		return "What changed in " + topic + " and why it matters"
+	}
+}
+
+func firstVideoSubject(videos []ChannelVideoSummary, identity channelIdentityContext) string {
+	for _, video := range videos {
+		tokens := tokenizeUseful(video.Title, identity.Tokens)
+		for n := 3; n >= 2; n-- {
+			for _, phrase := range ngrams(tokens, n) {
+				name := normalizeChannelPillarName(phrase)
+				if !channelBiographyFragment(name) && !channelIdentityPhrase(name, identity) {
+					return name
+				}
+			}
+		}
+	}
+	return ""
+}
+
+func topVideoTitles(videos []ChannelVideoSummary, n int) []string {
+	out := []string{}
+	for _, video := range videos {
+		if video.Title != "" {
+			out = append(out, video.Title)
+		}
+		if len(out) >= n {
+			break
+		}
+	}
+	return out
+}
+
+func topNChannelOpportunities(values []ChannelOpportunity, n int) []ChannelOpportunity {
+	if n > len(values) {
+		n = len(values)
+	}
+	out := make([]ChannelOpportunity, n)
+	copy(out, values[:n])
+	return out
+}
+
 func buildChannelAnalysisDetails(videos []ChannelVideoSummary, channel youtubeChannelItem, now func() time.Time) ChannelAnalysisDetails {
 	hidden := []string{}
 	if channel.Statistics.SubscriberCount == "" {
@@ -1410,15 +1972,20 @@ func buildChannelAnalysisDetails(videos []ChannelVideoSummary, channel youtubeCh
 		hidden = append(hidden, "Some comment counts are hidden or unavailable and are not treated as zero.")
 	}
 	start, end := sampleRange(videos)
+	cadence := sampledCadenceSummary(videos, now)
 	return ChannelAnalysisDetails{
 		SampledVideoCount:    len(videos),
 		SampleStart:          start,
 		SampleEnd:            end,
+		SampleDateSpanDays:   round1(cadence.SpanDays),
+		UploadsPerMonth:      round1(cadence.UploadsPerMonth),
+		UploadsPerWeek:       round1(cadence.UploadsPerWeek),
+		CadenceConfidence:    cadence.Confidence,
 		ProviderAvailability: "youtube_data_api_public_metadata",
 		HiddenMetricNotes:    hidden,
 		ScoringMethodology:   []string{"Channel opportunity is bounded 0-100.", "Weights: topic clarity, packaging, consistency, repeatability, format efficiency, momentum, monetisation potential, and evidence quality.", "Evidence quality caps low-sample or hidden-stat analyses."},
-		TopicMethodology:     []string{"Pillars are derived from cleaned channel metadata and sampled video titles/descriptions.", "ValidCreatorPhrase filters boilerplate, malformed n-grams, placeholders, and near-duplicates."},
-		RevenueMethodology:   []string{"Public channel views multiplied by estimated RPM ranges.", "Shorts RPM is only lowered when duration classification supports a Shorts-heavy sample.", "Actual YouTube Analytics and non-ad revenue are excluded."},
+		TopicMethodology:     []string{"Pillars are derived from sampled upload titles first, with channel identity, handle, creator-name variants, biography fragments, category-only terms, and description-only phrases removed.", "Rendered pillars require title evidence, supporting uploads, positive upload share, median views from supporting videos, and shared phrase-quality validation.", "OpenAI-enhanced phrases cannot bypass deterministic pillar validation."},
+		RevenueMethodology:   []string{"Primary range uses sampled recent public views multiplied by broad estimated RPM ranges.", "The rough lifetime public-view ad revenue proxy is secondary and low confidence when historical format mix is unknown.", "Actual YouTube Analytics and non-ad revenue are excluded."},
 		ClassificationRules:  []string{"Short-form: duration up to 180 seconds.", "Long-form: duration above 180 seconds.", "Livestream only when duration/source signals support it; otherwise unknown."},
 		AnalysisTimestamp:    now().Format(time.RFC3339),
 	}
@@ -1525,6 +2092,22 @@ func medianDurationSeconds(videos []ChannelVideoSummary) float64 {
 }
 
 func cadenceMetrics(videos []ChannelVideoSummary, now func() time.Time) (float64, float64) {
+	summary := sampledCadenceSummary(videos, now)
+	return summary.UploadsPerMonth, summary.DaysSinceLast
+}
+
+type sampledCadence struct {
+	Count           int
+	Oldest          time.Time
+	Newest          time.Time
+	SpanDays        float64
+	UploadsPerMonth float64
+	UploadsPerWeek  float64
+	DaysSinceLast   float64
+	Confidence      string
+}
+
+func sampledCadenceSummary(videos []ChannelVideoSummary, now func() time.Time) sampledCadence {
 	var newest, oldest time.Time
 	count := 0
 	for _, video := range videos {
@@ -1541,18 +2124,37 @@ func cadenceMetrics(videos []ChannelVideoSummary, now func() time.Time) (float64
 		}
 	}
 	if count == 0 {
-		return 0, 0
+		return sampledCadence{}
 	}
 	spanDays := newest.Sub(oldest).Hours() / 24
-	if spanDays < 7 {
-		spanDays = 30
+	observationDays := spanDays
+	if observationDays < 30 {
+		observationDays = 30
 	}
-	uploadsPerMonth := float64(count) / (spanDays / 30)
+	uploadsPerMonth := float64(count) / (observationDays / 30)
 	daysSinceLast := now().Sub(newest).Hours() / 24
 	if daysSinceLast < 0 {
 		daysSinceLast = 0
 	}
-	return uploadsPerMonth, daysSinceLast
+	confidence := "Low"
+	if count >= 12 && spanDays >= 60 {
+		confidence = "Good"
+	} else if (count >= 4 && spanDays >= 21) || (count >= 3 && spanDays >= 30) {
+		confidence = "Moderate"
+	}
+	return sampledCadence{Count: count, Oldest: oldest, Newest: newest, SpanDays: spanDays, UploadsPerMonth: uploadsPerMonth, UploadsPerWeek: uploadsPerMonth / 4.345, DaysSinceLast: daysSinceLast, Confidence: confidence}
+}
+
+func cadenceObservationMonths(videos []ChannelVideoSummary) float64 {
+	summary := sampledCadenceSummary(videos, func() time.Time { return time.Now().UTC() })
+	if summary.Count == 0 {
+		return 1
+	}
+	days := summary.SpanDays
+	if days < 30 {
+		days = 30
+	}
+	return days / 30
 }
 
 func scoreConsistency(uploadsPerMonth, daysSinceLast float64) int {
@@ -1594,7 +2196,7 @@ func scorePackaging(videos []ChannelVideoSummary) int {
 		if words >= 5 && words <= 12 {
 			specific++
 		}
-		if regexp.MustCompile(`\d`).MatchString(title) {
+		if isTrueNumberLedTitle(title) {
 			withNumber++
 		}
 		if strings.Contains(title, "?") {
@@ -1784,11 +2386,24 @@ func primaryOpportunityFormat(groups []ChannelVideoGroup) string {
 	for _, group := range groups {
 		for _, video := range group.Videos {
 			if video.Format != "" && video.Format != "unknown" {
-				return strings.ReplaceAll(video.Format, "_", " ")
+				return formatVideoFormatLabel(video.Format)
 			}
 		}
 	}
 	return "Long-form"
+}
+
+func formatVideoFormatLabel(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "long_form":
+		return "Long-form"
+	case "short_form":
+		return "Shorts"
+	case "livestream":
+		return "Livestream"
+	default:
+		return "Unknown"
+	}
 }
 
 func topNPerformance(metrics []PerformanceMetric, n int) []PerformanceMetric {
@@ -2745,7 +3360,7 @@ func titlePatterns(videos []ChannelVideoSummary) []string {
 		if strings.Contains(title, "?") {
 			patterns = append(patterns, "Question-led titles")
 		}
-		if regexp.MustCompile(`\d`).MatchString(title) {
+		if isTrueNumberLedTitle(title) {
 			patterns = append(patterns, "Number-led titles")
 		}
 		if strings.Contains(strings.ToLower(title), "how") {
@@ -2762,24 +3377,11 @@ func uploadFrequency(videos []ChannelVideoSummary, now func() time.Time) string 
 	if len(videos) < 2 {
 		return "Not enough recent public videos to estimate upload frequency."
 	}
-	var oldest time.Time
-	for _, video := range videos {
-		t, err := time.Parse(time.RFC3339, video.PublishedAt)
-		if err != nil {
-			continue
-		}
-		if oldest.IsZero() || t.Before(oldest) {
-			oldest = t
-		}
-	}
-	if oldest.IsZero() {
+	summary := sampledCadenceSummary(videos, now)
+	if summary.Count == 0 {
 		return "Not enough dated public videos to estimate upload frequency."
 	}
-	days := now().Sub(oldest).Hours() / 24
-	if days < 1 {
-		days = 1
-	}
-	return fmt.Sprintf("Approximately %.1f public uploads per week based on the latest %d videos.", float64(len(videos))/(days/7), len(videos))
+	return fmt.Sprintf("Approximately %.1f public uploads per month (%.1f per week) across %d sampled uploads from %s to %s. Cadence confidence: %s.", summary.UploadsPerMonth, summary.UploadsPerWeek, summary.Count, summary.Oldest.Format("2 Jan 2006"), summary.Newest.Format("2 Jan 2006"), summary.Confidence)
 }
 
 func channelSignals(subscribersRaw string, videos []ChannelVideoSummary) (map[string]any, *float64) {

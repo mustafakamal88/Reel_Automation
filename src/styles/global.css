@@ -6747,18 +6747,34 @@ button.generate-btn.secondary:disabled {
 }
 
 .channel-chart-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
   color: var(--text-primary);
   font-size: 13px;
   font-weight: 650;
 }
 
+.channel-chart-title small,
+.channel-chart-note {
+  color: var(--text-dim);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.35;
+}
+
+.channel-chart-note {
+  margin: -4px 0 0;
+}
+
 .channel-bars {
-  height: 190px;
+  height: 220px;
   min-width: 0;
   display: flex;
   align-items: end;
-  gap: 5px;
-  overflow: hidden;
+  gap: 8px;
+  overflow: visible;
 }
 
 .channel-bar-wrap {
@@ -6771,6 +6787,15 @@ button.generate-btn.secondary:disabled {
   gap: 6px;
 }
 
+.channel-bar-value {
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  line-height: 1;
+  text-align: center;
+  white-space: nowrap;
+}
+
 .channel-bar {
   display: block;
   min-height: 8px;
@@ -6779,12 +6804,14 @@ button.generate-btn.secondary:disabled {
 }
 
 .channel-bar-wrap small {
-  overflow: hidden;
+  min-height: 28px;
+  overflow: visible;
   color: var(--text-dim);
   font-size: 9.5px;
+  line-height: 1.15;
   text-align: center;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 
 .channel-pillar-grid,
@@ -6972,7 +6999,13 @@ button.generate-btn.secondary:disabled {
   }
 
   .channel-bars {
-    height: 150px;
+    height: 190px;
+    gap: 6px;
+  }
+
+  .channel-bar-value,
+  .channel-bar-wrap small {
+    font-size: 8.5px;
   }
 
   .channel-analysis-results .creative-tabs {

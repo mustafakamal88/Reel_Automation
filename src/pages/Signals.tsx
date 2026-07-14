@@ -1329,7 +1329,7 @@ function ChannelHero({ result }: { result: YouTubeChannelAnalysisResponse }) {
       </div>
       <div className="channel-hero-cards">
         <ChannelMetric label="Analysis confidence" value={`${result.analysis_confidence?.score ?? 0}/100`} detail={result.analysis_confidence?.rating} />
-        <ChannelMetric label="Revenue potential" value={displayCompactRevenueRange(result.revenue_estimate)} detail={result.revenue_estimate?.confidence} />
+        <ChannelMetric label="Recent ad proxy" value={displayCompactRevenueRange(result.revenue_estimate)} detail={result.revenue_estimate?.confidence} />
         <ChannelMetric label="Publishing consistency" value={`${scoreById(result, 'publishing_consistency')}/100`} detail={ratingForScore(scoreById(result, 'publishing_consistency'))} />
         <ChannelMetric label="Recent momentum" value={`${scoreById(result, 'recent_momentum')}/100`} detail={ratingForScore(scoreById(result, 'recent_momentum'))} />
       </div>
@@ -1372,32 +1372,36 @@ function ChannelPerformanceStory({ result }: { result: YouTubeChannelAnalysisRes
 
 function ChannelChartsSection({ result }: { result: YouTubeChannelAnalysisResponse }) {
   const charts = result.performance_charts;
+  const validPillars = cleanChannelPillars(result.channel_pillars ?? []);
+  const topicPoints = (charts?.topic_performance ?? []).filter(point => validPillars.some(pillar => samePhrase(pillar.name, point.label)));
   return (
     <section className="video-section channel-section" aria-labelledby="channel-charts-title">
       <div className="video-section-heading"><span>Performance charts</span><h3 id="channel-charts-title">Recent uploads, distribution, cadence, and topics</h3></div>
       <div className="channel-chart-grid">
-        <ChannelBars title="Recent upload performance" points={charts?.upload_performance ?? []} mode="timeline" />
-        <ChannelBars title="Views distribution" points={charts?.views_distribution ?? []} mode="distribution" />
-        <ChannelBars title="Upload cadence" points={charts?.upload_cadence ?? []} mode="cadence" />
-        <ChannelBars title="Topic performance" points={charts?.topic_performance ?? []} mode="topic" />
-        {(charts?.format_performance ?? []).length > 1 && <ChannelBars title="Format performance" points={charts?.format_performance ?? []} mode="format" />}
+        <ChannelBars title="Recent upload performance" points={charts?.upload_performance ?? []} mode="timeline" unit="views" />
+        <ChannelBars title="Views distribution" points={charts?.views_distribution ?? []} mode="distribution" unit="views" note="Each bar is one sampled video ranked by visible public views." />
+        <ChannelBars title="Upload cadence" points={charts?.upload_cadence ?? []} mode="cadence" unit="uploads" />
+        <ChannelBars title="Topic performance" points={topicPoints} mode="topic" unit="median views" />
+        {(charts?.format_performance ?? []).length > 1 && <ChannelBars title="Format performance" points={charts?.format_performance ?? []} mode="format" unit="median views" />}
       </div>
     </section>
   );
 }
 
-function ChannelBars({ title, points, mode }: { title: string; points: NonNullable<YouTubeChannelAnalysisResponse['performance_charts']>['upload_performance']; mode: string }) {
-  const visible = (points ?? []).filter(point => Number.isFinite(point.value)).slice(-18);
+function ChannelBars({ title, points, mode, unit, note }: { title: string; points: NonNullable<YouTubeChannelAnalysisResponse['performance_charts']>['upload_performance']; mode: string; unit: string; note?: string }) {
+  const visible = (points ?? []).filter(point => Number.isFinite(point.value) && point.label).slice(-18);
   const max = Math.max(1, ...visible.map(point => point.value ?? 0));
   return (
     <div className="channel-chart-card">
-      <div className="channel-chart-title">{title}</div>
+      <div className="channel-chart-title"><span>{title}</span><small>{unit}</small></div>
+      {note && <p className="channel-chart-note">{note}</p>}
       {visible.length ? (
         <div className={`channel-bars is-${mode}`} role="img" aria-label={title}>
           {visible.map((point, index) => (
             <div key={`${point.label}-${index}`} className="channel-bar-wrap">
-              <span className="channel-bar" style={{ height: `${Math.max(8, ((point.value ?? 0) / max) * 100)}%` }} title={[point.title, point.label, formatCompactNumber(point.value), point.format].filter(Boolean).join(' · ')} />
-              <small>{shortChartLabel(point.label, mode)}</small>
+              <span className="channel-bar-value">{formatChartValue(point.value, unit)}</span>
+              <span className="channel-bar" style={{ height: `${Math.max(8, ((point.value ?? 0) / max) * 100)}%` }} title={channelChartTooltip(point, unit)} />
+              <small title={point.label}>{chartLabel(point.label, mode)}</small>
             </div>
           ))}
         </div>
@@ -1407,18 +1411,60 @@ function ChannelBars({ title, points, mode }: { title: string; points: NonNullab
 }
 
 function ChannelRevenueSection({ result }: { result: YouTubeChannelAnalysisResponse }) {
-  return <RevenuePotentialCard estimate={result.revenue_estimate} />;
+  const estimate = result.revenue_estimate;
+  if (!estimate) {
+    return (
+      <section className="video-section revenue-potential-card">
+        <div className="video-section-heading"><span>Revenue proxy</span><h3>Estimated range unavailable</h3></div>
+        <p className="muted-note">The public channel sample is not enough to create a cautious recent ad-revenue proxy.</p>
+      </section>
+    );
+  }
+  const midpointPercent = estimate.high > estimate.low ? ((estimate.midpoint - estimate.low) / (estimate.high - estimate.low)) * 100 : 50;
+  return (
+    <section className="video-section revenue-potential-card" aria-labelledby="channel-revenue-title">
+      <div className="video-section-heading">
+        <span>Recent sampled ad revenue proxy</span>
+        <h3 id="channel-revenue-title">{displayRevenueRange(estimate)}</h3>
+      </div>
+      <div className="revenue-premium-grid">
+        <div className="revenue-range-visual">
+          <div className="revenue-range-track premium" role="img" aria-label={`Low ${formatCurrencyEstimate(estimate.low)}, midpoint ${formatCurrencyEstimate(estimate.midpoint)}, high ${formatCurrencyEstimate(estimate.high)}`}>
+            <span className="revenue-range-fill" />
+            <span className="revenue-range-midpoint" style={{ left: `${clampScore(midpointPercent)}%` }} />
+          </div>
+          <div className="revenue-range-labels">
+            <span>Low {formatCurrencyEstimate(estimate.low)}</span>
+            <span>Mid {formatCurrencyEstimate(estimate.midpoint)}</span>
+            <span>High {formatCurrencyEstimate(estimate.high)}</span>
+          </div>
+        </div>
+        <div className="revenue-facts">
+          <div><span>RPM range</span><strong className="revenue-rpm-value">{displayRPMRange(estimate)}</strong></div>
+          <div><span>Proxy confidence</span><strong>{estimate.confidence}</strong></div>
+          <div><span>Basis</span><strong>Sampled public views × estimated RPM</strong></div>
+        </div>
+      </div>
+      <p>{concise(estimate.calculation_basis, 180)}</p>
+      <details className="video-details-accordion">
+        <summary>How this proxy was calculated</summary>
+        <SectionList label="Assumptions" items={estimate.assumptions ?? []} />
+        <SectionList label="Exclusions" items={estimate.exclusions ?? []} />
+        <MetricGrid values={{ 'Calculation basis': 'Sampled public views × estimated RPM', 'Exact analytics unavailable': estimate.actual_analytics_unavailable ? 'Yes' : undefined, 'Monetisation eligibility': estimate.monetisation_eligibility }} />
+      </details>
+    </section>
+  );
 }
 
 function ChannelPillarsSection({ result }: { result: YouTubeChannelAnalysisResponse }) {
-  const pillars = result.channel_pillars ?? [];
+  const pillars = cleanChannelPillars(result.channel_pillars ?? []);
   return (
     <section className="video-section channel-section" aria-labelledby="channel-pillars-title">
       <div className="video-section-heading"><span>Topic intelligence</span><h3 id="channel-pillars-title">Content pillars worth repeating</h3></div>
       <div className="channel-pillar-grid">
         {pillars.map(pillar => <article className="channel-pillar-card" key={pillar.name}><span>{pillar.opportunity_status}</span><h4>{pillar.name}</h4><MetricGrid values={{ 'Share of uploads': formatPercent(pillar.share_of_uploads), 'Median views': formatCompactNumber(pillar.median_views), Consistency: pillar.consistency }} /><p>{pillar.recommendation}</p>{pillar.strongest_example && <small>Strongest example: {pillar.strongest_example.title}</small>}</article>)}
       </div>
-      {!pillars.length && <div className="muted-note">The sampled metadata did not contain enough clean repeated phrases to build pillars.</div>}
+      {!pillars.length && <div className="muted-note">Limited evidence: the sampled uploads did not contain enough clean, repeated title evidence to render content-pillar cards.</div>}
     </section>
   );
 }
@@ -1459,7 +1505,7 @@ function ChannelPackagingSection({ result }: { result: YouTubeChannelAnalysisRes
           <div><span>Weakest packaging habit</span><p>{pkg?.weakest_habit || 'Unavailable'}</p></div>
           <div><span>Recommended title framework</span><p>{pkg?.recommended_title_framework || 'Use a clear viewer problem, outcome, and proof point.'}</p></div>
         </div>
-        <MetricGrid values={{ 'Average title length': pkg?.average_title_length?.toFixed(1), 'Question titles': formatPercent(pkg?.question_title_share), 'Number titles': formatPercent(pkg?.number_title_share), 'Thumbnail availability': formatPercent(pkg?.thumbnail_availability) }} />
+        <MetricGrid values={{ 'Average title length': Number.isFinite(pkg?.average_title_length) ? `${pkg?.average_title_length?.toFixed(1)} words` : 'Unavailable', 'Question titles': formatPercent(pkg?.question_title_share), 'Number titles': formatPercent(pkg?.number_title_share), 'Thumbnail availability': formatPercent(pkg?.thumbnail_availability) }} />
       </div>
       <SectionList label="Evidence titles" items={pkg?.evidence ?? []} />
     </section>
@@ -1467,19 +1513,22 @@ function ChannelPackagingSection({ result }: { result: YouTubeChannelAnalysisRes
 }
 
 function ChannelOpportunitiesSection({ result }: { result: YouTubeChannelAnalysisResponse }) {
+  const opportunities = cleanChannelOpportunities(result.growth_opportunities ?? []);
   return (
     <section className="video-section channel-section" aria-labelledby="channel-opps-title">
       <div className="video-section-heading"><span>Creator opportunities</span><h3 id="channel-opps-title">Repeatable content moves</h3></div>
-      <div className="creative-card-grid">{(result.growth_opportunities ?? []).map(opp => <article className="creative-direction-card" key={opp.title}><div className="creative-card-top"><span aria-hidden="true">O</span><small>{opp.confidence}</small></div><h4>{opp.title}</h4><p>{opp.why}</p><small>{opp.recommended_format} · {opp.suggested_audience}</small><strong className="channel-sample-title">{opp.sample_title}</strong><p>{opp.next_action}</p></article>)}</div>
+      <div className="creative-card-grid">{opportunities.map(opp => <article className="creative-direction-card" key={opp.title}><div className="creative-card-top"><span aria-hidden="true">O</span><small>{opp.confidence}</small></div><h4>{opp.title}</h4><p>{opp.why}</p><small>{opp.recommended_format} · {opp.suggested_audience}</small><strong className="channel-sample-title">{opp.sample_title}</strong><p>{opp.next_action}</p></article>)}</div>
+      {!opportunities.length && <div className="muted-note">Limited evidence: no clean repeatable content moves were returned for this sample.</div>}
     </section>
   );
 }
 
 function ChannelPlanSection({ result }: { result: YouTubeChannelAnalysisResponse }) {
+  const weeks = dedupeChannelPlan(result.content_plan ?? []);
   return (
     <section className="video-section channel-section" aria-labelledby="channel-plan-title">
       <div className="video-section-heading"><span>30-day content plan</span><h3 id="channel-plan-title">A realistic next month from current cadence</h3></div>
-      <div className="channel-plan-grid">{(result.content_plan ?? []).map(week => <article className="channel-plan-week" key={week.week}><span>Week {week.week}</span><h4>{week.theme}</h4><small>{week.cadence}</small>{week.ideas.map(idea => <div className="channel-plan-idea" key={idea.working_title}><strong>{idea.working_title}</strong><p>{idea.objective} · {idea.hook_direction}</p><small>{idea.content_pillar} · {idea.format} · {idea.recommended_timing}</small></div>)}<p>{week.rationale}</p></article>)}</div>
+      <div className="channel-plan-grid">{weeks.map(week => <article className="channel-plan-week" key={week.week}><span>Week {week.week}</span><h4>{week.theme}</h4><small>{week.cadence}</small>{week.ideas.map(idea => <div className="channel-plan-idea" key={idea.working_title}><strong>{idea.working_title}</strong><p>{idea.objective} · {idea.hook_direction}</p><small>{idea.content_pillar} · {idea.format} · {idea.recommended_timing}</small></div>)}<p>{week.rationale}</p></article>)}</div>
     </section>
   );
 }
@@ -3741,10 +3790,96 @@ function metricValue(resultMetrics: YouTubeChannelAnalysisResponse['performance_
   return resultMetrics?.find(metric => metric.id === id)?.value || 'Unavailable';
 }
 
-function shortChartLabel(label: string, mode: string): string {
-  if (mode === 'cadence') return label.slice(2);
-  if (label.length <= 8) return label;
-  return label.slice(0, 8);
+function chartLabel(label: string, mode: string): string {
+  if (mode === 'timeline') return formatShortDateLabel(label);
+  return label;
+}
+
+function formatChartValue(value: number | undefined, unit: string): string {
+  if (value == null || !Number.isFinite(value)) return 'Unavailable';
+  if (unit.includes('view')) return formatCompactNumber(value);
+  return Math.round(value).toLocaleString();
+}
+
+type ChannelChartPointView = NonNullable<NonNullable<YouTubeChannelAnalysisResponse['performance_charts']>['upload_performance']>[number];
+
+function channelChartTooltip(point: ChannelChartPointView, unit: string): string {
+  const parts = [
+    point.title,
+    point.label,
+    point.date ? formatDateLabel(point.date) : '',
+    `${formatChartValue(point.value, unit)} ${unit}`,
+    point.duration,
+    point.format ? formatVideoFormat(point.format) : '',
+    point.description,
+  ];
+  return parts.filter(Boolean).join(' · ');
+}
+
+function cleanChannelPillars(pillars: NonNullable<YouTubeChannelAnalysisResponse['channel_pillars']>) {
+  const seen = new Set<string>();
+  return pillars.filter(pillar => {
+    const key = normalizeClientPhrase(pillar.name);
+    if (!key || seen.has(key) || invalidChannelPhrase(key)) return false;
+    if (!Number.isFinite(pillar.share_of_uploads) || pillar.share_of_uploads <= 0) return false;
+    if (!pillar.upload_count || pillar.upload_count <= 0) return false;
+    if (pillar.median_views == null || !Number.isFinite(pillar.median_views)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function cleanChannelOpportunities(opps: NonNullable<YouTubeChannelAnalysisResponse['growth_opportunities']>) {
+  const seen = new Set<string>();
+  return opps.filter(opp => {
+    const blob = normalizeClientPhrase([opp.title, opp.why, opp.sample_title, opp.next_action].join(' '));
+    const key = normalizeClientPhrase(opp.sample_title || opp.title);
+    if (!key || seen.has(key) || invalidChannelRecommendation(blob)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function dedupeChannelPlan(weeks: NonNullable<YouTubeChannelAnalysisResponse['content_plan']>) {
+  const seen = new Set<string>();
+  return weeks.map(week => ({
+    ...week,
+    ideas: (week.ideas ?? []).filter(idea => {
+      const key = normalizeClientPhrase(idea.working_title);
+      const blob = normalizeClientPhrase([idea.working_title, idea.content_pillar].join(' '));
+      if (!key || seen.has(key) || invalidChannelRecommendation(blob)) return false;
+      seen.add(key);
+      return true;
+    }),
+  }));
+}
+
+function normalizeClientPhrase(value?: string): string {
+  return String(value ?? '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim().replace(/\s+/g, ' ');
+}
+
+function samePhrase(a?: string, b?: string): boolean {
+  return normalizeClientPhrase(a) === normalizeClientPhrase(b);
+}
+
+function invalidChannelPhrase(value: string): boolean {
+  if (!value) return true;
+  const words = value.split(/\s+/).filter(Boolean);
+  if (words.length < 2 || words.length > 5) return true;
+  if (/\b(youtuber|you tuber|internet personality|tech head|geek consumer)\b/.test(value)) return true;
+  if (/\b(electronic tech head internet|tuber geek consumer electronic)\b/.test(value)) return true;
+  return false;
+}
+
+function invalidChannelRecommendation(value: string): boolean {
+  if (invalidChannelPhrase(value) && value.split(/\s+/).length <= 5) return true;
+  return /\b(next step after|the next step after)\b/.test(value) || /\bhow to\s+[a-z]+\s+[a-z]+(?:\s+[a-z]+)?$/.test(value);
+}
+
+function formatShortDateLabel(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 }
 
 function formatPercent(value?: number): string {

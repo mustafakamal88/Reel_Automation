@@ -1299,6 +1299,10 @@ export interface ChannelAnalysisDetails {
   sampled_video_count: number;
   sample_start?: string;
   sample_end?: string;
+  sample_date_span_days?: number;
+  uploads_per_month?: number;
+  uploads_per_week?: number;
+  cadence_confidence?: string;
   provider_availability: string;
   hidden_metric_notes?: string[];
   scoring_methodology?: string[];
