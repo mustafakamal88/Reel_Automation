@@ -729,6 +729,54 @@ func TestChannelRecentCadenceExcludesHistoricalTopVideos(t *testing.T) {
 	}
 }
 
+func TestAnalyzeChannelUsesUploadsPlaylistForRecentSample(t *testing.T) {
+	provider := NewYouTubeProvider("yt-key", &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		switch req.URL.Path {
+		case "/youtube/v3/channels":
+			return jsonResponse(`{"items":[{"id":"UCuploads","snippet":{"title":"Uploads Source","customUrl":"@uploads","description":"Weekly public uploads.","publishedAt":"2020-01-01T00:00:00Z"},"statistics":{"viewCount":"1000000","subscriberCount":"10000","videoCount":"50"},"contentDetails":{"relatedPlaylists":{"uploads":"UUuploads"}}}]}`), nil
+		case "/youtube/v3/playlistItems":
+			return jsonResponse(`{"items":[
+				{"snippet":{"publishedAt":"2026-06-01T00:00:00Z","title":"Recent Upload 1","resourceId":{"videoId":"r1"}}},
+				{"snippet":{"publishedAt":"2026-06-08T00:00:00Z","title":"Recent Upload 2","resourceId":{"videoId":"r2"}}},
+				{"snippet":{"publishedAt":"2026-06-15T00:00:00Z","title":"Recent Upload 3","resourceId":{"videoId":"r3"}}},
+				{"snippet":{"publishedAt":"2026-06-22T00:00:00Z","title":"Recent Upload 4","resourceId":{"videoId":"r4"}}}
+			]}`), nil
+		case "/youtube/v3/search":
+			if req.URL.Query().Get("order") == "date" {
+				t.Fatalf("date search fallback should not be used when uploads playlist returns videos")
+			}
+			return jsonResponse(`{"items":[{"id":{"videoId":"oldtop"},"snippet":{"title":"Old Top Upload"}}]}`), nil
+		case "/youtube/v3/videos":
+			return jsonResponse(`{"items":[
+				{"id":"r1","snippet":{"publishedAt":"2026-06-01T00:00:00Z","title":"Recent Upload 1"},"statistics":{"viewCount":"100000"},"contentDetails":{"duration":"PT8M"}},
+				{"id":"r2","snippet":{"publishedAt":"2026-06-08T00:00:00Z","title":"Recent Upload 2"},"statistics":{"viewCount":"110000"},"contentDetails":{"duration":"PT8M"}},
+				{"id":"r3","snippet":{"publishedAt":"2026-06-15T00:00:00Z","title":"Recent Upload 3"},"statistics":{"viewCount":"120000"},"contentDetails":{"duration":"PT8M"}},
+				{"id":"r4","snippet":{"publishedAt":"2026-06-22T00:00:00Z","title":"Recent Upload 4"},"statistics":{"viewCount":"130000"},"contentDetails":{"duration":"PT8M"}},
+				{"id":"oldtop","snippet":{"publishedAt":"2018-03-09T00:00:00Z","title":"Old Top Upload"},"statistics":{"viewCount":"10000000"},"contentDetails":{"duration":"PT8M"}}
+			]}`), nil
+		default:
+			t.Fatalf("unexpected URL: %s", req.URL.String())
+			return nil, nil
+		}
+	})})
+	provider.now = func() time.Time { return mustTime("2026-07-01T00:00:00Z") }
+	result, err := provider.AnalyzeChannel(context.Background(), "@uploads")
+	if err != nil {
+		t.Fatalf("AnalyzeChannel: %v", err)
+	}
+	if result.AnalysisDetails.RecentSampleCount != 4 || result.AnalysisDetails.PerformanceSampleCount != 5 {
+		t.Fatalf("bad sample separation: %+v", result.AnalysisDetails)
+	}
+	if result.AnalysisDetails.UploadsPerMonth < 4 || result.AnalysisDetails.UploadsPerMonth > 4.6 {
+		t.Fatalf("bad uploads-playlist cadence: %+v", result.AnalysisDetails)
+	}
+	for _, point := range result.PerformanceCharts.UploadCadence {
+		if strings.Contains(point.Label, "2018") {
+			t.Fatalf("cadence chart included top-video date: %+v", result.PerformanceCharts.UploadCadence)
+		}
+	}
+}
+
 func TestChannelCadenceRequiresTwoRecentDates(t *testing.T) {
 	now := func() time.Time { return mustTime("2026-07-14T00:00:00Z") }
 	summary := sampledCadenceSummary([]ChannelVideoSummary{

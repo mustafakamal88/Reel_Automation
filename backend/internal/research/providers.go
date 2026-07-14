@@ -720,7 +720,10 @@ func (p *YouTubeProvider) AnalyzeChannel(ctx context.Context, channelURL string)
 		return result, nil
 	}
 	channel := channelRes.Items[0]
-	recentVideos, _ := p.fetchChannelVideos(ctx, channelID, "date", 25)
+	recentVideos, _ := p.fetchChannelUploads(ctx, channel.ContentDetails.RelatedPlaylists.Uploads, 25)
+	if len(recentVideos) == 0 {
+		recentVideos, _ = p.fetchChannelVideos(ctx, channelID, "date", 25)
+	}
 	topVideos, _ := p.fetchChannelVideos(ctx, channelID, "viewCount", 25)
 	recentVideos = enrichChannelVideos(recentVideos, p.now)
 	topVideos = enrichChannelVideos(topVideos, p.now)
@@ -2789,6 +2792,32 @@ type youtubeSearchResponse struct {
 	} `json:"items"`
 }
 
+type youtubePlaylistItemsResponse struct {
+	Items []struct {
+		Snippet struct {
+			PublishedAt  string `json:"publishedAt"`
+			ChannelID    string `json:"channelId"`
+			ChannelTitle string `json:"channelTitle"`
+			Title        string `json:"title"`
+			Description  string `json:"description"`
+			Thumbnails   struct {
+				Default struct {
+					URL string `json:"url"`
+				} `json:"default"`
+				Medium struct {
+					URL string `json:"url"`
+				} `json:"medium"`
+				High struct {
+					URL string `json:"url"`
+				} `json:"high"`
+			} `json:"thumbnails"`
+			ResourceID struct {
+				VideoID string `json:"videoId"`
+			} `json:"resourceId"`
+		} `json:"snippet"`
+	} `json:"items"`
+}
+
 func (p *YouTubeProvider) getJSON(ctx context.Context, endpoint string, target any) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
@@ -2965,6 +2994,71 @@ func (p *YouTubeProvider) resolveChannelByQuery(ctx context.Context, query strin
 
 func (p *YouTubeProvider) fetchRecentVideos(ctx context.Context, channelID string, limit int) ([]ChannelVideoSummary, error) {
 	return p.fetchChannelVideos(ctx, channelID, "date", limit)
+}
+
+func (p *YouTubeProvider) fetchChannelUploads(ctx context.Context, uploadsPlaylistID string, limit int) ([]ChannelVideoSummary, error) {
+	uploadsPlaylistID = strings.TrimSpace(uploadsPlaylistID)
+	if uploadsPlaylistID == "" {
+		return nil, nil
+	}
+	if limit <= 0 || limit > 50 {
+		limit = 25
+	}
+	playlistURL := youtubeAPIURL("playlistItems", map[string]string{"part": "snippet", "playlistId": uploadsPlaylistID, "maxResults": strconv.Itoa(limit), "key": p.apiKey})
+	var playlist youtubePlaylistItemsResponse
+	if err := p.getJSON(ctx, playlistURL, &playlist); err != nil {
+		return nil, err
+	}
+	ids := []string{}
+	summaries := map[string]ChannelVideoSummary{}
+	for _, item := range playlist.Items {
+		id := item.Snippet.ResourceID.VideoID
+		if id == "" {
+			continue
+		}
+		ids = append(ids, id)
+		summaries[id] = ChannelVideoSummary{
+			VideoID:      id,
+			Title:        item.Snippet.Title,
+			Description:  item.Snippet.Description,
+			ChannelID:    item.Snippet.ChannelID,
+			ChannelTitle: item.Snippet.ChannelTitle,
+			PublishedAt:  item.Snippet.PublishedAt,
+			ThumbnailURL: firstNonEmpty(item.Snippet.Thumbnails.High.URL, item.Snippet.Thumbnails.Medium.URL, item.Snippet.Thumbnails.Default.URL),
+		}
+	}
+	if len(ids) == 0 {
+		return []ChannelVideoSummary{}, nil
+	}
+	videosURL := youtubeAPIURL("videos", map[string]string{"part": "snippet,statistics,contentDetails", "id": strings.Join(ids, ","), "key": p.apiKey})
+	var videos youtubeVideosResponse
+	if err := p.getJSON(ctx, videosURL, &videos); err != nil {
+		return nil, err
+	}
+	out := make([]ChannelVideoSummary, 0, len(videos.Items))
+	for _, video := range videos.Items {
+		if video.ID == "" {
+			continue
+		}
+		summary, ok := summaries[video.ID]
+		if !ok {
+			continue
+		}
+		out = append(out, ChannelVideoSummary{
+			VideoID:      video.ID,
+			Title:        firstNonEmpty(video.Snippet.Title, summary.Title),
+			Description:  firstNonEmpty(video.Snippet.Description, summary.Description),
+			ChannelID:    firstNonEmpty(video.Snippet.ChannelID, summary.ChannelID),
+			ChannelTitle: firstNonEmpty(video.Snippet.ChannelTitle, summary.ChannelTitle),
+			PublishedAt:  firstNonEmpty(video.Snippet.PublishedAt, summary.PublishedAt),
+			Duration:     video.ContentDetails.Duration,
+			ThumbnailURL: firstNonEmpty(bestThumbnail(video), summary.ThumbnailURL),
+			Views:        parseUintPtr(video.Statistics.ViewCount),
+			Likes:        parseUintPtr(video.Statistics.LikeCount),
+			Comments:     parseUintPtr(video.Statistics.CommentCount),
+		})
+	}
+	return out, nil
 }
 
 func (p *YouTubeProvider) fetchChannelVideos(ctx context.Context, channelID, order string, limit int) ([]ChannelVideoSummary, error) {
