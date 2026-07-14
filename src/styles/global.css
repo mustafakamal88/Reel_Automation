@@ -7053,6 +7053,11 @@ button.generate-btn.secondary:disabled {
     gap: 5px;
   }
 
+  .channel-bars.is-timeline .channel-bar-wrap small,
+  .channel-bars.is-distribution .channel-bar-wrap small {
+    display: none;
+  }
+
   .channel-bar-value,
   .channel-bar-wrap small {
     font-size: 8.5px;
