@@ -1,9 +1,11 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import {
   ApiError,
   getContentProject,
   importLegacyContentProject,
+  updateContentProject,
   type ContentProject,
+  type ContentProjectPayload,
   type ReelContentPackage,
   type TrendCandidate,
 } from '../lib/api/client';
@@ -17,8 +19,17 @@ interface Props {
 }
 
 type ScriptSectionID = 'hook' | 'script' | 'caption' | 'hashtags';
+type SaveState = 'saved' | 'dirty' | 'saving' | 'failed';
 
 type EvidenceRecord = Record<string, unknown>;
+
+interface ScriptDraft {
+  hook: string;
+  mainScript: string;
+  caption: string;
+  hashtags: string;
+  platformText: Record<string, string>;
+}
 
 interface EvidenceViewModel {
   sourceSummary: string[];
@@ -37,6 +48,15 @@ const sectionLabels: Record<ScriptSectionID, string> = {
   caption: 'Caption',
   hashtags: 'Hashtags',
 };
+
+const platformEditors = [
+  { key: 'instagram', label: 'Instagram', rows: 4 },
+  { key: 'tiktok', label: 'TikTok', rows: 4 },
+  { key: 'youtube', label: 'YouTube', rows: 6 },
+  { key: 'facebook', label: 'Facebook', rows: 4 },
+  { key: 'x', label: 'X', rows: 3 },
+  { key: 'threads', label: 'Threads', rows: 4 },
+];
 
 async function copyText(value: string) {
   if (!value) return;
@@ -278,6 +298,45 @@ function PlatformCard({ label, value, subValue }: { label: string; value?: strin
   );
 }
 
+function EditorField({ id, label, value, rows, maxLength, hint, onChange, onCopy }: {
+  id: string;
+  label: string;
+  value: string;
+  rows: number;
+  maxLength: number;
+  hint?: string;
+  onChange: (value: string) => void;
+  onCopy: () => void;
+}) {
+  const inputID = `${id}-input`;
+  return (
+    <div id={id} className="script-editor-field">
+      <span className="script-editor-label-row">
+        <label htmlFor={inputID}>{label}</label>
+        <button className="mini-copy-btn" type="button" onClick={onCopy}>Copy</button>
+      </span>
+      <textarea
+        id={inputID}
+        className="form-textarea script-editor-textarea"
+        value={value}
+        rows={rows}
+        maxLength={maxLength}
+        onChange={event => onChange(event.target.value)}
+      />
+      <span className="script-editor-hint">{hint || `${value.length.toLocaleString()}/${maxLength.toLocaleString()} characters`}</span>
+    </div>
+  );
+}
+
+function StatusRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="script-context-row">
+      <span>{label}</span>
+      <strong>{value}</strong>
+    </div>
+  );
+}
+
 function EvidencePanel({ evidence }: { evidence: EvidenceViewModel | null }) {
   if (!evidence) return null;
   return (
@@ -431,6 +490,94 @@ function projectToStoredScript(project: ContentProject): StoredScriptPackage {
   return { candidate, package: pkg, savedAt: project.updated_at };
 }
 
+function draftFromProject(project: ContentProject): ScriptDraft {
+  return {
+    hook: project.hook || '',
+    mainScript: project.main_script || '',
+    caption: project.caption || '',
+    hashtags: (project.hashtags || []).map(tag => tag.startsWith('#') ? tag : `#${tag}`).join(' '),
+    platformText: { ...(project.platform_text || {}) },
+  };
+}
+
+function normalizeHashtags(value: string): string[] {
+  return Array.from(new Set(
+    value
+      .split(/[\s,]+/)
+      .map(tag => tag.trim().replace(/^#+/, '').toLowerCase())
+      .filter(Boolean),
+  ));
+}
+
+function draftSignature(draft: ScriptDraft): string {
+  return JSON.stringify({
+    hook: draft.hook,
+    mainScript: draft.mainScript,
+    caption: draft.caption,
+    hashtags: normalizeHashtags(draft.hashtags),
+    platformText: draft.platformText,
+  });
+}
+
+function payloadFromDraft(project: ContentProject, draft: ScriptDraft): ContentProjectPayload {
+  return {
+    title: project.title,
+    topic: project.topic,
+    source_type: project.source_type,
+    source_reference: project.source_reference || '',
+    source_label: project.source_label || '',
+    status: project.status === 'idea' ? 'draft' : project.status,
+    current_stage: 'script',
+    target_platforms: project.target_platforms.length ? project.target_platforms : ['youtube', 'tiktok', 'instagram'],
+    content_format: project.content_format || 'short_video',
+    target_duration_seconds: project.target_duration_seconds || 30,
+    language: project.language || 'en-US',
+    creative_brief: project.creative_brief || {},
+    hook: draft.hook,
+    main_script: draft.mainScript,
+    caption: draft.caption,
+    hashtags: normalizeHashtags(draft.hashtags),
+    platform_text: draft.platformText,
+  };
+}
+
+function countWords(value: string): number {
+  const matches = value.trim().match(/\b[\w'-]+\b/g);
+  return matches ? matches.length : 0;
+}
+
+function formatDuration(seconds: number): string {
+  const rounded = Math.max(0, Math.round(seconds));
+  const minutes = Math.floor(rounded / 60);
+  const remainder = rounded % 60;
+  if (minutes <= 0) return `${remainder}s`;
+  return `${minutes}m ${String(remainder).padStart(2, '0')}s`;
+}
+
+function durationTone(estimatedSeconds: number, targetSeconds: number): string {
+  if (!targetSeconds) return 'neutral';
+  const delta = Math.abs(estimatedSeconds - targetSeconds);
+  if (delta <= Math.max(4, targetSeconds * 0.12)) return 'ready';
+  if (estimatedSeconds > targetSeconds) return 'warning';
+  return 'neutral';
+}
+
+function buildProductionCopy(title: string, draft: ScriptDraft): string {
+  const hashtagText = normalizeHashtags(draft.hashtags).map(tag => `#${tag}`).join(' ');
+  const platformText = Object.entries(draft.platformText)
+    .filter(([, value]) => value.trim())
+    .map(([key, value]) => `${humanizeKey(key)}:\n${value.trim()}`)
+    .join('\n\n');
+  return [
+    `Title: ${title}`,
+    draft.hook.trim() ? `Hook:\n${draft.hook.trim()}` : '',
+    draft.mainScript.trim() ? `Script:\n${draft.mainScript.trim()}` : '',
+    draft.caption.trim() ? `Caption:\n${draft.caption.trim()}` : '',
+    hashtagText ? `Hashtags:\n${hashtagText}` : '',
+    platformText ? `Platform copy:\n${platformText}` : '',
+  ].filter(Boolean).join('\n\n');
+}
+
 function legacyImportPayload(latestScript: StoredScriptPackage) {
   const pkg = latestScript.package;
   const sourceType = pkg.source_type || latestScript.candidate.source || 'legacy_script_studio';
@@ -481,10 +628,14 @@ function durationSeconds(value?: string): number {
 
 export function ScriptStudioPage({ latestScript, onUseInClipGenerator, onGoToTrendFinder }: Props) {
   const highlightTimer = useRef<number | null>(null);
+  const savedSignature = useRef('');
   const projectID = currentProjectID();
   const [project, setProject] = useState<ContentProject | null>(null);
+  const [draft, setDraft] = useState<ScriptDraft | null>(null);
   const [projectLoading, setProjectLoading] = useState(Boolean(projectID));
   const [projectError, setProjectError] = useState<string | null>(null);
+  const [saveState, setSaveState] = useState<SaveState>('saved');
+  const [saveError, setSaveError] = useState<string | null>(null);
   const [importBusy, setImportBusy] = useState(false);
   const [importError, setImportError] = useState<string | null>(null);
 
@@ -495,7 +646,14 @@ export function ScriptStudioPage({ latestScript, onUseInClipGenerator, onGoToTre
     setProjectError(null);
     getContentProject(projectID)
       .then(result => {
-        if (!cancelled) setProject(result);
+        if (!cancelled) {
+          const nextDraft = draftFromProject(result);
+          savedSignature.current = draftSignature(nextDraft);
+          setProject(result);
+          setDraft(nextDraft);
+          setSaveState('saved');
+          setSaveError(null);
+        }
       })
       .catch(err => {
         if (!cancelled) setProjectError(errMsg(err, 'Content project could not be loaded.'));
@@ -508,6 +666,64 @@ export function ScriptStudioPage({ latestScript, onUseInClipGenerator, onGoToTre
     };
   }, [projectID]);
 
+  const draftStats = useMemo(() => {
+    const body = draft ? [draft.hook, draft.mainScript, draft.caption].filter(Boolean).join('\n\n') : '';
+    const words = countWords(body);
+    const estimatedSeconds = words / 2.45;
+    const targetSeconds = project?.target_duration_seconds || 0;
+    return {
+      words,
+      estimatedSeconds,
+      targetSeconds,
+      tone: durationTone(estimatedSeconds, targetSeconds),
+    };
+  }, [draft, project?.target_duration_seconds]);
+
+  const productionCopy = useMemo(() => {
+    if (!project || !draft) return '';
+    return buildProductionCopy(project.title, draft);
+  }, [draft, project]);
+
+  function updateDraft(updater: (current: ScriptDraft) => ScriptDraft) {
+    setDraft(current => {
+      if (!current) return current;
+      const next = updater(current);
+      setSaveError(null);
+      setSaveState(draftSignature(next) === savedSignature.current ? 'saved' : 'dirty');
+      return next;
+    });
+  }
+
+  async function saveProjectDraft(nextDraft = draft): Promise<ContentProject | null> {
+    if (!project || !nextDraft) return null;
+    setSaveState('saving');
+    setSaveError(null);
+    try {
+      const saved = await updateContentProject(project.id, payloadFromDraft(project, nextDraft));
+      const cleanDraft = draftFromProject(saved);
+      savedSignature.current = draftSignature(cleanDraft);
+      setProject(saved);
+      setDraft(cleanDraft);
+      setSaveState('saved');
+      return saved;
+    } catch (err) {
+      setSaveError(errMsg(err, 'Save failed. Your unsaved edits are still visible.'));
+      setSaveState('failed');
+      return null;
+    }
+  }
+
+  useEffect(() => {
+    function handleKeyDown(event: KeyboardEvent) {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 's') {
+        event.preventDefault();
+        void saveProjectDraft();
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  });
+
   async function handleImportLegacy() {
     if (!latestScript) return;
     setImportBusy(true);
@@ -515,7 +731,12 @@ export function ScriptStudioPage({ latestScript, onUseInClipGenerator, onGoToTre
     try {
       const imported = await importLegacyContentProject(legacyImportPayload(latestScript));
       window.history.pushState(null, '', `/script-studio?project_id=${encodeURIComponent(imported.id)}`);
+      const importedDraft = draftFromProject(imported);
+      savedSignature.current = draftSignature(importedDraft);
       setProject(imported);
+      setDraft(importedDraft);
+      setSaveState('saved');
+      setSaveError(null);
     } catch (err) {
       setImportError(errMsg(err, 'Legacy script import failed. The original saved script is still available here.'));
     } finally {
@@ -558,6 +779,203 @@ export function ScriptStudioPage({ latestScript, onUseInClipGenerator, onGoToTre
             <button className="generate-btn idle" type="button" onClick={onGoToTrendFinder}>Go to Research</button>
           )}
         </div>
+      </section>
+    );
+  }
+
+  if (project && draft) {
+    const sourceURL = project.source_reference;
+    const updatedLabel = formatDate(project.updated_at);
+    const targetLabel = project.target_duration_seconds ? formatDuration(project.target_duration_seconds) : 'No target';
+    const estimateLabel = formatDuration(draftStats.estimatedSeconds);
+    const statusLabel: Record<SaveState, string> = {
+      saved: 'Saved',
+      dirty: 'Unsaved changes',
+      saving: 'Saving...',
+      failed: 'Save failed',
+    };
+    const evidence = buildEvidenceViewModel(JSON.stringify(project.creative_brief || {}));
+
+    async function submitSave(event?: FormEvent) {
+      event?.preventDefault();
+      await saveProjectDraft();
+    }
+
+    async function sendSavedProjectToClipGenerator() {
+      const latest = saveState === 'dirty' || saveState === 'failed'
+        ? await saveProjectDraft()
+        : project;
+      if (!latest) return;
+      storage.setClipGeneratorHandoff({
+        projectId: latest.id,
+        title: latest.title,
+        hook: latest.hook || '',
+        script: latest.main_script || '',
+        caption: latest.caption || '',
+        platformText: latest.platform_text,
+        savedAt: latest.updated_at,
+      });
+      onUseInClipGenerator?.();
+    }
+
+    return (
+      <section className="page-section script-studio-page">
+        <form className="script-shell script-lab-shell" onSubmit={event => void submitSave(event)}>
+          <header className="script-hero script-lab-hero">
+            <div className="script-source-line">
+              <span className="script-source-badge">{sourceLabel(project.source_type)}</span>
+              <span className="script-source-badge">Project-backed</span>
+              <span>{project.content_format.replaceAll('_', ' ')}</span>
+              <span>updated {updatedLabel}</span>
+              {sourceURL && <a href={sourceURL} target="_blank" rel="noreferrer">Source evidence</a>}
+            </div>
+            <div className="script-lab-title-row">
+              <div>
+                <h1>{project.title}</h1>
+                <p>{project.topic}</p>
+              </div>
+              <div className={`script-save-status ${saveState}`} role="status" aria-live="polite">
+                <span>{statusLabel[saveState]}</span>
+              </div>
+            </div>
+            <div className="script-badge-row">
+              {project.target_platforms.map(platform => <span className="script-badge" key={platform}>{humanizeKey(platform)}</span>)}
+              <span className="script-badge">{project.language}</span>
+              <span className="script-badge">{humanizeKey(project.status)}</span>
+            </div>
+          </header>
+
+          <nav className="script-action-bar script-lab-actions" aria-label="Script actions">
+            <button className="generate-btn idle" type="submit" disabled={saveState === 'saving' || saveState === 'saved'}>
+              {saveState === 'saving' ? 'Saving...' : 'Save'}
+            </button>
+            <button className="generate-btn secondary" type="button" onClick={() => void copyText(productionCopy)}>Copy all</button>
+            <button className="generate-btn secondary" type="button" onClick={() => void copyText(draft.hook)}>Copy hook</button>
+            <button className="generate-btn secondary" type="button" onClick={() => void copyText(draft.mainScript)}>Copy script</button>
+            <button className="generate-btn secondary" type="button" onClick={() => void copyText(draft.caption)}>Copy caption</button>
+            {onUseInClipGenerator && (
+              <button className="generate-btn secondary" type="button" onClick={() => void sendSavedProjectToClipGenerator()} disabled={saveState === 'saving'}>
+                Use in Clip Generator
+              </button>
+            )}
+          </nav>
+
+          {saveError && <div className="clip-error" role="alert">{saveError}</div>}
+          {importError && <div className="clip-error" role="alert">{importError}</div>}
+
+          <div className="script-lab-grid">
+            <main className="script-editor-panel">
+              <EditorField
+                id="script-section-hook"
+                label="Hook"
+                value={draft.hook}
+                rows={3}
+                maxLength={2000}
+                onChange={value => updateDraft(current => ({ ...current, hook: value }))}
+                onCopy={() => void copyText(draft.hook)}
+              />
+              <EditorField
+                id="script-section-script"
+                label="Main script"
+                value={draft.mainScript}
+                rows={14}
+                maxLength={20000}
+                onChange={value => updateDraft(current => ({ ...current, mainScript: value }))}
+                onCopy={() => void copyText(draft.mainScript)}
+              />
+              <EditorField
+                id="script-section-caption"
+                label="Caption"
+                value={draft.caption}
+                rows={5}
+                maxLength={4000}
+                onChange={value => updateDraft(current => ({ ...current, caption: value }))}
+                onCopy={() => void copyText(draft.caption)}
+              />
+              <EditorField
+                id="script-section-hashtags"
+                label="Hashtags"
+                value={draft.hashtags}
+                rows={3}
+                maxLength={4800}
+                hint={`${normalizeHashtags(draft.hashtags).length} hashtag(s)`}
+                onChange={value => updateDraft(current => ({ ...current, hashtags: value }))}
+                onCopy={() => void copyText(normalizeHashtags(draft.hashtags).map(tag => `#${tag}`).join(' '))}
+              />
+
+              <section id="script-section-platform-text" className="platform-text-section script-platform-editor">
+                <div className="script-section-heading">
+                  <span>Platform copy</span>
+                  <strong>Readable channel-specific publishing text</strong>
+                </div>
+                <div className="platform-editor-grid">
+                  {platformEditors.map(platform => (
+                    <EditorField
+                      key={platform.key}
+                      id={`platform-copy-${platform.key}`}
+                      label={platform.label}
+                      value={draft.platformText[platform.key] || ''}
+                      rows={platform.rows}
+                      maxLength={6000}
+                      onChange={value => updateDraft(current => ({
+                        ...current,
+                        platformText: { ...current.platformText, [platform.key]: value },
+                      }))}
+                      onCopy={() => void copyText(draft.platformText[platform.key] || '')}
+                    />
+                  ))}
+                </div>
+              </section>
+            </main>
+
+            <aside className="script-lab-side" aria-label="Script project context">
+              <section className="script-lab-card">
+                <div className="script-section-heading">
+                  <span>Production fit</span>
+                  <strong>Estimate</strong>
+                </div>
+                <div className="script-metric-grid">
+                  <div>
+                    <span>Words</span>
+                    <strong>{draftStats.words.toLocaleString()}</strong>
+                  </div>
+                  <div>
+                    <span>Speaking time</span>
+                    <strong>{estimateLabel}</strong>
+                  </div>
+                </div>
+                <div className={`duration-meter ${draftStats.tone}`}>
+                  <span>Target {targetLabel}</span>
+                  <strong>{draftStats.targetSeconds ? `${Math.round(draftStats.estimatedSeconds - draftStats.targetSeconds)}s vs target` : 'No target set'}</strong>
+                </div>
+              </section>
+
+              <section className="script-lab-card">
+                <div className="script-section-heading">
+                  <span>Project</span>
+                  <strong>Context</strong>
+                </div>
+                <div className="script-context-list">
+                  <StatusRow label="Stage" value={humanizeKey(project.current_stage)} />
+                  <StatusRow label="Status" value={humanizeKey(project.status)} />
+                  <StatusRow label="Format" value={humanizeKey(project.content_format)} />
+                  <StatusRow label="Created" value={formatDate(project.created_at)} />
+                  <StatusRow label="Saved" value={updatedLabel} />
+                </div>
+              </section>
+
+              <section className="script-lab-card">
+                <div className="script-section-heading">
+                  <span>Production copy</span>
+                  <strong>Preview</strong>
+                </div>
+                <div className="script-copy-preview">{productionCopy || 'Start writing to build production copy.'}</div>
+              </section>
+
+              <EvidencePanel evidence={evidence} />
+            </aside>
+          </div>
+        </form>
       </section>
     );
   }
