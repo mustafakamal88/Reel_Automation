@@ -4983,6 +4983,124 @@ textarea:focus {
   font-weight: 800;
 }
 
+.confirmation-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+
+.confirmation-backdrop {
+  position: absolute;
+  inset: 0;
+  border: 0;
+  background: rgba(0, 0, 0, 0.72);
+  cursor: pointer;
+}
+
+.confirmation-backdrop:disabled {
+  cursor: wait;
+}
+
+.confirmation-dialog {
+  position: relative;
+  width: min(440px, 100%);
+  max-height: min(620px, calc(100vh - 40px));
+  overflow: auto;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  background: var(--bg-card);
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.45);
+  padding: 18px;
+  display: grid;
+  gap: 15px;
+}
+
+.confirmation-dialog:focus {
+  outline: none;
+}
+
+.confirmation-dialog-header {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+}
+
+.confirmation-mark {
+  width: 34px;
+  height: 34px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--accent-border);
+  background: var(--accent-dim);
+  position: relative;
+}
+
+.confirmation-mark::before {
+  content: "";
+  position: absolute;
+  inset: 9px;
+  border: 2px solid var(--accent);
+  border-radius: 50%;
+}
+
+.confirmation-dialog.is-destructive .confirmation-mark {
+  border-color: rgba(255, 138, 122, 0.34);
+  background: var(--red-dim);
+}
+
+.confirmation-dialog.is-destructive .confirmation-mark::before {
+  border-color: var(--red);
+}
+
+.confirmation-dialog h2 {
+  margin: 1px 0 0;
+  font-size: 18px;
+  line-height: 1.25;
+  letter-spacing: 0;
+}
+
+.confirmation-description {
+  margin-top: 6px;
+  color: var(--text-muted);
+  line-height: 1.55;
+}
+
+.confirmation-error {
+  border: 1px solid rgba(255, 138, 122, 0.28);
+  border-radius: var(--radius-md);
+  background: var(--red-dim);
+  color: var(--red);
+  padding: 10px 12px;
+  line-height: 1.45;
+}
+
+.confirmation-pending {
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.confirmation-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.generate-btn.danger {
+  background: var(--red-dim);
+  color: var(--red);
+  border-color: rgba(255, 138, 122, 0.34);
+}
+
+.generate-btn.danger:hover:not(:disabled) {
+  background: rgba(255, 138, 122, 0.18);
+}
+
 .publish-platform-grid,
 .connection-grid {
   display: grid;
@@ -5997,6 +6115,37 @@ textarea:focus {
     max-height: calc(100vh - 24px);
     padding: 16px;
     border-radius: 10px 10px 0 0;
+  }
+
+  .confirmation-layer {
+    align-items: flex-end;
+    padding: 10px;
+  }
+
+  .confirmation-dialog {
+    width: 100%;
+    max-height: calc(100vh - 20px);
+    padding: 15px;
+  }
+
+  .confirmation-dialog-header {
+    grid-template-columns: 30px minmax(0, 1fr);
+    gap: 10px;
+  }
+
+  .confirmation-mark {
+    width: 30px;
+    height: 30px;
+  }
+
+  .confirmation-actions {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .confirmation-actions .generate-btn {
+    width: 100%;
+    min-height: 42px;
   }
 
   .publish-checkbox {

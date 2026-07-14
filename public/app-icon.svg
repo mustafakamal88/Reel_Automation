@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="180" height="180" viewBox="0 0 180 180">
+  <rect width="180" height="180" rx="32" fill="#121619"/>
+  <mask id="trendcortex-app-icon-negative-space" maskUnits="userSpaceOnUse">
+    <rect width="180" height="180" fill="white"/>
+    <circle cx="90" cy="43.9" r="11.8" fill="black"/>
+    <circle cx="129.2" cy="65.2" r="11.8" fill="black"/>
+    <circle cx="129.2" cy="120.4" r="11.8" fill="black"/>
+    <circle cx="90" cy="141.7" r="11.8" fill="black"/>
+    <circle cx="50.8" cy="120.4" r="11.8" fill="black"/>
+    <circle cx="50.8" cy="65.2" r="11.8" fill="black"/>
+    <path d="M53.1 146.9 146.9 53.1" stroke="black" stroke-width="19.6" stroke-linecap="round"/>
+  </mask>
+  <path fill="#41C7DA" mask="url(#trendcortex-app-icon-negative-space)" d="M90 18c-39.6 0-72 32.4-72 72s32.4 72 72 72 72-32.4 72-72-32.4-72-72-72Zm0 43.5a28.5 28.5 0 1 0 0 57 28.5 28.5 0 0 0 0-57Z"/>
+</svg>

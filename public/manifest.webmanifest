@@ -1,0 +1,23 @@
+{
+  "name": "TrendCortex",
+  "short_name": "TrendCortex",
+  "description": "TrendCortex content automation workspace.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#121619",
+  "theme_color": "#121619",
+  "icons": [
+    {
+      "src": "/favicon.svg?v=trendcortex",
+      "sizes": "32x32",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "/app-icon.svg?v=trendcortex",
+      "sizes": "180x180",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

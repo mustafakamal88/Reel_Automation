@@ -19,6 +19,7 @@ import {
 } from '../lib/api/client';
 import type { ScenePlanDraft, StoredScriptPackage } from '../lib/storage';
 import { storage } from '../lib/storage';
+import { ConfirmationDialog } from '../components/ConfirmationDialog';
 
 interface Props {
   latestScript: StoredScriptPackage | null;
@@ -29,6 +30,9 @@ interface Props {
 type ScriptSectionID = 'hook' | 'script' | 'caption' | 'hashtags';
 type SaveState = 'saved' | 'dirty' | 'saving' | 'failed';
 type WorkspaceTab = 'script' | 'scenes';
+type SceneConfirmation =
+  | { type: 'replace-scene-plan'; sceneCount: number }
+  | { type: 'delete-scene'; sceneID: string; label: string };
 
 interface SceneDraft extends ContentProjectScene {
   localOnly?: boolean;
@@ -755,6 +759,8 @@ export function ScriptStudioPage({ latestScript, onUseInClipGenerator, onGoToTre
   const [sceneSaveError, setSceneSaveError] = useState<string | null>(null);
   const [sceneGenerateBusy, setSceneGenerateBusy] = useState(false);
   const [sceneGenerateError, setSceneGenerateError] = useState<string | null>(null);
+  const [sceneConfirmation, setSceneConfirmation] = useState<SceneConfirmation | null>(null);
+  const [sceneConfirmationError, setSceneConfirmationError] = useState<string | null>(null);
   const [sceneRecoveryPrompt, setSceneRecoveryPrompt] = useState<ScenePlanDraft | null>(null);
   const [importBusy, setImportBusy] = useState(false);
   const [importError, setImportError] = useState<string | null>(null);
@@ -1057,13 +1063,22 @@ export function ScriptStudioPage({ latestScript, onUseInClipGenerator, onGoToTre
       });
     }
 
-    function deleteScene(index: number) {
+    function requestDeleteScene(index: number) {
       const scene = scenes[index];
-      if (!window.confirm(`Delete ${scene.title || `Scene ${index + 1}`}?`)) return;
+      if (!scene) return;
+      setSceneConfirmationError(null);
+      setSceneConfirmation({ type: 'delete-scene', sceneID: scene.id, label: `Scene ${index + 1}` });
+    }
+
+    function deleteScene(sceneID: string) {
+      const scene = scenes.find(item => item.id === sceneID);
+      if (!scene) return;
       if (!scene.localOnly) {
         setDeletedSceneIDs(current => Array.from(new Set([...current, scene.id])));
       }
-      updateScenes(current => current.filter((_, sceneIndex) => sceneIndex !== index));
+      updateScenes(current => current.filter(item => item.id !== sceneID));
+      setSceneConfirmation(null);
+      setSceneConfirmationError(null);
     }
 
     function moveScene(index: number, direction: -1 | 1) {
@@ -1076,16 +1091,26 @@ export function ScriptStudioPage({ latestScript, onUseInClipGenerator, onGoToTre
       });
     }
 
-    async function generateScenePlan() {
-      if (!activeDraft.mainScript.trim() && !activeDraft.hook.trim()) {
-        setSceneGenerateError('Save a script before generating a scene plan.');
+    function requestGenerateScenePlan() {
+      if (scenes.length > 0) {
+        setSceneConfirmationError(null);
+        setSceneGenerateError(null);
+        setSceneConfirmation({ type: 'replace-scene-plan', sceneCount: scenes.length });
         return;
       }
-      if (scenes.length > 0 && !window.confirm('Replace the current scene plan with a newly generated plan? Existing scenes will be kept if generation fails.')) return;
+      void generateScenePlan();
+    }
+
+    async function generateScenePlan(): Promise<boolean> {
+      if (!activeDraft.mainScript.trim() && !activeDraft.hook.trim()) {
+        setSceneGenerateError('Save a script before generating a scene plan.');
+        return false;
+      }
       const latest = saveState === 'dirty' || saveState === 'failed' ? await saveProjectDraft() : project;
-      if (!latest) return;
+      if (!latest) return false;
       setSceneGenerateBusy(true);
       setSceneGenerateError(null);
+      setSceneConfirmationError(null);
       try {
         const result = await generateContentProjectScenes(latest.id, 'replace');
         const ordered = renumberScenes(result.scenes.map(scene => ({ ...scene, localOnly: false })));
@@ -1096,11 +1121,31 @@ export function ScriptStudioPage({ latestScript, onUseInClipGenerator, onGoToTre
         storage.clearScenePlanDraft(latest.id);
         const refreshedProject = await getContentProject(latest.id);
         setProject(refreshedProject);
+        setSceneConfirmation(null);
+        return true;
       } catch (err) {
-        setSceneGenerateError(errMsg(err, 'Scene plan generation is unavailable. Existing scenes were not changed.'));
+        const message = errMsg(err, 'Scene plan generation is unavailable. Existing scenes were not changed.');
+        setSceneGenerateError(message);
+        setSceneConfirmationError(message);
+        return false;
       } finally {
         setSceneGenerateBusy(false);
       }
+    }
+
+    function closeSceneConfirmation() {
+      if (sceneGenerateBusy) return;
+      setSceneConfirmation(null);
+      setSceneConfirmationError(null);
+    }
+
+    function confirmSceneAction() {
+      if (!sceneConfirmation || sceneGenerateBusy) return;
+      if (sceneConfirmation.type === 'delete-scene') {
+        deleteScene(sceneConfirmation.sceneID);
+        return;
+      }
+      void generateScenePlan();
     }
 
     function restoreSceneDraft() {
@@ -1167,7 +1212,7 @@ export function ScriptStudioPage({ latestScript, onUseInClipGenerator, onGoToTre
             )}
             {activeWorkspace === 'scenes' && (
               <>
-                <button className="generate-btn secondary" type="button" onClick={() => void generateScenePlan()} disabled={sceneGenerateBusy || saveState === 'saving' || (!draft.hook.trim() && !draft.mainScript.trim())}>
+                <button className="generate-btn secondary" type="button" onClick={requestGenerateScenePlan} disabled={sceneGenerateBusy || saveState === 'saving' || (!draft.hook.trim() && !draft.mainScript.trim())}>
                   {sceneGenerateBusy ? 'Generating...' : 'Generate Scene Plan'}
                 </button>
                 <button className="generate-btn secondary" type="button" onClick={addScene}>Add Scene</button>
@@ -1341,7 +1386,7 @@ export function ScriptStudioPage({ latestScript, onUseInClipGenerator, onGoToTre
                       <button type="button" className="mini-copy-btn" onClick={() => moveScene(index, -1)} disabled={index === 0}>Move up</button>
                       <button type="button" className="mini-copy-btn" onClick={() => moveScene(index, 1)} disabled={index === scenes.length - 1}>Move down</button>
                       <button type="button" className="mini-copy-btn" onClick={() => duplicateScene(index)}>Duplicate</button>
-                      <button type="button" className="mini-copy-btn danger" onClick={() => deleteScene(index)}>Delete</button>
+                      <button type="button" className="mini-copy-btn danger" onClick={() => requestDeleteScene(index)}>Delete</button>
                     </div>
                   </div>
 
@@ -1429,6 +1474,22 @@ export function ScriptStudioPage({ latestScript, onUseInClipGenerator, onGoToTre
           </div>
           )}
         </form>
+        {sceneConfirmation && (
+          <ConfirmationDialog
+            open
+            title={sceneConfirmation.type === 'replace-scene-plan' ? 'Replace scene plan?' : `Delete ${sceneConfirmation.label}?`}
+            description={sceneConfirmation.type === 'replace-scene-plan'
+              ? <>Generating a new plan will replace your {sceneConfirmation.sceneCount} existing {sceneConfirmation.sceneCount === 1 ? 'scene' : 'scenes'}. Your current plan will remain unchanged if generation fails.</>
+              : 'This will permanently remove the scene from this project.'}
+            confirmLabel={sceneConfirmation.type === 'replace-scene-plan' ? 'Replace plan' : 'Delete scene'}
+            intent={sceneConfirmation.type === 'replace-scene-plan' ? 'standard' : 'destructive'}
+            pending={sceneConfirmation.type === 'replace-scene-plan' && sceneGenerateBusy}
+            pendingLabel={sceneConfirmation.type === 'replace-scene-plan' ? 'Generating plan...' : 'Deleting...'}
+            errorMessage={sceneConfirmationError}
+            onConfirm={confirmSceneAction}
+            onCancel={closeSceneConfirmation}
+          />
+        )}
       </section>
     );
   }
