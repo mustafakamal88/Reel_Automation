@@ -961,7 +961,7 @@ export function ScriptStudioPage({ latestScript, onUseInClipGenerator, onGoToTre
       <section className="page-section">
         <div className="script-empty-state system-state is-empty" role="status">
           <div className="empty-title">Loading project...</div>
-          <div className="empty-desc">Fetching persistent Script Studio content.</div>
+          <div className="empty-desc">Fetching persistent Script Lab content.</div>
         </div>
       </section>
     );
@@ -1143,7 +1143,7 @@ export function ScriptStudioPage({ latestScript, onUseInClipGenerator, onGoToTre
           </header>
 
           <nav className="script-action-bar script-lab-actions" aria-label="Script actions">
-            <div className="script-workspace-tabs" role="tablist" aria-label="Script Studio workspace">
+            <div className="script-workspace-tabs" role="tablist" aria-label="Script Lab workspace">
               <button className={activeWorkspace === 'script' ? 'active' : ''} type="button" role="tab" aria-selected={activeWorkspace === 'script'} onClick={() => setActiveWorkspace('script')}>Script</button>
               <button className={activeWorkspace === 'scenes' ? 'active' : ''} type="button" role="tab" aria-selected={activeWorkspace === 'scenes'} onClick={() => setActiveWorkspace('scenes')}>Scene Plan</button>
             </div>

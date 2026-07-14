@@ -116,7 +116,7 @@ This standard applies to every user-facing TrendCortex page, component, workflow
 
 The main TrendCortex workflow is:
 
-Trend Finder -> Generate Script -> Script Studio -> Use in Clip Generator -> Download/Publish.
+Trend Finder -> Generate Script -> Script Lab -> Use in Clip Generator -> Download/Publish.
 
 UI changes must preserve this CTA flow. A user should always understand where they are and what the next useful step is.
 
@@ -126,7 +126,7 @@ The main sidebar information architecture is:
 
 - Dashboard
 - Research: Trend Intelligence, Video Analyzer, Channel Analyzer, Niche Finder
-- Content: Script Studio, Clip Generator, Voice Studio, Thumbnail Studio, Assets
+- Content: Script Lab, Clip Generator, Voice Studio, Thumbnail Studio, Assets
 - Publishing: Connections, Calendar, Analytics
 - Settings
 

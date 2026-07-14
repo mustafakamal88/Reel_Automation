@@ -49,7 +49,7 @@ const RESEARCH_ITEMS: NavItem[] = [
 
 const CONTENT_ITEMS: NavItem[] = [
   { id: 'contentProjects', label: 'Projects' },
-  { id: 'scriptStudio', label: 'Script Studio' },
+  { id: 'scriptStudio', label: 'Script Lab' },
   { id: 'clipStudio', label: 'Clip Generator' },
   { id: 'voiceStudio', label: 'Voice Studio', future: true },
   { id: 'thumbnailStudio', label: 'Thumbnail Studio', future: true },

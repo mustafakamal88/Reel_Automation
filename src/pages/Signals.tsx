@@ -3083,7 +3083,7 @@ function ScriptAction({ label, generating, generated, error, onGenerate, onOpenS
         </button>
         {generated && <span className="inline-success" role="status">Script generated</span>}
         {generated && onOpenScriptStudio && (
-          <button className="generate-btn idle" type="button" onClick={onOpenScriptStudio}>Open in Script Studio</button>
+          <button className="generate-btn idle" type="button" onClick={onOpenScriptStudio}>Open in Script Lab</button>
         )}
       </div>
       {error && <div className="inline-error" role="alert">{error}</div>}
