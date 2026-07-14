@@ -7,6 +7,7 @@ const VIEW_META: Record<View, { title: string; sub: string }> = {
   youtubeVideoAnalyzer:   { title: 'Video Analyzer',           sub: 'Break down a YouTube video into hooks, keywords, and script angles.' },
   youtubeChannelAnalyzer: { title: 'Channel Analyzer',         sub: 'Review a YouTube channel profile, content patterns, and next-video ideas.' },
   nicheFinder:            { title: 'Niche Finder',             sub: 'Evaluate demand, competition and readiness for a creator niche.' },
+  contentProjects:        { title: 'Projects',                 sub: 'Persistent content projects and production status' },
   scriptStudio:           { title: 'Script Studio',            sub: 'Generated scripts and platform copy' },
   clipStudio:             { title: 'Clip Generator',           sub: 'Upload a video or provide a direct video URL, then download clips' },
   voiceStudio:            { title: 'Voice Studio',             sub: 'Planned narration and voice workflow' },

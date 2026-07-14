@@ -22,6 +22,7 @@ const RESEARCH_VIEWS: View[] = [
 ];
 
 const CONTENT_VIEWS: View[] = [
+  'contentProjects',
   'scriptStudio',
   'clipStudio',
   'voiceStudio',
@@ -47,6 +48,7 @@ const RESEARCH_ITEMS: NavItem[] = [
 ];
 
 const CONTENT_ITEMS: NavItem[] = [
+  { id: 'contentProjects', label: 'Projects' },
   { id: 'scriptStudio', label: 'Script Studio' },
   { id: 'clipStudio', label: 'Clip Generator' },
   { id: 'voiceStudio', label: 'Voice Studio', future: true },

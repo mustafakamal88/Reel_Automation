@@ -917,6 +917,122 @@ export async function generateResearchScript(body: ResearchScriptGenerationReque
   });
 }
 
+export type ContentProjectStatus =
+  | 'idea'
+  | 'brief_ready'
+  | 'draft'
+  | 'needs_review'
+  | 'approved'
+  | 'in_production'
+  | 'rendered'
+  | 'scheduled'
+  | 'published'
+  | 'archived';
+
+export type ContentProjectStage =
+  | 'idea'
+  | 'brief'
+  | 'script'
+  | 'scenes'
+  | 'voice'
+  | 'video'
+  | 'thumbnail'
+  | 'publishing'
+  | 'complete';
+
+export interface ContentProject {
+  id: string;
+  title: string;
+  topic: string;
+  source_type: string;
+  source_reference?: string;
+  source_label?: string;
+  status: ContentProjectStatus;
+  current_stage: ContentProjectStage;
+  target_platforms: string[];
+  content_format: string;
+  target_duration_seconds: number;
+  language: string;
+  creative_brief?: Record<string, unknown>;
+  hook?: string;
+  main_script?: string;
+  caption?: string;
+  hashtags: string[];
+  platform_text: Record<string, string>;
+  legacy_imported: boolean;
+  legacy_saved_at?: string;
+  archived_at?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ContentProjectPayload {
+  title: string;
+  topic: string;
+  source_type?: string;
+  source_reference?: string;
+  source_label?: string;
+  status?: ContentProjectStatus;
+  current_stage?: ContentProjectStage;
+  target_platforms: string[];
+  content_format: string;
+  target_duration_seconds: number;
+  language: string;
+  creative_brief?: Record<string, unknown>;
+  hook?: string;
+  main_script?: string;
+  caption?: string;
+  hashtags?: string[];
+  platform_text?: Record<string, string>;
+}
+
+export interface LegacyContentProjectImportPayload {
+  import_key?: string;
+  title: string;
+  topic?: string;
+  source_type?: string;
+  source_reference?: string;
+  source_label?: string;
+  target_platforms?: string[];
+  content_format?: string;
+  target_duration_seconds?: number;
+  language?: string;
+  hook?: string;
+  main_script?: string;
+  caption?: string;
+  hashtags?: string[];
+  platform_text?: Record<string, string>;
+  saved_at?: string;
+}
+
+export async function listContentProjects(params: { q?: string; status?: string } = {}): Promise<{ projects: ContentProject[] }> {
+  const qs = new URLSearchParams();
+  if (params.q) qs.set('q', params.q);
+  if (params.status) qs.set('status', params.status);
+  const suffix = qs.toString() ? `?${qs.toString()}` : '';
+  return apiFetch(`/api/content-projects${suffix}`);
+}
+
+export async function createContentProject(body: ContentProjectPayload): Promise<ContentProject> {
+  return apiFetch('/api/content-projects', { method: 'POST', body: JSON.stringify(body) });
+}
+
+export async function getContentProject(id: string): Promise<ContentProject> {
+  return apiFetch(`/api/content-projects/${encodeURIComponent(id)}`);
+}
+
+export async function updateContentProject(id: string, body: ContentProjectPayload): Promise<ContentProject> {
+  return apiFetch(`/api/content-projects/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(body) });
+}
+
+export async function archiveContentProject(id: string): Promise<ContentProject> {
+  return apiFetch(`/api/content-projects/${encodeURIComponent(id)}`, { method: 'DELETE' });
+}
+
+export async function importLegacyContentProject(body: LegacyContentProjectImportPayload): Promise<ContentProject> {
+  return apiFetch('/api/content-projects/import-legacy', { method: 'POST', body: JSON.stringify(body) });
+}
+
 export async function analyzeNicheOpportunities(body: NicheOpportunityRequest): Promise<NicheOpportunityResponse> {
   return apiFetch('/api/research/niche/opportunities', {
     method: 'POST',
@@ -1611,6 +1727,7 @@ export interface ClipStudioSourceResponse {
 }
 
 export interface ClipStudioGenerateRequest {
+  project_id?: string;
   source_id?: string;
   source_url?: string;
   prompt: string;

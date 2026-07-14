@@ -1,5 +1,14 @@
-import { useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import {
+  ApiError,
+  getContentProject,
+  importLegacyContentProject,
+  type ContentProject,
+  type ReelContentPackage,
+  type TrendCandidate,
+} from '../lib/api/client';
 import type { StoredScriptPackage } from '../lib/storage';
+import { storage } from '../lib/storage';
 
 interface Props {
   latestScript: StoredScriptPackage | null;
@@ -36,6 +45,12 @@ async function copyText(value: string) {
   } catch {
     // Clipboard access can be blocked by browser permissions; keep the UI stable.
   }
+}
+
+function errMsg(err: unknown, fallback: string): string {
+  if (err instanceof ApiError) return err.message;
+  if (err instanceof Error) return err.message;
+  return fallback;
 }
 
 function sourceLabel(source?: string): string {
@@ -360,10 +375,179 @@ function EvidenceSection({ title, items, chips, linkItems, soft }: {
   );
 }
 
+function currentProjectID(): string {
+  return new URLSearchParams(window.location.search).get('project_id')?.trim() || '';
+}
+
+function projectToStoredScript(project: ContentProject): StoredScriptPackage {
+  const platformText = project.platform_text || {};
+  const pkg: ReelContentPackage = {
+    title: project.title,
+    hook: project.hook || '',
+    script: project.main_script || '',
+    caption: project.caption || '',
+    description: platformText.youtube || '',
+    hashtags: project.hashtags || [],
+    platform_posts: platformText,
+    thumbnail_brief: '',
+    instagram_caption: platformText.instagram || '',
+    tiktok_caption: platformText.tiktok || '',
+    youtube_title: project.title,
+    youtube_description: platformText.youtube || '',
+    facebook_caption: platformText.facebook || '',
+    x_caption: platformText.x || '',
+    safety_grounding_notes: [],
+    grounding: '',
+    source_type: project.source_type,
+    source_url: project.source_reference,
+    created_at: project.created_at,
+    inferred_keywords: [],
+    inferred_niche: project.topic,
+    inferred_angle: '',
+    provider_metadata: {
+      provider: 'content_project',
+      model: 'project',
+      source_candidate_id: project.id,
+      source: project.source_type,
+      source_url: project.source_reference,
+      platform_targets: project.target_platforms,
+      duration_target: `${project.target_duration_seconds}s`,
+      generated_at: project.updated_at,
+    },
+  };
+  const candidate: TrendCandidate = {
+    id: project.id,
+    source: project.source_type,
+    region: '',
+    language: project.language,
+    keyword: project.topic,
+    title: project.title,
+    score: 0,
+    discovered_at: project.created_at,
+    source_url: project.source_reference,
+    evidence: '',
+    status: project.status,
+  };
+  return { candidate, package: pkg, savedAt: project.updated_at };
+}
+
+function legacyImportPayload(latestScript: StoredScriptPackage) {
+  const pkg = latestScript.package;
+  const sourceType = pkg.source_type || latestScript.candidate.source || 'legacy_script_studio';
+  return {
+    import_key: [latestScript.candidate.id, latestScript.savedAt, pkg.title, pkg.hook].filter(Boolean).join(':'),
+    title: latestScript.candidate.title || latestScript.candidate.keyword || pkg.title || 'Imported script',
+    topic: pkg.inferred_niche || latestScript.candidate.keyword || pkg.title,
+    source_type: sourceType,
+    source_reference: pkg.source_url || pkg.provider_metadata.source_url || latestScript.candidate.source_url || '',
+    source_label: sourceLabel(sourceType),
+    target_platforms: normalizePlatforms(pkg.provider_metadata.platform_targets),
+    content_format: 'short_video',
+    target_duration_seconds: durationSeconds(pkg.provider_metadata.duration_target),
+    language: latestScript.candidate.language || 'en-US',
+    hook: pkg.hook,
+    main_script: pkg.script,
+    caption: pkg.caption,
+    hashtags: pkg.hashtags,
+    platform_text: {
+      instagram: pkg.instagram_caption,
+      tiktok: pkg.tiktok_caption,
+      youtube: [pkg.youtube_title, pkg.youtube_description].filter(Boolean).join('\n\n'),
+      facebook: pkg.facebook_caption,
+      x: pkg.x_caption,
+      ...(pkg.platform_posts || {}),
+    },
+    saved_at: latestScript.savedAt,
+  };
+}
+
+function normalizePlatforms(values: string[]): string[] {
+  const mapped = values.map(value => {
+    const lower = value.toLowerCase();
+    if (lower === 'yt') return 'youtube';
+    if (lower === 'tt') return 'tiktok';
+    if (lower === 'ig') return 'instagram';
+    if (lower === 'fb') return 'facebook';
+    return lower;
+  }).filter(value => ['youtube', 'tiktok', 'instagram', 'facebook', 'x', 'threads'].includes(value));
+  return mapped.length ? Array.from(new Set(mapped)) : ['youtube', 'tiktok', 'instagram'];
+}
+
+function durationSeconds(value?: string): number {
+  const match = String(value || '').match(/\d+/);
+  if (!match) return 30;
+  return Math.min(7200, Math.max(5, Number(match[0])));
+}
+
 export function ScriptStudioPage({ latestScript, onUseInClipGenerator, onGoToTrendFinder }: Props) {
   const highlightTimer = useRef<number | null>(null);
+  const projectID = currentProjectID();
+  const [project, setProject] = useState<ContentProject | null>(null);
+  const [projectLoading, setProjectLoading] = useState(Boolean(projectID));
+  const [projectError, setProjectError] = useState<string | null>(null);
+  const [importBusy, setImportBusy] = useState(false);
+  const [importError, setImportError] = useState<string | null>(null);
 
-  if (!latestScript) {
+  useEffect(() => {
+    if (!projectID) return;
+    let cancelled = false;
+    setProjectLoading(true);
+    setProjectError(null);
+    getContentProject(projectID)
+      .then(result => {
+        if (!cancelled) setProject(result);
+      })
+      .catch(err => {
+        if (!cancelled) setProjectError(errMsg(err, 'Content project could not be loaded.'));
+      })
+      .finally(() => {
+        if (!cancelled) setProjectLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [projectID]);
+
+  async function handleImportLegacy() {
+    if (!latestScript) return;
+    setImportBusy(true);
+    setImportError(null);
+    try {
+      const imported = await importLegacyContentProject(legacyImportPayload(latestScript));
+      window.history.pushState(null, '', `/script-studio?project_id=${encodeURIComponent(imported.id)}`);
+      setProject(imported);
+    } catch (err) {
+      setImportError(errMsg(err, 'Legacy script import failed. The original saved script is still available here.'));
+    } finally {
+      setImportBusy(false);
+    }
+  }
+
+  if (projectLoading) {
+    return (
+      <section className="page-section">
+        <div className="script-empty-state system-state is-empty" role="status">
+          <div className="empty-title">Loading project...</div>
+          <div className="empty-desc">Fetching persistent Script Studio content.</div>
+        </div>
+      </section>
+    );
+  }
+
+  if (projectError) {
+    return (
+      <section className="page-section">
+        <div className="script-empty-state system-state is-error" role="alert">
+          <div className="empty-title">Project could not be opened.</div>
+          <div className="empty-desc">{projectError}</div>
+        </div>
+      </section>
+    );
+  }
+
+  const activeScript = project ? projectToStoredScript(project) : latestScript;
+
+  if (!activeScript) {
     return (
       <section className="page-section">
         <div className="script-empty-state system-state is-empty" role="status">
@@ -378,11 +562,11 @@ export function ScriptStudioPage({ latestScript, onUseInClipGenerator, onGoToTre
     );
   }
 
-  const pkg = latestScript.package;
-  const sourceType = pkg.source_type || latestScript.candidate.source;
-  const sourceURL = pkg.source_url || pkg.provider_metadata.source_url || latestScript.candidate.source_url;
-  const createdAt = pkg.created_at || pkg.provider_metadata.generated_at || latestScript.savedAt;
-  const title = latestScript.candidate.title || latestScript.candidate.keyword || pkg.title;
+  const pkg = activeScript.package;
+  const sourceType = pkg.source_type || activeScript.candidate.source;
+  const sourceURL = pkg.source_url || pkg.provider_metadata.source_url || activeScript.candidate.source_url;
+  const createdAt = pkg.created_at || pkg.provider_metadata.generated_at || activeScript.savedAt;
+  const title = activeScript.candidate.title || activeScript.candidate.keyword || pkg.title;
   const hashtagText = pkg.hashtags.join(' ');
   const evidence = buildEvidenceViewModel(pkg.grounding, pkg.safety_grounding_notes);
   const exportText = [
@@ -416,12 +600,26 @@ export function ScriptStudioPage({ latestScript, onUseInClipGenerator, onGoToTre
     }, 1300);
   }
 
+  function useInClipGenerator() {
+    storage.setClipGeneratorHandoff({
+      projectId: project?.id,
+      title,
+      hook: pkg.hook,
+      script: pkg.script,
+      caption: pkg.caption,
+      platformText: pkg.platform_posts,
+      savedAt: new Date().toISOString(),
+    });
+    onUseInClipGenerator?.();
+  }
+
   return (
     <section className="page-section script-studio-page">
       <div className="script-shell">
         <header className="script-hero">
           <div className="script-source-line">
             <span className="script-source-badge">{sourceLabel(sourceType)}</span>
+            {project && <span className="script-source-badge">Project-backed</span>}
             <span>saved {formatDate(createdAt)}</span>
             {sourceURL && <a href={sourceURL} target="_blank" rel="noreferrer">Source evidence</a>}
           </div>
@@ -434,6 +632,11 @@ export function ScriptStudioPage({ latestScript, onUseInClipGenerator, onGoToTre
         </header>
 
         <nav className="script-action-bar" aria-label="Script actions">
+          {!project && latestScript && (
+            <button className="generate-btn secondary" type="button" onClick={() => void handleImportLegacy()} disabled={importBusy}>
+              {importBusy ? 'Importing...' : 'Import to Project'}
+            </button>
+          )}
           <button className="generate-btn secondary" type="button" onClick={() => void copyText(exportText)}>Copy all</button>
           {(Object.keys(sectionLabels) as ScriptSectionID[]).map(section => (
             <a className="generate-btn secondary" href={`#script-section-${section}`} role="button" onClick={() => scrollToSection(section)} key={section}>
@@ -442,9 +645,11 @@ export function ScriptStudioPage({ latestScript, onUseInClipGenerator, onGoToTre
           ))}
           <a className="generate-btn secondary" href="#script-section-platform-text" role="button" onClick={() => document.getElementById('script-section-platform-text')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}>Platform text</a>
           {onUseInClipGenerator && (
-            <button className="generate-btn idle" type="button" onClick={onUseInClipGenerator}>Use in Clip Generator</button>
+            <button className="generate-btn idle" type="button" onClick={useInClipGenerator}>Use in Clip Generator</button>
           )}
         </nav>
+
+        {importError && <div className="clip-error">{importError}</div>}
 
         <main className="script-content">
           <ScriptCard id="script-section-hook" title="Hook" value={pkg.hook} onCopy={() => void copyText(pkg.hook)} />

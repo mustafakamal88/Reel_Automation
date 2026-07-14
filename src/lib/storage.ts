@@ -9,11 +9,22 @@ const KEY_VIEW = 'signal_view';
 const KEY_GENERATED = 'signal_generated';
 const KEY_WORKFLOW_STATUSES = 'signal_workflow_statuses';
 const KEY_SCRIPT_STUDIO = 'trendcortex_script_studio_package';
+const KEY_CLIP_HANDOFF = 'trendcortex_clip_generator_handoff';
 const KEY_ACTIVITY = 'trendcortex_activity';
 
 export interface StoredScriptPackage {
   candidate: TrendCandidate;
   package: ReelContentPackage;
+  savedAt: string;
+}
+
+export interface ClipGeneratorHandoff {
+  projectId?: string;
+  title: string;
+  hook?: string;
+  script?: string;
+  caption?: string;
+  platformText?: Record<string, string>;
   savedAt: string;
 }
 
@@ -113,6 +124,7 @@ const VALID_VIEWS: View[] = [
   'youtubeVideoAnalyzer',
   'youtubeChannelAnalyzer',
   'nicheFinder',
+  'contentProjects',
   'scriptStudio',
   'clipStudio',
   'voiceStudio',
@@ -231,6 +243,12 @@ export const storage = {
   },
   setScriptPackage(v: StoredScriptPackage): void {
     safeSet(KEY_SCRIPT_STUDIO, v);
+  },
+  getClipGeneratorHandoff(): ClipGeneratorHandoff | null {
+    return safeGet<ClipGeneratorHandoff | null>(KEY_CLIP_HANDOFF, null);
+  },
+  setClipGeneratorHandoff(v: ClipGeneratorHandoff): void {
+    safeSet(KEY_CLIP_HANDOFF, v);
   },
 
   getWorkflowStatuses(): Record<string, WorkflowStatus> {

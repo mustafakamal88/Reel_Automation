@@ -102,6 +102,10 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /api/niches/{id}/analyse-gaps", s.handleAnalyseNicheGaps)
 	mux.HandleFunc("GET /api/niches/filters", s.handleNicheFilters)
 	mux.HandleFunc("POST /api/research/script", s.handleGenerateResearchScript)
+	mux.HandleFunc("GET /api/content-projects", s.handleContentProjects)
+	mux.HandleFunc("POST /api/content-projects", s.handleContentProjects)
+	mux.HandleFunc("POST /api/content-projects/import-legacy", s.handleImportLegacyContentProject)
+	mux.HandleFunc("/api/content-projects/", s.handleContentProjectRoute)
 
 	mux.HandleFunc("POST /api/topics/score", s.handleScoreTopics)
 	mux.HandleFunc("GET /api/topics/scores", s.handleListTopicScores)
@@ -171,7 +175,7 @@ func corsMiddleware(cfg *config.Config, next http.Handler) http.Handler {
 			w.Header().Set("Access-Control-Allow-Origin", origin)
 		}
 		w.Header().Set("Vary", "Origin")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
 		w.Header().Set("Access-Control-Allow-Credentials", "true")
 		if r.Method == http.MethodOptions {

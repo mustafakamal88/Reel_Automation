@@ -81,6 +81,7 @@ type clipStudioSourceResponse struct {
 }
 
 type clipStudioGenerateRequest struct {
+	ProjectID       string                        `json:"project_id,omitempty"`
 	SourceID        string                        `json:"source_id,omitempty"`
 	SourceURL       string                        `json:"source_url,omitempty"`
 	Prompt          string                        `json:"prompt"`

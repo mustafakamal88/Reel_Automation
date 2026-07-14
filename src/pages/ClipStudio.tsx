@@ -70,16 +70,17 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
 
 export function ClipStudioPage({ onNavigate }: Props) {
   const savedSettings = storage.getSettings();
+  const handoff = storage.getClipGeneratorHandoff();
   const [sourceUrl, setSourceUrl] = useState('');
   const [source, setSource] = useState<ClipStudioSourceResponse | null>(null);
-  const [prompt, setPrompt] = useState('Make short branded clips with a strong hook and clear takeaway.');
+  const [prompt, setPrompt] = useState(handoff?.script ? `${handoff.title}\n\n${handoff.hook || ''}\n\n${handoff.script}`.trim() : 'Make short branded clips with a strong hook and clear takeaway.');
   const [clipLength, setClipLength] = useState<'auto' | '15s' | '30s' | '60s' | '3min'>('auto');
   const [clipCount, setClipCount] = useState<1 | 3 | 6>(3);
   const [topText, setTopText] = useState(savedSettings.defaultTopText);
   const [bottomText, setBottomText] = useState(savedSettings.defaultBottomText);
   const [watermark, setWatermark] = useState(savedSettings.defaultWatermark);
   const [layoutMode, setLayoutMode] = useState<ClipLayoutMode>(savedSettings.defaultLayoutMode);
-  const [captionText, setCaptionText] = useState('');
+  const [captionText, setCaptionText] = useState(handoff?.caption || '');
   const [ctaSize, setCtaSize] = useState<ClipCTASize>('small');
   const [rightsConfirmed, setRightsConfirmed] = useState(false);
   const [sourceModel, setSourceModel] = useState<ClipSourceModel>('user_upload');
@@ -186,6 +187,7 @@ export function ClipStudioPage({ onNavigate }: Props) {
     try {
       const generated = await generateClipStudio({
         source_id: activeSource.source_id,
+        project_id: handoff?.projectId,
         prompt,
         clip_length: clipLength,
         clip_count: clipCount,
@@ -329,6 +331,13 @@ export function ClipStudioPage({ onNavigate }: Props) {
               <p>Set the creative prompt, clip count, layout, captions, and brand overlays that will be sent to the existing generator.</p>
             </div>
           </div>
+
+          {handoff?.projectId && (
+            <div className="clip-readiness-note ready">
+              <div>Project handoff active</div>
+              <p>This clip package is linked to {handoff.title}.</p>
+            </div>
+          )}
 
         <Field label="Prompt / instruction">
           <textarea className="form-textarea clip-prompt-textarea" value={prompt} onChange={event => setPrompt(event.target.value)} rows={4} placeholder="Describe the clips you want." />

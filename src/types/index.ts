@@ -11,6 +11,7 @@ export type View =
   | 'youtubeVideoAnalyzer'
   | 'youtubeChannelAnalyzer'
   | 'nicheFinder'
+  | 'contentProjects'
   | 'scriptStudio'
   | 'clipStudio'
   | 'voiceStudio'

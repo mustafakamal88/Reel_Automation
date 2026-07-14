@@ -5,6 +5,7 @@ import { MobileNavDrawer, Sidebar } from './components/Sidebar';
 import { Header } from './components/Header';
 import { DashboardPage } from './pages/Dashboard';
 import { AIToolPage } from './pages/Signals';
+import { ContentProjectsPage } from './pages/ContentProjects';
 import { ScriptStudioPage } from './pages/ScriptStudio';
 import { ClipStudioPage } from './pages/ClipStudio';
 import { SocialConnectionsPage } from './pages/SocialConnections';
@@ -20,6 +21,7 @@ const VIEW_ROUTES: Record<View, string> = {
   youtubeVideoAnalyzer: '/ai-tools/youtube-video-analyzer',
   youtubeChannelAnalyzer: '/ai-tools/youtube-channel-analyzer',
   nicheFinder: '/ai-tools/niche-finder',
+  contentProjects: '/content/projects',
   scriptStudio: '/script-studio',
   clipStudio: '/clip-generator',
   voiceStudio: '/voice-studio',
@@ -43,6 +45,7 @@ const ROUTE_VIEWS: Record<string, View> = {
   '/ai-tools/youtube-video-analyzer': 'youtubeVideoAnalyzer',
   '/ai-tools/youtube-channel-analyzer': 'youtubeChannelAnalyzer',
   '/ai-tools/niche-finder': 'nicheFinder',
+  '/content/projects': 'contentProjects',
   '/script-studio': 'scriptStudio',
   '/clip-generator': 'clipStudio',
   '/voice-studio': 'voiceStudio',
@@ -69,6 +72,7 @@ export default function App() {
 
   const scrollAreaRef = useRef<HTMLDivElement | null>(null);
   const [view, setView] = useState<View>(() => viewFromLocation());
+  const [locationKey, setLocationKey] = useState(() => window.location.href);
   const [settings, setSettings] = useState(() => storage.getSettings());
   const [latestScript, setLatestScript] = useState(() => storage.getScriptPackage());
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -77,6 +81,7 @@ export default function App() {
     const handlePopState = () => {
       const next = viewFromLocation();
       setView(next);
+      setLocationKey(window.location.href);
       storage.setView(next);
     };
     window.addEventListener('popstate', handlePopState);
@@ -87,12 +92,16 @@ export default function App() {
     scrollAreaRef.current?.scrollTo({ top: 0, left: 0, behavior: 'auto' });
   }, [view]);
 
-  const navigate = useCallback((v: View) => {
+  const navigate = useCallback((v: View, projectID?: string) => {
     setView(v);
     storage.setView(v);
-    const nextPath = VIEW_ROUTES[v];
-    if (window.location.pathname !== nextPath) {
+    let nextPath = VIEW_ROUTES[v];
+    if (v === 'scriptStudio' && projectID) {
+      nextPath = `${nextPath}?project_id=${encodeURIComponent(projectID)}`;
+    }
+    if (`${window.location.pathname}${window.location.search}` !== nextPath) {
       window.history.pushState(null, '', nextPath);
+      setLocationKey(window.location.href);
     }
   }, []);
 
@@ -136,8 +145,10 @@ export default function App() {
                 onManageDataSources={() => navigate('connections')}
               />
             )}
+            {view === 'contentProjects' && <ContentProjectsPage onOpenProject={projectID => navigate('scriptStudio', projectID)} />}
             {view === 'scriptStudio' && (
               <ScriptStudioPage
+                key={locationKey}
                 latestScript={latestScript}
                 onUseInClipGenerator={() => navigate('clipStudio')}
                 onGoToTrendFinder={() => navigate('trendingKeywords')}
