@@ -3283,6 +3283,8 @@ func (p *YouTubeProvider) enhanceKeywordsWithOpenAI(ctx context.Context, kw Keyw
 	if apiKey == "" {
 		return kw
 	}
+	enhanceCtx, cancel := context.WithTimeout(ctx, 4*time.Second)
+	defer cancel()
 	original := kw
 	payload := map[string]any{
 		"model": strings.TrimSpace(os.Getenv("OPENAI_TEXT_MODEL")),
@@ -3299,7 +3301,7 @@ func (p *YouTubeProvider) enhanceKeywordsWithOpenAI(ctx context.Context, kw Keyw
 	if err != nil {
 		return kw
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://api.openai.com/v1/chat/completions", bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(enhanceCtx, http.MethodPost, "https://api.openai.com/v1/chat/completions", bytes.NewReader(body))
 	if err != nil {
 		return kw
 	}
