@@ -740,8 +740,6 @@ func (p *YouTubeProvider) AnalyzeChannel(ctx context.Context, channelURL string)
 		RecentVideoTitles: videoTitles(performanceSample),
 	})
 	keywordIntel = sanitizeChannelKeywordIntelligence(keywordIntel, performanceSample, identity)
-	keywordIntel = p.enhanceChannelKeywords(ctx, keywordIntel, channel.Snippet.Title)
-	keywordIntel = sanitizeChannelKeywordIntelligence(keywordIntel, performanceSample, identity)
 	keywords := append(append([]string{}, keywordIntel.PrimaryKeywords...), keywordIntel.SecondaryKeywords...)
 	nicheAnalysis := ClassifyNiche(KeywordExtractionInput{
 		Title:             channel.Snippet.Title,
@@ -1029,6 +1027,9 @@ func buildChannelPillars(kw KeywordIntelligence, videos []ChannelVideoSummary, i
 			continue
 		}
 		candidates = append(candidates, name)
+		if len(candidates) >= 80 {
+			break
+		}
 	}
 	if len(candidates) == 0 {
 		return []ChannelContentPillar{}
