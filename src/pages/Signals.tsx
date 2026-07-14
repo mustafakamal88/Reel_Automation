@@ -984,12 +984,10 @@ function ScoreDimensionRow({ dimension }: { dimension: ScoreDimension }) {
 }
 
 function PublicSignalMetric({ metric }: { metric: PerformanceMetric }) {
-  const score = clampScore(metric.score);
   return (
     <div className="public-signal-metric">
       <span>{metric.label}</span>
       <strong>{metric.value}</strong>
-      <div className="mini-strength-track" aria-hidden="true"><span style={{ width: `${score}%` }} /></div>
       <small>{concise(metric.explanation, 92)}</small>
     </div>
   );
@@ -1076,7 +1074,7 @@ function TopicIntelligence({ result }: { result: YouTubeVideoAnalysisResponse })
 }
 
 function TopicCluster({ core, themes }: { core: string; themes: string[] }) {
-  const nodes = distinctTopicLabels([core, ...themes]);
+  const nodes = distinctTopicLabels([core, ...themes]).filter(isDefensiveQualityPhrase);
   if (nodes.length < 3) {
     return (
       <div className="related-concepts-fallback">
@@ -1088,9 +1086,11 @@ function TopicCluster({ core, themes }: { core: string; themes: string[] }) {
   }
   const [center, ...outer] = nodes;
   return (
-    <div className="topic-cluster" aria-label={`Topic cluster centred on ${center}`}>
-      <strong>{center}</strong>
-      {outer.slice(0, 6).map((theme, index) => <span key={theme} className={`topic-node node-${index + 1}`}>{theme}</span>)}
+    <div className="topic-cluster" aria-label={`Topic map centred on ${center}`}>
+      <div className="topic-cluster-core"><strong>{center}</strong><span>Core topic</span></div>
+      <div className="topic-cluster-nodes">
+        {outer.slice(0, 6).map(theme => <span key={theme} className="topic-node">{theme}</span>)}
+      </div>
     </div>
   );
 }
@@ -3058,7 +3058,8 @@ function videoCoreTopic(result: YouTubeVideoAnalysisResponse) {
 }
 
 function videoAudience(result: YouTubeVideoAnalysisResponse): string {
-  return result.niche_analysis?.target_audience || result.niche_analysis?.audience_type || 'Creator audience';
+  const audience = result.niche_analysis?.target_audience || result.niche_analysis?.audience_type || '';
+  return isDefensiveQualityPhrase(audience) ? audience : 'Likely viewers';
 }
 
 function analysisSummary(result: YouTubeVideoAnalysisResponse): string {
@@ -3141,7 +3142,7 @@ function uniqueStrings(items: string[]): string[] {
     .map(item => applyAcronymCasing(item.trim()))
     .filter(item => {
       const key = item.toLowerCase();
-      if (!item || seen.has(key)) return false;
+      if (!item || seen.has(key) || !isDefensiveQualityPhrase(item)) return false;
       seen.add(key);
       return true;
     });
@@ -3153,11 +3154,24 @@ function distinctTopicLabels(items: string[], exclude: string[] = []): string[] 
   for (const item of items) {
     const label = applyAcronymCasing(item.trim());
     const key = topicLabelKey(label);
-    if (!label || seen.has(key)) continue;
+    if (!label || seen.has(key) || !isDefensiveQualityPhrase(label)) continue;
     seen.add(key);
     out.push(label);
   }
   return out;
+}
+
+function isDefensiveQualityPhrase(value?: string): boolean {
+  const text = String(value || '').replace(/\s+/g, ' ').trim();
+  if (!text) return false;
+  const lower = text.toLowerCase();
+  if (/(hypothetical|simulated|past performance|actual performance|actual trading|hindsight|representation being|no representation|results may vary|financial advice|own research|limitation unlike|missed entry navigate|entry navigate|navigate same|benefit hindsight|general viewers in this niche|people interested|broad audience|relevant viewers)/i.test(lower)) return false;
+  const words = lower.split(/\s+/);
+  if (words.length > 18 && !/[.!?]$/.test(text)) return false;
+  for (let i = 1; i < words.length; i += 1) {
+    if (words[i] === words[i - 1]) return false;
+  }
+  return true;
 }
 
 function topicLabelKey(value: string): string {
@@ -3191,11 +3205,11 @@ function hookExplanation(id: string): string {
 }
 
 function improvedTitle(result: YouTubeVideoAnalysisResponse): string {
-  const existing = result.creator_opportunities?.title_ideas?.[0];
+  const existing = result.creator_opportunities?.title_ideas?.find(isDefensiveQualityPhrase);
   if (existing) return existing;
   const topic = videoCoreTopic(result).main;
   const audience = videoAudience(result);
-  return `${topic}: a practical guide for ${audience}`;
+  return concise(`${topic}: a practical guide for ${audience}`, 70);
 }
 
 function creativeCards(items: string[], fallbackLabel: string, tag: string): CreativeCard[] {
@@ -3362,7 +3376,7 @@ function researchScriptFromNicheCandidate(candidate: NicheCandidate, region: str
 
 function researchScriptFromVideo(result: YouTubeVideoAnalysisResponse, region: string, language: string): ResearchScriptGenerationRequest {
   const title = result.title || 'YouTube video analysis';
-  const suggestedAngle = result.creator_opportunities?.suggested_remake_angles?.[0] || result.suggested_remake_angles?.[0];
+  const suggestedAngle = [...(result.creator_opportunities?.suggested_remake_angles ?? []), ...(result.suggested_remake_angles ?? [])].find(isDefensiveQualityPhrase);
   const topic = videoCoreTopic(result).specific || result.keyword_intelligence?.primary_keywords?.[0] || result.extracted_keywords?.[0] || title;
   const approvedKeywords = distinctTopicLabels([
     topic,
@@ -3380,14 +3394,14 @@ function researchScriptFromVideo(result: YouTubeVideoAnalysisResponse, region: s
     summary: [
       result.message,
       `Hook type: ${result.hook_intelligence?.hook_type || result.hook_analysis || 'read from the title pattern'}.`,
-      `Target audience: ${result.niche_analysis?.target_audience || result.niche_analysis?.audience_type || 'general viewers'}.`,
+      `Target audience: ${videoAudience(result)}.`,
       `Performance context: ${formatEvidenceSummary(result.performance_signals ?? {})}.`,
       `Suggested angle: ${suggestedAngle || result.niche_analysis?.inferred_content_angle || result.inferred_content_angle || ''}.`,
       result.keyword_intelligence?.inferred_search_intent,
     ].filter(Boolean).join(' '),
     keywords: approvedKeywords,
     inferred_niche: result.niche_analysis?.primary_niche || result.inferred_niche,
-    inferred_angle: result.niche_analysis?.inferred_content_angle || result.inferred_content_angle,
+    inferred_angle: [result.niche_analysis?.inferred_content_angle, result.inferred_content_angle].find(isDefensiveQualityPhrase),
     performance_signals: {
       views: result.views,
       likes: result.likes,
@@ -3406,7 +3420,7 @@ function researchScriptFromVideo(result: YouTubeVideoAnalysisResponse, region: s
       duration: result.duration,
       public_topic_details: result.public_topic_details,
       primary_niche: result.niche_analysis?.primary_niche,
-      target_audience: result.niche_analysis?.target_audience || result.niche_analysis?.audience_type,
+      target_audience: videoAudience(result),
       hook_type: result.hook_intelligence?.hook_type,
       approved_topic_hierarchy: {
         core_topic: topic,

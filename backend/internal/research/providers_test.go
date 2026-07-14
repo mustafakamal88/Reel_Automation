@@ -2,6 +2,7 @@ package research
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"strings"
@@ -483,6 +484,77 @@ func TestOpenAIEnhancementFallbackWorks(t *testing.T) {
 	got := provider.enhanceKeywordsWithOpenAI(context.Background(), kw, map[string]any{"analysis_type": "test"})
 	if got.PrimaryKeywords[0] != "ai video automation" {
 		t.Fatalf("fallback changed keywords: %+v", got)
+	}
+}
+
+func TestVideoAnalyzerRemovesTradingDisclaimersFromTopics(t *testing.T) {
+	in := KeywordExtractionInput{
+		Title:       "Missed Entry? Navigate the Same Trade Idea",
+		Description: "We review a missed trade entry and how to manage the same trade idea.\n\nDisclaimer: Hypothetical or simulated performance results have limitations unlike actual trading. No representation is being made that any account will achieve profits. Benefit of hindsight. Not financial advice.",
+		Tags:        []string{"ICT trading", "trade entry", "missed setup"},
+		Category:    "27",
+	}
+	kw := ExtractKeywordIntelligence(in)
+	joined := strings.ToLower(strings.Join(append(append([]string{}, kw.PrimaryKeywords...), append(kw.SecondaryKeywords, kw.LongTailPhrases...)...), " "))
+	for _, polluted := range []string{"hypothetical", "simulated", "hindsight", "representation", "limitation unlike", "actual performance", "missed entry navigate"} {
+		if strings.Contains(joined, polluted) {
+			t.Fatalf("polluted phrase leaked into topics: %q in %+v", polluted, kw)
+		}
+	}
+	if !strings.Contains(joined, "trade") && !strings.Contains(joined, "ict") {
+		t.Fatalf("clean trading topic was not retained: %+v", kw)
+	}
+}
+
+func TestPhraseQualityRejectsFragmentsGenericAudienceAndRepeats(t *testing.T) {
+	evidence := tokenSet(tokenizeUseful("missed trade entries trade entry management ict traders price action", map[string]bool{}))
+	title := tokenSet(tokenizeUseful("missed entry same trade idea", map[string]bool{}))
+	rejected := []string{
+		"missed entry navigate same",
+		"benefit hindsight representation being",
+		"rule hypothetical simulated performance",
+		"general viewers in this niche",
+		"trade trade entry",
+	}
+	for _, phrase := range rejected {
+		if ValidCreatorPhrase(phrase, evidence, title, true) {
+			t.Fatalf("phrase should be rejected: %q", phrase)
+		}
+	}
+	if !ValidCreatorPhrase("missed trade entries", evidence, title, true) {
+		t.Fatalf("clean phrase should be accepted")
+	}
+}
+
+func TestAnalyzeVideoPollutedMetadataUsesCleanFallbacks(t *testing.T) {
+	provider := NewYouTubeProvider("yt-key", &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		return jsonResponse(`{"items":[{"id":"E7B4vBUEdHw","snippet":{"publishedAt":"2026-07-01T00:00:00Z","channelId":"UCtrade","title":"Missed Entry? Navigate Same Trade Idea","description":"Reviewing a missed trade entry using ICT execution ideas.\nDisclaimer: Hypothetical simulated performance has limitations unlike actual performance. No representation being made. Benefit of hindsight. Not financial advice.","channelTitle":"Trading Lab","tags":["ICT trading","missed trade entry","trade execution"],"categoryId":"27"},"statistics":{"viewCount":"50000","likeCount":"2500","commentCount":"120"},"contentDetails":{"duration":"PT12M"},"topicDetails":{"topicCategories":["https://en.wikipedia.org/wiki/Foreign_exchange_market"]}}]}`), nil
+	})})
+	provider.now = func() time.Time { return mustTime("2026-07-10T00:00:00Z") }
+
+	result, err := provider.AnalyzeVideo(context.Background(), "https://youtu.be/E7B4vBUEdHw")
+	if err != nil {
+		t.Fatalf("AnalyzeVideo: %v", err)
+	}
+	blob, _ := json.Marshal(result)
+	lower := strings.ToLower(string(blob))
+	for _, polluted := range []string{"hypothetical simulated", "representation being", "benefit hindsight", "limitation unlike actual performance", "general viewers in this niche", "missed entry navigate"} {
+		if strings.Contains(lower, polluted) {
+			t.Fatalf("polluted fragment leaked into result: %q\n%s", polluted, lower)
+		}
+	}
+	if result.SchemaVersion != "video_analysis_v3_phrase_quality" {
+		t.Fatalf("schema version was not bumped: %s", result.SchemaVersion)
+	}
+	if result.NicheAnalysis.TargetAudience == "" || strings.Contains(strings.ToLower(result.NicheAnalysis.TargetAudience), "general viewers") {
+		t.Fatalf("bad target audience: %+v", result.NicheAnalysis)
+	}
+}
+
+func TestOpenAIContaminationRejected(t *testing.T) {
+	got := cleanOpenAIKeywordList([]string{"benefit hindsight representation being", "missed trade entries", "general viewers in this niche"})
+	if len(got) != 1 || strings.ToLower(got[0]) != "missed trade entries" {
+		t.Fatalf("OpenAI cleanup did not reject contaminated output: %+v", got)
 	}
 }
 

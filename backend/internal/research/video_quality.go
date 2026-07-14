@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-const videoAnalysisSchemaVersion = "video_analysis_v2_quality_revenue_visuals"
+const videoAnalysisSchemaVersion = "video_analysis_v3_phrase_quality"
 
 type FormattedVideoMetadata struct {
 	PublishedDate     string   `json:"published_date,omitempty"`
@@ -119,16 +119,16 @@ func buildPerformanceProfile(publishedAt string, views, likes, comments *uint64,
 	signals := performanceSignals(publishedAt, views, likes, comments, now)
 	out := []PerformanceMetric{}
 	if raw, ok := asFloat(signals["views_per_day"]); ok {
-		out = append(out, PerformanceMetric{ID: "views_per_day", Label: "Views per day", Value: formatFloat(raw, 0), RawValue: raw, Score: scoreViewsPerDay(raw), Explanation: "TrendCortex public-signal scale based on current public views divided by video age."})
+		out = append(out, PerformanceMetric{ID: "views_per_day", Label: "Views per day", Value: formatFloat(raw, 0), RawValue: raw, Score: scoreViewsPerDay(raw), Explanation: "Raw public metric: current public views divided by video age. No benchmark score is implied."})
 	}
 	if raw, ok := asFloat(signals["likes_per_1000_views"]); ok {
-		out = append(out, PerformanceMetric{ID: "likes_per_1000_views", Label: "Likes per 1,000 views", Value: formatFloat(raw, 1), RawValue: raw, Score: scoreRate(raw, 5, 60), Explanation: "TrendCortex public-signal scale; hidden likes are treated as unavailable, not zero."})
+		out = append(out, PerformanceMetric{ID: "likes_per_1000_views", Label: "Likes per 1,000 views", Value: formatFloat(raw, 1), RawValue: raw, Score: scoreRate(raw, 5, 60), Explanation: "Raw public metric: visible likes per 1,000 public views. Hidden likes are unavailable, not zero."})
 	}
 	if raw, ok := asFloat(signals["comments_per_1000_views"]); ok {
-		out = append(out, PerformanceMetric{ID: "comments_per_1000_views", Label: "Comments per 1,000 views", Value: formatFloat(raw, 1), RawValue: raw, Score: scoreRate(raw, 0.5, 10), Explanation: "TrendCortex public-signal scale; hidden comments are treated as unavailable, not zero."})
+		out = append(out, PerformanceMetric{ID: "comments_per_1000_views", Label: "Comments per 1,000 views", Value: formatFloat(raw, 1), RawValue: raw, Score: scoreRate(raw, 0.5, 10), Explanation: "Raw public metric: visible comments per 1,000 public views. Hidden comments are unavailable, not zero."})
 	}
 	if raw, ok := asFloat(signals["engagement_rate"]); ok {
-		out = append(out, PerformanceMetric{ID: "public_engagement_rate", Label: "Public engagement rate", Value: fmt.Sprintf("%.2f%%", raw*100), RawValue: raw, Score: scoreRate(raw*100, 0.5, 8), Explanation: "Visible likes and comments divided by public views. Missing visible counts lower confidence."})
+		out = append(out, PerformanceMetric{ID: "public_engagement_rate", Label: "Public engagement rate", Value: fmt.Sprintf("%.2f%%", raw*100), RawValue: raw, Score: scoreRate(raw*100, 0.5, 8), Explanation: "Raw public metric: visible likes and comments divided by public views. Missing visible counts lower confidence."})
 	}
 	return out
 }

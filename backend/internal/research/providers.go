@@ -456,7 +456,7 @@ func (p *YouTubeProvider) AnalyzeVideo(ctx context.Context, videoURL string) (Vi
 		ChannelTitle:               item.Snippet.ChannelTitle,
 		ChannelID:                  item.Snippet.ChannelID,
 		PublishedAt:                item.Snippet.PublishedAt,
-		Description:                item.Snippet.Description,
+		Description:                cleanMetadataText(item.Snippet.Description),
 		Tags:                       item.Snippet.Tags,
 		Category:                   item.Snippet.CategoryID,
 		Duration:                   item.ContentDetails.Duration,
@@ -1175,10 +1175,11 @@ func (p *YouTubeProvider) enhanceKeywordsWithOpenAI(ctx context.Context, kw Keyw
 	if apiKey == "" {
 		return kw
 	}
+	original := kw
 	payload := map[string]any{
 		"model": strings.TrimSpace(os.Getenv("OPENAI_TEXT_MODEL")),
 		"messages": []map[string]string{
-			{"role": "system", "content": "Improve YouTube creator intelligence using only the provided public metadata summary. Do not invent non-public analytics, exact search ranking terms, retention, revenue, demographics, or traffic sources. Return compact JSON only."},
+			{"role": "system", "content": "Improve YouTube creator intelligence using only the provided public metadata summary. Return compact JSON only. Every phrase must be concise natural English, evidence-grounded, creator-facing, and readable on its own. Do not include legal disclaimers, financial-risk boilerplate, sponsorship text, URLs, raw n-grams, placeholders, invented metrics, invented demographics, private analytics, exact ranking terms, retention, revenue, or traffic sources. Prefer keeping strong existing phrases over replacing them."},
 			{"role": "user", "content": mustJSON(map[string]any{"context": contextPayload, "keyword_intelligence": kw})},
 		},
 		"response_format": map[string]string{"type": "json_object"},
@@ -1223,22 +1224,56 @@ func (p *YouTubeProvider) enhanceKeywordsWithOpenAI(ctx context.Context, kw Keyw
 	if err := json.Unmarshal([]byte(decoded.Choices[0].Message.Content), &enhanced); err != nil {
 		return kw
 	}
-	if len(enhanced.PrimaryKeywords) > 0 {
-		kw.PrimaryKeywords = cleanStringList(enhanced.PrimaryKeywords)
+	if cleaned := cleanOpenAIKeywordList(enhanced.PrimaryKeywords); len(cleaned) > 0 && phraseListQuality(cleaned) >= phraseListQuality(original.PrimaryKeywords) {
+		kw.PrimaryKeywords = cleaned
 		kw.PrimaryTopics = kw.PrimaryKeywords
 	}
-	if len(enhanced.SecondaryKeywords) > 0 {
-		kw.SecondaryKeywords = cleanStringList(enhanced.SecondaryKeywords)
+	if cleaned := cleanOpenAIKeywordList(enhanced.SecondaryKeywords); len(cleaned) > 0 {
+		kw.SecondaryKeywords = cleaned
 		kw.SupportingTerms = kw.SecondaryKeywords
 	}
-	if len(enhanced.LongTailPhrases) > 0 {
-		kw.LongTailPhrases = cleanStringList(enhanced.LongTailPhrases)
+	if cleaned := cleanOpenAIKeywordList(enhanced.LongTailPhrases); len(cleaned) > 0 {
+		kw.LongTailPhrases = cleaned
 		kw.SearchPhrases = kw.LongTailPhrases
 	}
 	if strings.TrimSpace(enhanced.InferredSearchIntent) != "" {
 		kw.InferredSearchIntent = strings.TrimSpace(enhanced.InferredSearchIntent)
 	}
 	return kw
+}
+
+func cleanOpenAIKeywordList(values []string) []string {
+	out := []string{}
+	for _, value := range cleanStringList(values) {
+		phrase := normalizeTopicPhrase(value)
+		if !ValidCreatorPhrase(phrase, nil, nil, true) || nearDuplicateSelected(phrase, out) {
+			continue
+		}
+		out = append(out, applyAcronymCasing(phrase))
+		if len(out) >= 10 {
+			break
+		}
+	}
+	return out
+}
+
+func phraseListQuality(values []string) int {
+	score := 0
+	for _, value := range values {
+		phrase := normalizeTopicPhrase(value)
+		if !ValidCreatorPhrase(phrase, nil, nil, true) {
+			continue
+		}
+		words := len(strings.Fields(phrase))
+		score += 8
+		if words >= 2 && words <= 5 {
+			score += 4
+		}
+		if containsBoilerplateFragment(phrase) || isGenericAudiencePlaceholder(phrase) {
+			score -= 20
+		}
+	}
+	return score
 }
 
 func cleanStringList(values []string) []string {
