@@ -589,6 +589,9 @@ func TestChannelPillarsExcludeCreatorIdentityAndRequireTitleEvidence(t *testing.
 	if validChannelTopicPhrase("electronic tech head internet", tokenSet(tokenizeUseful("phone review camera test", nil)), identity) {
 		t.Fatalf("noun-pile/biography phrase was accepted")
 	}
+	if validChannelTopicPhrase("biggest ever", tokenSet(tokenizeUseful("biggest ever phone review", nil)), identity) {
+		t.Fatalf("generic superlative phrase was accepted")
+	}
 }
 
 func TestChannelDownstreamSanitizesMalformedIdentityRecommendations(t *testing.T) {

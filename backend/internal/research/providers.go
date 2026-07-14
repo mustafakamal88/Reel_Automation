@@ -1200,6 +1200,7 @@ func normalizeChannelPillarName(value string) string {
 		"consumer electronic":     "consumer electronics",
 		"smartphone review":       "smartphone reviews",
 		"phone review":            "phone reviews",
+		"electric car":            "electric vehicles",
 		"electric vehicle":        "electric vehicles",
 		"electric vehicle review": "electric vehicle reviews",
 		"car review":              "car reviews",
@@ -1224,6 +1225,9 @@ func validChannelTopicPhrase(phrase string, titleTokens map[string]bool, identit
 	if !ValidCreatorPhrase(phrase, nil, nil, true) || (!recognized && channelIdentityPhrase(phrase, identity)) || channelBiographyFragment(phrase) || channelNounPile(phrase) {
 		return false
 	}
+	if genericChannelPillarPhrase(phrase) {
+		return false
+	}
 	words := strings.Fields(phrase)
 	if len(words) < 2 || len(words) > 5 {
 		return false
@@ -1238,6 +1242,15 @@ func validChannelTopicPhrase(phrase string, titleTokens map[string]bool, identit
 		return true
 	}
 	return supported >= minInt(2, len(words))
+}
+
+func genericChannelPillarPhrase(phrase string) bool {
+	switch normalizeTopicPhrase(phrase) {
+	case "biggest ever", "best ever", "most expensive", "first ever", "last ever":
+		return true
+	default:
+		return false
+	}
 }
 
 func recognizedChannelPillar(phrase string) bool {
