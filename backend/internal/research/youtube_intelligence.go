@@ -1014,13 +1014,13 @@ func isUsefulTerm(term string) bool {
 	if len(term) < 3 || stopWords[term] {
 		return false
 	}
-	if regexp.MustCompile(`[a-z]+\d|\d+[a-z]+`).MatchString(term) && len(term) >= 8 {
+	if alphaDigitTokenPattern.MatchString(term) && len(term) >= 8 {
 		return false
 	}
-	if regexp.MustCompile(`^[a-z]$|^\d+$|^utm_|^[?&=]+$`).MatchString(term) {
+	if uselessTokenPattern.MatchString(term) {
 		return false
 	}
-	if regexp.MustCompile(`^[a-f0-9]{8,}$|^[a-z0-9_-]{11,}$`).MatchString(term) && regexp.MustCompile(`\d|_|-`).MatchString(term) {
+	if opaqueTokenPattern.MatchString(term) && digitOrSeparatorPattern.MatchString(term) {
 		return false
 	}
 	if strings.Count(term, "-")+strings.Count(term, "_") >= 3 {
@@ -1044,6 +1044,13 @@ func isUsefulTerm(term string) bool {
 	}
 	return true
 }
+
+var (
+	alphaDigitTokenPattern  = regexp.MustCompile(`[a-z]+\d|\d+[a-z]+`)
+	uselessTokenPattern     = regexp.MustCompile(`^[a-z]$|^\d+$|^utm_|^[?&=]+$`)
+	opaqueTokenPattern      = regexp.MustCompile(`^[a-f0-9]{8,}$|^[a-z0-9_-]{11,}$`)
+	digitOrSeparatorPattern = regexp.MustCompile(`\d|_|-`)
+)
 
 var stopWords = map[string]bool{
 	"the": true, "and": true, "for": true, "with": true, "from": true, "that": true, "this": true, "they": true, "them": true, "their": true, "say": true, "says": true, "said": true, "you": true, "your": true, "its": true,
