@@ -1,18 +1,26 @@
 import { cloneElement, isValidElement, useEffect, useId, useMemo, useState, type ReactElement, type ReactNode } from 'react';
 import {
   ApiError,
+  archiveContentProjectOutput,
   downloadClipStudioZip,
+  downloadContentProjectOutput,
   generateClipStudio,
+  getContentProject,
   getPlatformConnections,
   importClipStudioURL,
+  listContentProjectOutputs,
+  retryContentProjectOutput,
   uploadClipStudioSource,
   type ClipCTASize,
   type ClipLayoutMode,
   type ClipSourceModel,
   type ClipStudioGenerateResponse,
   type ClipStudioSourceResponse,
+  type ContentProject,
+  type ContentProjectOutput,
   type PlatformStatus,
 } from '../lib/api/client';
+import { ConfirmationDialog } from '../components/ConfirmationDialog';
 import { storage } from '../lib/storage';
 import {
   clipGenerateDisabledReason,
@@ -71,6 +79,8 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
 export function ClipStudioPage({ onNavigate }: Props) {
   const savedSettings = storage.getSettings();
   const handoff = storage.getClipGeneratorHandoff();
+  const queryProjectID = typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('project_id')?.trim() || '' : '';
+  const activeProjectID = queryProjectID || handoff?.projectId || '';
   const [sourceUrl, setSourceUrl] = useState('');
   const [source, setSource] = useState<ClipStudioSourceResponse | null>(null);
   const [prompt, setPrompt] = useState(handoff?.script ? `${handoff.title}\n\n${handoff.hook || ''}\n\n${handoff.script}`.trim() : 'Make short branded clips with a strong hook and clear takeaway.');
@@ -100,8 +110,17 @@ export function ClipStudioPage({ onNavigate }: Props) {
   const [connectionsLoaded, setConnectionsLoaded] = useState(false);
   const [result, setResult] = useState<ClipStudioGenerateResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [project, setProject] = useState<ContentProject | null>(null);
+  const [projectLoading, setProjectLoading] = useState(false);
+  const [projectError, setProjectError] = useState<string | null>(null);
+  const [outputs, setOutputs] = useState<ContentProjectOutput[]>([]);
+  const [outputsLoading, setOutputsLoading] = useState(false);
+  const [outputsError, setOutputsError] = useState<string | null>(null);
+  const [outputActionID, setOutputActionID] = useState<string | null>(null);
+  const [archiveTarget, setArchiveTarget] = useState<ContentProjectOutput | null>(null);
 
   const packageReady = clipPackageReady(result);
+  const projectOutputCount = outputs.filter(output => output.status !== 'archived').length;
   const handoffSceneTotal = handoff?.totalPlannedDurationSeconds || handoff?.scenes?.reduce((sum, scene) => sum + scene.planned_duration_seconds, 0) || 0;
   const connectedAccountPlatforms = connections.filter(conn => PUBLISH_PLATFORMS.includes(conn.platform as PublishPlatform) && conn.status === 'connected');
   const sourceStatus = useMemo(() => getClipSourceStatus(source, sourceUrl), [source, sourceUrl]);
@@ -129,16 +148,93 @@ export function ClipStudioPage({ onNavigate }: Props) {
     };
   }, []);
 
+  async function refreshOutputs(projectID = activeProjectID) {
+    if (!projectID) return;
+    setOutputsLoading(true);
+    setOutputsError(null);
+    try {
+      const response = await listContentProjectOutputs(projectID);
+      setOutputs(response.outputs);
+    } catch (err) {
+      setOutputsError(errMsg(err, 'Project outputs could not be loaded.'));
+    } finally {
+      setOutputsLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    if (!activeProjectID) {
+      setProject(null);
+      setOutputs([]);
+      return;
+    }
+    let cancelled = false;
+    setProjectLoading(true);
+    setProjectError(null);
+    getContentProject(activeProjectID)
+      .then(response => {
+        if (!cancelled) setProject(response);
+      })
+      .catch(err => {
+        if (!cancelled) setProjectError(errMsg(err, 'Project context could not be loaded.'));
+      })
+      .finally(() => {
+        if (!cancelled) setProjectLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeProjectID]);
+
+  useEffect(() => {
+    if (!activeProjectID) return;
+    let cancelled = false;
+    setOutputsLoading(true);
+    setOutputsError(null);
+    listContentProjectOutputs(activeProjectID)
+      .then(response => {
+        if (!cancelled) setOutputs(response.outputs);
+      })
+      .catch(err => {
+        if (!cancelled) setOutputsError(errMsg(err, 'Project outputs could not be loaded.'));
+      })
+      .finally(() => {
+        if (!cancelled) setOutputsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeProjectID]);
+
+  useEffect(() => {
+    if (!activeProjectID || !outputs.some(output => output.status === 'queued' || output.status === 'processing')) return;
+    let cancelled = false;
+    const timer = window.setInterval(() => {
+      listContentProjectOutputs(activeProjectID)
+        .then(response => {
+          if (!cancelled) setOutputs(response.outputs);
+        })
+        .catch(err => {
+          if (!cancelled) setOutputsError(errMsg(err, 'Project outputs could not be refreshed.'));
+        });
+    }, 4000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [activeProjectID, outputs]);
+
   async function handleUpload(file: File | undefined) {
     if (!file) return;
     setUploadBusy(true);
     setError(null);
     setResult(null);
     try {
-      const uploaded = await uploadClipStudioSource(file);
+      const uploaded = await uploadClipStudioSource(file, activeProjectID || undefined);
       setSource(uploaded);
       setSourceUrl('');
       setSourceModel('user_upload');
+      if (uploaded.project_output) await refreshOutputs();
     } catch (err) {
       setError(errMsg(err, 'Upload failed'));
     } finally {
@@ -155,6 +251,7 @@ export function ClipStudioPage({ onNavigate }: Props) {
     try {
       const imported = await importClipStudioURL({
         source_url: trimmedURL,
+        project_id: activeProjectID || undefined,
         rights_confirmed: rightsConfirmed,
         rights: {
           source_url: trimmedURL,
@@ -169,6 +266,7 @@ export function ClipStudioPage({ onNavigate }: Props) {
       });
       setSource(imported);
       setSourceModel(imported.metadata.source_model || 'external_url_pending_rights_confirmation');
+      if (imported.project_output) await refreshOutputs();
     } catch (err) {
       setError(errMsg(err, 'Source URL import failed'));
     } finally {
@@ -188,7 +286,9 @@ export function ClipStudioPage({ onNavigate }: Props) {
     try {
       const generated = await generateClipStudio({
         source_id: activeSource.source_id,
-        project_id: handoff?.projectId,
+        project_id: activeProjectID || undefined,
+        output_scope: 'project',
+        idempotency_key: activeProjectID ? `project-${activeProjectID}-${Date.now()}` : undefined,
         prompt,
         clip_length: clipLength,
         clip_count: clipCount,
@@ -226,6 +326,7 @@ export function ClipStudioPage({ onNavigate }: Props) {
         },
       });
       setResult(generated);
+      if (generated.project_output) await refreshOutputs();
       if (generated.success) {
         storage.updateActivity(current => ({
           ...current,
@@ -258,6 +359,52 @@ export function ClipStudioPage({ onNavigate }: Props) {
     }
   }
 
+  async function handleOutputDownload(output: ContentProjectOutput) {
+    if (!activeProjectID || !output.download_url) return;
+    setOutputActionID(output.id);
+    setError(null);
+    try {
+      await downloadContentProjectOutput(activeProjectID, output.id, output.display_name);
+    } catch (err) {
+      setError(errMsg(err, 'Project output download failed'));
+      await refreshOutputs();
+    } finally {
+      setOutputActionID(null);
+    }
+  }
+
+  async function handleRetryOutput(output: ContentProjectOutput) {
+    if (!activeProjectID || !output.retryable) return;
+    setOutputActionID(output.id);
+    setError(null);
+    try {
+      const retry = await retryContentProjectOutput(activeProjectID, output.id);
+      setResult(retry);
+      await refreshOutputs();
+    } catch (err) {
+      setError(errMsg(err, 'Project output retry failed'));
+      await refreshOutputs();
+    } finally {
+      setOutputActionID(null);
+    }
+  }
+
+  async function handleArchiveOutput(output = archiveTarget) {
+    if (!activeProjectID) return;
+    if (!output) return;
+    setOutputActionID(output.id);
+    setError(null);
+    try {
+      await archiveContentProjectOutput(activeProjectID, output.id);
+      setArchiveTarget(null);
+      await refreshOutputs();
+    } catch (err) {
+      setError(errMsg(err, 'Project output archive failed'));
+    } finally {
+      setOutputActionID(null);
+    }
+  }
+
   return (
     <section className="page-section">
       <div className="page-hero compact">
@@ -267,6 +414,17 @@ export function ClipStudioPage({ onNavigate }: Props) {
           <p>Import a real source, confirm rights, set clip direction, and download generated packages when the backend returns output.</p>
         </div>
       </div>
+
+      {activeProjectID && (
+        <ProjectContextCard
+          project={project}
+          loading={projectLoading}
+          error={projectError}
+          sceneCount={handoff?.scenes?.length || 0}
+          plannedDuration={handoffSceneTotal}
+          outputCount={projectOutputCount}
+        />
+      )}
 
       <div className="clip-workspace">
         <div className="clip-workspace-main settings-card">
@@ -333,10 +491,10 @@ export function ClipStudioPage({ onNavigate }: Props) {
             </div>
           </div>
 
-          {handoff?.projectId && (
+          {activeProjectID && (
             <div className="clip-readiness-note ready">
               <div>Project handoff active</div>
-              <p>This clip package is linked to {handoff.title}.</p>
+              <p>This clip package is linked to {project?.title || handoff?.title || 'the active project'}.</p>
             </div>
           )}
 
@@ -448,6 +606,27 @@ export function ClipStudioPage({ onNavigate }: Props) {
         )}
         </div>
       </div>
+      {activeProjectID && (
+        <ProjectOutputsPanel
+          outputs={outputs}
+          loading={outputsLoading}
+          error={outputsError}
+          busyOutputID={outputActionID}
+          onRetry={handleRetryOutput}
+          onDownload={handleOutputDownload}
+          onArchive={setArchiveTarget}
+        />
+      )}
+      <ConfirmationDialog
+        open={Boolean(archiveTarget)}
+        title="Archive output?"
+        description="This removes the output record from the active project list. Generated files are not deleted by this action."
+        confirmLabel="Archive output"
+        intent="destructive"
+        pending={Boolean(archiveTarget && outputActionID === archiveTarget.id)}
+        onConfirm={() => void handleArchiveOutput()}
+        onCancel={() => setArchiveTarget(null)}
+      />
       {publishOpen && (
         <PublishModal
           connections={connections}
@@ -473,6 +652,152 @@ function StatusPill({ label, active, neutral = false }: { label: string; active:
       {label}
     </div>
   );
+}
+
+function ProjectContextCard({
+  project,
+  loading,
+  error,
+  sceneCount,
+  plannedDuration,
+  outputCount,
+}: {
+  project: ContentProject | null;
+  loading: boolean;
+  error: string | null;
+  sceneCount: number;
+  plannedDuration: number;
+  outputCount: number;
+}) {
+  return (
+    <div className="settings-card clip-project-context">
+      <div className="clip-section-header">
+        <div>
+          <div className="settings-card-title">{loading ? 'Loading project...' : project?.title || 'Project context'}</div>
+          <p>{error || 'Outputs created here are attached to this Content Project.'}</p>
+        </div>
+      </div>
+      <div className="clip-project-stats">
+        <StatusMetric label="Stage" value={project ? readableStage(project.current_stage) : 'Loading'} />
+        <StatusMetric label="Target" value={project ? `${project.target_duration_seconds}s` : 'Loading'} />
+        <StatusMetric label="Script" value={project?.main_script || project?.hook ? 'Available' : 'Not available'} />
+        <StatusMetric label="Scenes" value={`${sceneCount}`} />
+        <StatusMetric label="Planned" value={plannedDuration > 0 ? `${plannedDuration}s` : 'Not available'} />
+        <StatusMetric label="Outputs" value={`${outputCount}`} />
+      </div>
+    </div>
+  );
+}
+
+function ProjectOutputsPanel({
+  outputs,
+  loading,
+  error,
+  busyOutputID,
+  onRetry,
+  onDownload,
+  onArchive,
+}: {
+  outputs: ContentProjectOutput[];
+  loading: boolean;
+  error: string | null;
+  busyOutputID: string | null;
+  onRetry: (output: ContentProjectOutput) => void;
+  onDownload: (output: ContentProjectOutput) => void;
+  onArchive: (output: ContentProjectOutput) => void;
+}) {
+  return (
+    <div className="settings-card clip-project-outputs">
+      <div className="clip-section-header">
+        <div>
+          <div className="settings-card-title">Project outputs</div>
+          <p>Persistent records for generated, uploaded, and imported Clip Generator outputs.</p>
+        </div>
+      </div>
+      {loading && <div className="neutral-callout">Loading project outputs...</div>}
+      {error && <div className="clip-error">{error}</div>}
+      {!loading && !error && outputs.length === 0 && (
+        <div className="empty-panel">
+          <div className="empty-title">No project outputs yet</div>
+          <div className="empty-desc">Start a real upload, import, or generation to create the first output record.</div>
+        </div>
+      )}
+      <div className="clip-output-list">
+        {outputs.map(output => (
+          <article className="clip-output-card" key={output.id}>
+            <div className="clip-output-main">
+              <div>
+                <strong>{output.display_name}</strong>
+                <span>{readableOutputTypeLabel(output.output_type)} · {output.output_scope === 'scene' ? output.scene_label || 'Scene output' : 'Project output'}</span>
+              </div>
+              <span className={`clip-output-status ${output.status}`}>{readableOutputStatus(output.status)}</span>
+            </div>
+            <div className="clip-output-meta">
+              <span>{output.completed_at ? `Completed ${formatDateTime(output.completed_at)}` : `Created ${formatDateTime(output.created_at)}`}</span>
+              {typeof output.file_size_bytes === 'number' && <span>{formatBytes(output.file_size_bytes)}</span>}
+              {typeof output.duration_seconds === 'number' && <span>{formatDuration(output.duration_seconds)}</span>}
+              {output.width && output.height && <span>{output.width}x{output.height}</span>}
+              {output.failure_message && <span>{output.failure_message}</span>}
+            </div>
+            <div className="clip-output-actions">
+              <button className="mini-copy-btn" type="button" disabled={!output.download_url || busyOutputID === output.id} onClick={() => onDownload(output)}>
+                {busyOutputID === output.id ? 'Working...' : 'Download'}
+              </button>
+              <button className="mini-copy-btn" type="button" disabled={!output.retryable || busyOutputID === output.id} onClick={() => onRetry(output)}>Retry</button>
+              <button className="mini-copy-btn danger" type="button" disabled={busyOutputID === output.id} onClick={() => onArchive(output)}>Archive</button>
+            </div>
+          </article>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function StatusMetric({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <span>{label}</span>
+      <strong>{value}</strong>
+    </div>
+  );
+}
+
+function readableOutputStatus(status: ContentProjectOutput['status']): string {
+  switch (status) {
+    case 'queued': return 'Queued';
+    case 'processing': return 'Rendering';
+    case 'completed': return 'Ready';
+    case 'failed': return 'Failed';
+    case 'unavailable': return 'File unavailable';
+    case 'archived': return 'Archived';
+  }
+}
+
+function readableOutputTypeLabel(type: ContentProjectOutput['output_type']): string {
+  switch (type) {
+    case 'uploaded_clip': return 'Uploaded clip';
+    case 'imported_clip': return 'Imported clip';
+    case 'rendered_video': return 'Rendered video';
+    case 'generated_clip': return 'Generated clip';
+  }
+}
+
+function readableStage(stage: string): string {
+  return stage.replace(/_/g, ' ').replace(/\b\w/g, char => char.toUpperCase());
+}
+
+function formatDateTime(value: string): string {
+  return new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }).format(new Date(value));
+}
+
+function formatBytes(value: number): string {
+  if (value < 1024) return `${value} B`;
+  if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`;
+  return `${(value / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function formatDuration(value: number): string {
+  return `${Math.round(value)}s`;
 }
 
 function PublishModal({

@@ -1420,6 +1420,24 @@ input[type="file"]::file-selector-button {
 @media (max-width: 767px) {
   body { overflow: hidden; }
 
+  .clip-project-stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .clip-output-main,
+  .clip-output-actions {
+    display: grid;
+    justify-content: stretch;
+  }
+
+  .clip-output-actions {
+    grid-template-columns: 1fr;
+  }
+
+  .clip-output-actions .mini-copy-btn {
+    width: 100%;
+  }
+
   .header {
     display: grid;
     grid-template-columns: 42px minmax(0, 1fr);
@@ -5718,6 +5736,115 @@ textarea:focus {
   white-space: nowrap;
 }
 
+.clip-project-context,
+.clip-project-outputs {
+  margin-top: 18px;
+}
+
+.clip-project-stats {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.clip-project-stats > div {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid var(--border-card);
+  border-radius: 8px;
+  background: rgba(12, 18, 28, 0.34);
+}
+
+.clip-project-stats span {
+  color: var(--text-dim);
+  font-size: 11px;
+}
+
+.clip-project-stats strong {
+  overflow-wrap: anywhere;
+  color: var(--text-primary);
+  font-size: 13px;
+}
+
+.clip-output-list {
+  display: grid;
+  gap: 10px;
+}
+
+.clip-output-card {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--border-card);
+  border-radius: 8px;
+  background: rgba(12, 18, 28, 0.34);
+}
+
+.clip-output-main,
+.clip-output-actions {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.clip-output-main > div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.clip-output-main strong {
+  overflow-wrap: anywhere;
+  color: var(--text-primary);
+}
+
+.clip-output-main span,
+.clip-output-meta {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.clip-output-status {
+  flex: 0 0 auto;
+  padding: 4px 8px;
+  border: 1px solid var(--border-card);
+  border-radius: 999px;
+  color: var(--text-muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.clip-output-status.completed {
+  border-color: rgba(34, 197, 94, 0.45);
+  color: var(--success);
+}
+
+.clip-output-status.failed,
+.clip-output-status.unavailable {
+  border-color: rgba(248, 113, 113, 0.45);
+  color: var(--danger);
+}
+
+.clip-output-status.processing,
+.clip-output-status.queued {
+  border-color: rgba(45, 212, 191, 0.45);
+  color: var(--accent);
+}
+
+.clip-output-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  line-height: 1.5;
+}
+
+.clip-output-actions {
+  justify-content: flex-end;
+}
+
 .script-context-list {
   display: grid;
   gap: 8px;
@@ -8752,6 +8879,10 @@ body,
 }
 
 @media (max-width: 390px) {
+  .clip-project-stats {
+    grid-template-columns: 1fr;
+  }
+
   .workspace-page,
   .page-section {
     padding-inline: 14px;

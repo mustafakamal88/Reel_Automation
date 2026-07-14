@@ -50,7 +50,11 @@ func TestClipStudioUploadCreatesSourceID(t *testing.T) {
 	if got.SourceID == "" || got.Status != "ready" || !got.CanRender {
 		t.Fatalf("unexpected upload response: %+v", got)
 	}
-	if _, err := os.Stat(got.Metadata.FilePath); err != nil {
+	stored, err := s.readClipStudioSource(t.Context(), "default-workspace", got.SourceID)
+	if err != nil {
+		t.Fatalf("read stored source metadata: %v", err)
+	}
+	if _, err := os.Stat(stored.FilePath); err != nil {
 		t.Fatalf("uploaded source missing: %v", err)
 	}
 }
@@ -143,7 +147,11 @@ func TestClipStudioDirectConfirmedVideoURLCanBeProcessed(t *testing.T) {
 	if got.Status != "ready" || !got.DownloadReady {
 		t.Fatalf("direct source was not processed: %+v", got)
 	}
-	if _, err := os.Stat(got.Metadata.FilePath); err != nil {
+	stored, err := s.readClipStudioSource(t.Context(), "default-workspace", got.SourceID)
+	if err != nil {
+		t.Fatalf("read stored source metadata: %v", err)
+	}
+	if _, err := os.Stat(stored.FilePath); err != nil {
 		t.Fatalf("downloaded source missing: %v", err)
 	}
 }
@@ -194,7 +202,11 @@ func TestClipStudioImportURLDirectMP4ImportsAndEnablesGeneration(t *testing.T) {
 	if !sawHEAD || !sawGET {
 		t.Fatalf("expected HEAD and GET during import; saw HEAD=%v GET=%v", sawHEAD, sawGET)
 	}
-	if _, err := os.Stat(got.Metadata.FilePath); err != nil {
+	stored, err := s.readClipStudioSource(t.Context(), "default-workspace", got.SourceID)
+	if err != nil {
+		t.Fatalf("read stored source metadata: %v", err)
+	}
+	if _, err := os.Stat(stored.FilePath); err != nil {
 		t.Fatalf("downloaded source missing: %v", err)
 	}
 }

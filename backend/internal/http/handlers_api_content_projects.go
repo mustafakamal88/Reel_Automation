@@ -124,6 +124,10 @@ func (s *Server) handleContentProjectRoute(w http.ResponseWriter, r *http.Reques
 			s.handleContentProjectSceneRoute(w, r, id, parts[2:])
 			return
 		}
+		if parts[1] == "outputs" {
+			s.handleContentProjectOutputRoute(w, r, id, parts[2:])
+			return
+		}
 		jsonErrorCode(w, "not_found", "content project route not found", http.StatusNotFound)
 		return
 	}

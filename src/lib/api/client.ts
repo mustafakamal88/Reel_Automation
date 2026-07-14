@@ -1016,6 +1016,52 @@ export interface ContentProjectScenePayload {
   production_notes?: string;
 }
 
+export type ContentProjectOutputStatus =
+  | 'queued'
+  | 'processing'
+  | 'completed'
+  | 'failed'
+  | 'unavailable'
+  | 'archived';
+
+export type ContentProjectOutputScope = 'project' | 'scene';
+
+export type ContentProjectOutputType =
+  | 'generated_clip'
+  | 'uploaded_clip'
+  | 'imported_clip'
+  | 'rendered_video';
+
+export interface ContentProjectOutput {
+  id: string;
+  project_id: string;
+  scene_id?: string;
+  scene_label?: string;
+  output_scope: ContentProjectOutputScope;
+  output_type: ContentProjectOutputType;
+  source_workflow: string;
+  render_job_id?: string;
+  status: ContentProjectOutputStatus;
+  original_filename?: string;
+  display_name: string;
+  mime_type?: string;
+  file_size_bytes?: number;
+  duration_seconds?: number;
+  width?: number;
+  height?: number;
+  download_url?: string;
+  open_url?: string;
+  failure_category?: string;
+  failure_message?: string;
+  retryable: boolean;
+  retry_count: number;
+  available: boolean;
+  archived_at?: string;
+  created_at: string;
+  updated_at: string;
+  completed_at?: string;
+}
+
 export interface LegacyContentProjectImportPayload {
   import_key?: string;
   title: string;
@@ -1085,6 +1131,26 @@ export async function reorderContentProjectScenes(projectID: string, sceneIDs: s
 
 export async function generateContentProjectScenes(projectID: string, mode: 'replace' | 'append'): Promise<{ scenes: ContentProjectScene[] }> {
   return apiFetch(`/api/content-projects/${encodeURIComponent(projectID)}/scenes/generate`, { method: 'POST', body: JSON.stringify({ mode }) });
+}
+
+export async function listContentProjectOutputs(projectID: string): Promise<{ outputs: ContentProjectOutput[] }> {
+  return apiFetch(`/api/content-projects/${encodeURIComponent(projectID)}/outputs`);
+}
+
+export async function getContentProjectOutput(projectID: string, outputID: string): Promise<ContentProjectOutput> {
+  return apiFetch(`/api/content-projects/${encodeURIComponent(projectID)}/outputs/${encodeURIComponent(outputID)}`);
+}
+
+export async function retryContentProjectOutput(projectID: string, outputID: string): Promise<ClipStudioGenerateResponse> {
+  return apiFetch(`/api/content-projects/${encodeURIComponent(projectID)}/outputs/${encodeURIComponent(outputID)}/retry`, { method: 'POST' });
+}
+
+export async function archiveContentProjectOutput(projectID: string, outputID: string): Promise<ContentProjectOutput> {
+  return apiFetch(`/api/content-projects/${encodeURIComponent(projectID)}/outputs/${encodeURIComponent(outputID)}`, { method: 'DELETE' });
+}
+
+export async function downloadContentProjectOutput(projectID: string, outputID: string, filename: string): Promise<void> {
+  return downloadPath(`/api/content-projects/${encodeURIComponent(projectID)}/outputs/${encodeURIComponent(outputID)}/download`, filename);
 }
 
 export async function analyzeNicheOpportunities(body: NicheOpportunityRequest): Promise<NicheOpportunityResponse> {
@@ -1758,7 +1824,6 @@ export interface ClipStudioSourceMetadata {
   kind: 'upload' | 'url';
   original_name?: string;
   url?: string;
-  file_path?: string;
   content_type?: string;
   size_bytes?: number;
   source_model?: ClipSourceModel;
@@ -1775,6 +1840,7 @@ export interface ClipStudioSourceResponse {
   status: string;
   message?: string;
   metadata: ClipStudioSourceMetadata;
+  project_output?: ContentProjectOutput;
   can_render: boolean;
   direct_video: boolean;
   download_ready: boolean;
@@ -1782,6 +1848,9 @@ export interface ClipStudioSourceResponse {
 
 export interface ClipStudioGenerateRequest {
   project_id?: string;
+  scene_id?: string;
+  output_scope?: ContentProjectOutputScope;
+  idempotency_key?: string;
   source_id?: string;
   source_url?: string;
   prompt: string;
@@ -1820,6 +1889,7 @@ export interface ClipStudioGenerateResponse {
   render_status: string;
   notes?: string;
   source_id?: string;
+  project_output?: ContentProjectOutput;
   highlight_detection: 'not_run';
   generated_clip_jobs: ClipStudioGeneratedJob[];
   zip_filename?: string;
@@ -1827,9 +1897,14 @@ export interface ClipStudioGenerateResponse {
   included_files: string[];
 }
 
-export async function uploadClipStudioSource(file: File): Promise<ClipStudioSourceResponse> {
+export async function uploadClipStudioSource(file: File, projectID?: string, sceneID?: string): Promise<ClipStudioSourceResponse> {
   const form = new FormData();
   form.append('video', file);
+  if (projectID) form.append('project_id', projectID);
+  if (sceneID) {
+    form.append('scene_id', sceneID);
+    form.append('output_scope', 'scene');
+  }
   let res: Response;
   try {
     res = await fetch(apiUrl('/api/clip-studio/upload'), {
@@ -1860,6 +1935,9 @@ export async function createClipStudioSource(body: {
 }
 
 export async function importClipStudioURL(body: {
+  project_id?: string;
+  scene_id?: string;
+  output_scope?: ContentProjectOutputScope;
   source_url: string;
   rights_confirmed: boolean;
   rights: ClipRightsMetadata;

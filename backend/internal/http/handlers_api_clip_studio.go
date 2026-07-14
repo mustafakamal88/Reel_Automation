@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"mime/multipart"
@@ -61,6 +62,9 @@ type clipStudioSourceMetadata struct {
 }
 
 type clipStudioSourceRequest struct {
+	ProjectID       string                      `json:"project_id,omitempty"`
+	SceneID         string                      `json:"scene_id,omitempty"`
+	OutputScope     string                      `json:"output_scope,omitempty"`
 	SourceURL       string                      `json:"source_url"`
 	RightsConfirmed bool                        `json:"rights_confirmed"`
 	Rights          renderer.ClipRightsMetadata `json:"rights"`
@@ -75,6 +79,7 @@ type clipStudioSourceResponse struct {
 	Status        string                   `json:"status"`
 	Message       string                   `json:"message,omitempty"`
 	Metadata      clipStudioSourceMetadata `json:"metadata"`
+	ProjectOutput *contentProjectOutput    `json:"project_output,omitempty"`
 	CanRender     bool                     `json:"can_render"`
 	DirectVideo   bool                     `json:"direct_video"`
 	DownloadReady bool                     `json:"download_ready"`
@@ -82,6 +87,9 @@ type clipStudioSourceResponse struct {
 
 type clipStudioGenerateRequest struct {
 	ProjectID       string                        `json:"project_id,omitempty"`
+	SceneID         string                        `json:"scene_id,omitempty"`
+	OutputScope     string                        `json:"output_scope,omitempty"`
+	IdempotencyKey  string                        `json:"idempotency_key,omitempty"`
 	SourceID        string                        `json:"source_id,omitempty"`
 	SourceURL       string                        `json:"source_url,omitempty"`
 	Prompt          string                        `json:"prompt"`
@@ -119,6 +127,7 @@ type clipStudioGenerateResponse struct {
 	RenderStatus       string                   `json:"render_status"`
 	Notes              string                   `json:"notes,omitempty"`
 	SourceID           string                   `json:"source_id,omitempty"`
+	ProjectOutput      *contentProjectOutput    `json:"project_output,omitempty"`
 	HighlightDetection string                   `json:"highlight_detection"`
 	GeneratedClipJobs  []clipStudioGeneratedJob `json:"generated_clip_jobs"`
 	ZipFilename        string                   `json:"zip_filename,omitempty"`
@@ -382,11 +391,36 @@ func (s *Server) handleUploadClipStudioSource(w http.ResponseWriter, r *http.Req
 		jsonError(w, "store source metadata failed: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
+	var projectOutput *contentProjectOutput
+	projectID := strings.TrimSpace(r.FormValue("project_id"))
+	if projectID != "" && s.db != nil {
+		sceneID := optionalSceneID(r.FormValue("scene_id"))
+		scope := outputScopeFromRequest(r.FormValue("output_scope"), sceneID)
+		output, err := s.upsertContentProjectOutput(r.Context(), workspaceID, projectID, sceneID, contentProjectOutputMutation{
+			OutputScope:      scope,
+			OutputType:       projectOutputTypeUploaded,
+			SourceWorkflow:   projectOutputWorkflowClipGenerator,
+			RenderJobID:      meta.SourceID,
+			Status:           projectOutputStatusCompleted,
+			OriginalFilename: header.Filename,
+			DisplayName:      safeOutputDisplayName(header.Filename, "Uploaded clip"),
+			MimeType:         firstNonEmpty(meta.ContentType, "video/mp4"),
+			FileSizeBytes:    &size,
+			StorageReference: dstPath,
+			Retryable:        false,
+		})
+		if err != nil {
+			jsonErrorCode(w, "validation_error", err.Error(), http.StatusBadRequest)
+			return
+		}
+		projectOutput = &output.contentProjectOutput
+	}
 	jsonOK(w, clipStudioSourceResponse{
 		SourceID:      sourceID,
 		Status:        meta.Status,
 		Message:       meta.Message,
-		Metadata:      meta,
+		Metadata:      publicClipStudioSourceMetadata(meta),
+		ProjectOutput: projectOutput,
 		CanRender:     true,
 		DirectVideo:   true,
 		DownloadReady: true,
@@ -455,7 +489,7 @@ func (s *Server) handleCreateClipStudioSource(w http.ResponseWriter, r *http.Req
 				jsonError(w, "store source metadata failed: "+err.Error(), http.StatusInternalServerError)
 				return
 			}
-			jsonOK(w, clipStudioSourceResponse{SourceID: sourceID, Status: meta.Status, Message: meta.Message, Metadata: meta, DirectVideo: true})
+			jsonOK(w, clipStudioSourceResponse{SourceID: sourceID, Status: meta.Status, Message: meta.Message, Metadata: publicClipStudioSourceMetadata(meta), DirectVideo: true})
 			return
 		}
 		dstDir := s.clipStudioSourceDir(workspaceID, sourceID)
@@ -483,7 +517,7 @@ func (s *Server) handleCreateClipStudioSource(w http.ResponseWriter, r *http.Req
 		SourceID:      sourceID,
 		Status:        meta.Status,
 		Message:       meta.Message,
-		Metadata:      meta,
+		Metadata:      publicClipStudioSourceMetadata(meta),
 		CanRender:     meta.Status == "ready",
 		DirectVideo:   meta.DirectVideo,
 		DownloadReady: meta.FilePath != "",
@@ -506,11 +540,56 @@ func (s *Server) handleImportClipStudioURL(w http.ResponseWriter, r *http.Reques
 		jsonError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	var projectOutput *contentProjectOutput
+	if strings.TrimSpace(req.ProjectID) != "" && s.db != nil {
+		sceneID := optionalSceneID(req.SceneID)
+		scope := outputScopeFromRequest(req.OutputScope, sceneID)
+		status := projectOutputStatusCompleted
+		outputType := projectOutputTypeImported
+		failureCategory := ""
+		failureMessage := ""
+		storageReference := source.FilePath
+		mimeType := firstNonEmpty(source.ContentType, "video/mp4")
+		var size *int64
+		if source.SizeBytes >= 0 {
+			size = &source.SizeBytes
+		}
+		retryable := false
+		if source.FilePath == "" || source.Status != "ready" {
+			status = projectOutputStatusUnavailable
+			failureCategory = "source_unavailable"
+			failureMessage = source.Message
+			storageReference = ""
+			mimeType = ""
+			size = nil
+		}
+		output, err := s.upsertContentProjectOutput(r.Context(), workspaceID, req.ProjectID, sceneID, contentProjectOutputMutation{
+			OutputScope:      scope,
+			OutputType:       outputType,
+			SourceWorkflow:   projectOutputWorkflowClipGenerator,
+			RenderJobID:      source.SourceID,
+			Status:           status,
+			OriginalFilename: filepath.Base(source.URL),
+			DisplayName:      safeOutputDisplayName(filepath.Base(source.URL), "Imported clip"),
+			MimeType:         mimeType,
+			FileSizeBytes:    size,
+			StorageReference: storageReference,
+			FailureCategory:  failureCategory,
+			FailureMessage:   failureMessage,
+			Retryable:        retryable,
+		})
+		if err != nil {
+			jsonErrorCode(w, "validation_error", err.Error(), http.StatusBadRequest)
+			return
+		}
+		projectOutput = &output.contentProjectOutput
+	}
 	jsonOK(w, clipStudioSourceResponse{
 		SourceID:      source.SourceID,
 		Status:        source.Status,
 		Message:       source.Message,
-		Metadata:      source,
+		Metadata:      publicClipStudioSourceMetadata(source),
+		ProjectOutput: projectOutput,
 		CanRender:     source.Status == "ready" && source.FilePath != "",
 		DirectVideo:   source.DirectVideo,
 		DownloadReady: source.FilePath != "",
@@ -532,34 +611,82 @@ func (s *Server) handleGenerateClipStudio(w http.ResponseWriter, r *http.Request
 		jsonError(w, "workspace lookup failed: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
+	response, err := s.performClipStudioGeneration(r.Context(), workspaceID, strings.TrimSpace(req.ProjectID), nil, req)
+	if err != nil {
+		jsonErrorCode(w, "validation_error", err.Error(), http.StatusBadRequest)
+		return
+	}
+	jsonOK(w, response)
+}
 
+func (s *Server) performClipStudioGeneration(ctx context.Context, workspaceID, projectID string, existingOutputID *string, req clipStudioGenerateRequest) (clipStudioGenerateResponse, error) {
 	var source clipStudioSourceMetadata
 	if strings.TrimSpace(req.SourceID) != "" {
-		source, err = s.readClipStudioSource(r.Context(), workspaceID, req.SourceID)
+		var err error
+		source, err = s.readClipStudioSource(ctx, workspaceID, req.SourceID)
 		if err != nil {
-			jsonError(w, "clip studio source not found: "+err.Error(), http.StatusBadRequest)
-			return
+			return clipStudioGenerateResponse{}, fmt.Errorf("clip studio source not found: %w", err)
 		}
 	} else if strings.TrimSpace(req.SourceURL) != "" {
 		sourceReq := clipStudioSourceRequest{SourceURL: req.SourceURL, RightsConfirmed: req.RightsConfirmed, Rights: req.Rights}
-		source, err = s.createClipStudioSourceFromURL(r.Context(), workspaceID, sourceReq)
+		var err error
+		source, err = s.createClipStudioSourceFromURL(ctx, workspaceID, sourceReq)
 		if err != nil {
-			jsonError(w, err.Error(), http.StatusBadRequest)
-			return
+			return clipStudioGenerateResponse{}, err
 		}
 	} else {
-		jsonError(w, "source_id or source_url is required", http.StatusBadRequest)
-		return
+		return clipStudioGenerateResponse{}, errors.New("source_id or source_url is required")
+	}
+	batchID := generationBatchID(req.IdempotencyKey)
+	var projectOutput *contentProjectOutput
+	var outputID string
+	if projectID != "" && s.db != nil {
+		sceneID := optionalSceneID(req.SceneID)
+		scope := outputScopeFromRequest(req.OutputScope, sceneID)
+		payload, _ := json.Marshal(req)
+		output, err := s.upsertContentProjectOutput(ctx, workspaceID, projectID, sceneID, contentProjectOutputMutation{
+			OutputScope:        scope,
+			OutputType:         projectOutputTypeGenerated,
+			SourceWorkflow:     projectOutputWorkflowClipGenerator,
+			RenderJobID:        batchID,
+			Status:             projectOutputStatusProcessing,
+			DisplayName:        "Generated clip package",
+			MimeType:           "application/zip",
+			Retryable:          false,
+			RequestPayloadJSON: payload,
+		})
+		if err != nil {
+			return clipStudioGenerateResponse{}, err
+		}
+		outputID = output.ID
+		projectOutput = &output.contentProjectOutput
+		if existingOutputID != nil {
+			outputID = *existingOutputID
+		}
 	}
 	if source.FilePath == "" || source.Status != "ready" {
-		jsonOK(w, clipStudioGenerateResponse{
+		response := clipStudioGenerateResponse{
 			Success:            false,
 			RenderStatus:       "unsupported_source",
 			Notes:              "Upload the source file or connect an approved source before rendering.",
 			SourceID:           source.SourceID,
+			ProjectOutput:      projectOutput,
 			HighlightDetection: "not_run",
-		})
-		return
+		}
+		if outputID != "" {
+			updated, _ := s.updateContentProjectOutput(ctx, projectID, outputID, contentProjectOutputMutation{
+				OutputScope:     outputScopeFromRequest(req.OutputScope, optionalSceneID(req.SceneID)),
+				OutputType:      projectOutputTypeGenerated,
+				Status:          projectOutputStatusFailed,
+				DisplayName:     "Generated clip package",
+				MimeType:        "application/zip",
+				FailureCategory: "unsupported_source",
+				FailureMessage:  response.Notes,
+				Retryable:       false,
+			})
+			response.ProjectOutput = &updated.contentProjectOutput
+		}
+		return response, nil
 	}
 
 	rights := source.Rights
@@ -567,9 +694,8 @@ func (s *Server) handleGenerateClipStudio(w http.ResponseWriter, r *http.Request
 	applyAdvancedRights(&rights, req.Advanced)
 	clipLengthSeconds := clipLengthToSeconds(req.ClipLength)
 	clipCount := normalizeClipCount(req.ClipCount)
-	duration := renderer.ProbeDuration(r.Context(), s.cfg.FFprobePath, source.FilePath)
+	duration := renderer.ProbeDuration(ctx, s.cfg.FFprobePath, source.FilePath)
 	ranges := evenlySpacedClipRanges(duration, clipLengthSeconds, clipCount)
-	batchID := "clips-" + time.Now().UTC().Format("20060102-150405")
 	jobs := make([]clipStudioGeneratedJob, 0, len(ranges))
 	generated := make([]storage.ClipStudioGeneratedClip, 0, len(ranges))
 	overallStatus := renderer.StatusCompleted
@@ -588,7 +714,7 @@ func (s *Server) handleGenerateClipStudio(w http.ResponseWriter, r *http.Request
 			LayoutMode:      req.LayoutMode,
 			AIHighlights:    renderer.DefaultClipAIHighlightMetadata(),
 		}
-		result := renderer.RenderManualClip(r.Context(), renderer.Config{
+		result := renderer.RenderManualClip(ctx, renderer.Config{
 			OutputDir:   s.cfg.MediaOutputDir,
 			FFmpegPath:  s.cfg.FFmpegPath,
 			FFprobePath: s.cfg.FFprobePath,
@@ -624,15 +750,29 @@ func (s *Server) handleGenerateClipStudio(w http.ResponseWriter, r *http.Request
 		})
 	}
 	if len(generated) == 0 {
-		jsonOK(w, clipStudioGenerateResponse{
+		response := clipStudioGenerateResponse{
 			Success:            false,
 			RenderStatus:       overallStatus,
 			Notes:              "No clips rendered.",
 			SourceID:           source.SourceID,
+			ProjectOutput:      projectOutput,
 			HighlightDetection: "not_run",
 			GeneratedClipJobs:  jobs,
-		})
-		return
+		}
+		if outputID != "" {
+			updated, _ := s.updateContentProjectOutput(ctx, projectID, outputID, contentProjectOutputMutation{
+				OutputScope:     outputScopeFromRequest(req.OutputScope, optionalSceneID(req.SceneID)),
+				OutputType:      projectOutputTypeGenerated,
+				Status:          projectOutputStatusFailed,
+				DisplayName:     "Generated clip package",
+				MimeType:        "application/zip",
+				FailureCategory: "render_failed",
+				FailureMessage:  response.Notes,
+				Retryable:       true,
+			})
+			response.ProjectOutput = &updated.contentProjectOutput
+		}
+		return response, nil
 	}
 	manifest := storage.ClipStudioGeneratedManifest{
 		SourceID:           source.SourceID,
@@ -645,20 +785,63 @@ func (s *Server) handleGenerateClipStudio(w http.ResponseWriter, r *http.Request
 	exportDir := filepath.Join(s.cfg.ExportDir, workspaceID, "clip-studio")
 	zipPath, included, err := storage.BuildClipStudioGeneratedExportZip(exportDir, batchID, manifest)
 	if err != nil {
-		jsonError(w, "clip studio export failed: "+err.Error(), http.StatusInternalServerError)
-		return
+		if outputID != "" {
+			_, _ = s.updateContentProjectOutput(ctx, projectID, outputID, contentProjectOutputMutation{
+				OutputScope:     outputScopeFromRequest(req.OutputScope, optionalSceneID(req.SceneID)),
+				OutputType:      projectOutputTypeGenerated,
+				Status:          projectOutputStatusFailed,
+				DisplayName:     "Generated clip package",
+				MimeType:        "application/zip",
+				FailureCategory: "packaging_failed",
+				FailureMessage:  "Clip Studio export failed.",
+				Retryable:       true,
+			})
+		}
+		return clipStudioGenerateResponse{}, fmt.Errorf("clip studio export failed: %w", err)
 	}
-	jsonOK(w, clipStudioGenerateResponse{
+	var size *int64
+	if stat, err := os.Stat(zipPath); err == nil {
+		v := stat.Size()
+		size = &v
+	}
+	response := clipStudioGenerateResponse{
 		Success:            overallStatus == renderer.StatusCompleted,
 		RenderStatus:       overallStatus,
 		Notes:              "Generated clips with evenly spaced segments; highlight_detection: not_run.",
 		SourceID:           source.SourceID,
+		ProjectOutput:      projectOutput,
 		HighlightDetection: "not_run",
 		GeneratedClipJobs:  jobs,
 		ZipFilename:        filepath.Base(zipPath),
 		DownloadURL:        "/api/clip-studio/download/" + filepath.Base(zipPath),
 		IncludedFiles:      included,
-	})
+	}
+	if outputID != "" {
+		status := projectOutputStatusCompleted
+		failureCategory := ""
+		failureMessage := ""
+		retryable := false
+		if overallStatus != renderer.StatusCompleted {
+			status = projectOutputStatusFailed
+			failureCategory = "partial_render"
+			failureMessage = "One or more clips failed to render."
+			retryable = true
+		}
+		updated, _ := s.updateContentProjectOutput(ctx, projectID, outputID, contentProjectOutputMutation{
+			OutputScope:      outputScopeFromRequest(req.OutputScope, optionalSceneID(req.SceneID)),
+			OutputType:       projectOutputTypeGenerated,
+			Status:           status,
+			DisplayName:      filepath.Base(zipPath),
+			MimeType:         "application/zip",
+			FileSizeBytes:    size,
+			StorageReference: zipPath,
+			FailureCategory:  failureCategory,
+			FailureMessage:   failureMessage,
+			Retryable:        retryable,
+		})
+		response.ProjectOutput = &updated.contentProjectOutput
+	}
+	return response, nil
 }
 
 func (s *Server) handleAISceneWorkerStatus(w http.ResponseWriter, r *http.Request) {
@@ -1404,6 +1587,49 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func optionalSceneID(value string) *string {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return nil
+	}
+	return &trimmed
+}
+
+func outputScopeFromRequest(value string, sceneID *string) string {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == projectOutputScopeScene || (trimmed == "" && sceneID != nil) {
+		return projectOutputScopeScene
+	}
+	return projectOutputScopeProject
+}
+
+func generationBatchID(idempotencyKey string) string {
+	key := strings.TrimSpace(idempotencyKey)
+	if key != "" {
+		key = strings.Map(func(r rune) rune {
+			if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' || r == '_' {
+				return r
+			}
+			return '-'
+		}, key)
+		return "clips-" + limitText(key, 120)
+	}
+	return "clips-" + time.Now().UTC().Format("20060102-150405")
+}
+
+func safeOutputDisplayName(filename, fallback string) string {
+	name := strings.TrimSpace(filepath.Base(filename))
+	if name == "." || name == "" {
+		return fallback
+	}
+	return name
+}
+
+func publicClipStudioSourceMetadata(meta clipStudioSourceMetadata) clipStudioSourceMetadata {
+	meta.FilePath = ""
+	return meta
 }
 
 func clipStudioRenderForTest(ctx context.Context, cfg renderer.Config, input renderer.ClipInput) renderer.Result {
