@@ -213,7 +213,18 @@ type aiSceneGenerationJob struct {
 	Response            aiSceneGenerateResponse
 	VideoDownloadURL    string
 	VideoDownloadName   string
+	VideoStorageKey     string
 	Err                 string
+}
+
+type clipStudioExportObject struct {
+	Filename        string
+	ExportKind      string
+	GenerationID    string
+	StorageProvider string
+	StorageKey      string
+	MimeType        string
+	SizeBytes       int64
 }
 
 type aiSceneGenerationStatusResponse struct {
@@ -343,8 +354,13 @@ func (s *Server) handleRenderClipStudio(w http.ResponseWriter, r *http.Request) 
 		jsonError(w, "clip studio export key failed", http.StatusInternalServerError)
 		return
 	}
-	if _, err := s.storeMediaFile(r.Context(), workspaceID, objectKey, zipPath, "application/zip", filepath.Base(zipPath)); err != nil {
+	objectInfo, err := s.storeMediaFile(r.Context(), workspaceID, objectKey, zipPath, "application/zip", filepath.Base(zipPath))
+	if err != nil {
 		jsonError(w, "clip studio export storage failed: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if err := s.recordClipStudioExport(r.Context(), workspaceID, filepath.Base(zipPath), "manual_zip", "", "application/zip", objectInfo); err != nil {
+		jsonError(w, "clip studio export metadata failed: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
@@ -869,6 +885,17 @@ func (s *Server) performClipStudioGeneration(ctx context.Context, workspaceID, p
 		v := stat.Size()
 		size = &v
 	}
+	objectKey, keyErr := clipStudioOutputObjectKey(workspaceID, "outputs", firstNonEmpty(outputID, batchID), filepath.Base(zipPath))
+	var objectInfo blobstore.ObjectInfo
+	if keyErr == nil {
+		objectInfo, keyErr = s.storeMediaFile(ctx, workspaceID, objectKey, zipPath, "application/zip", filepath.Base(zipPath))
+	}
+	if keyErr == nil {
+		keyErr = s.recordClipStudioExport(ctx, workspaceID, filepath.Base(zipPath), "generated_zip", batchID, "application/zip", objectInfo)
+	}
+	if keyErr != nil && outputID == "" {
+		return clipStudioGenerateResponse{}, fmt.Errorf("clip studio export storage failed: %w", keyErr)
+	}
 	response := clipStudioGenerateResponse{
 		Success:            overallStatus == renderer.StatusCompleted,
 		RenderStatus:       overallStatus,
@@ -891,11 +918,6 @@ func (s *Server) performClipStudioGeneration(ctx context.Context, workspaceID, p
 			failureCategory = "partial_render"
 			failureMessage = "One or more clips failed to render."
 			retryable = true
-		}
-		objectKey, keyErr := clipStudioOutputObjectKey(workspaceID, "outputs", outputID, filepath.Base(zipPath))
-		var objectInfo blobstore.ObjectInfo
-		if keyErr == nil {
-			objectInfo, keyErr = s.storeMediaFile(ctx, workspaceID, objectKey, zipPath, "application/zip", filepath.Base(zipPath))
 		}
 		if keyErr != nil {
 			updated, _ := s.updateContentProjectOutput(ctx, projectID, outputID, contentProjectOutputMutation{
@@ -1160,6 +1182,38 @@ func (s *Server) runAISceneGeneration(generationID string) {
 	response.DownloadURL = "/api/clip-studio/download/" + filepath.Base(zipPath)
 	response.IncludedFiles = included
 	videoFilename := aiSceneVideoFilename(time.Now().UTC())
+	videoKey, videoKeyErr := clipStudioOutputObjectKey(job.WorkspaceID, "ai-scenes", generationID, videoFilename)
+	var videoInfo blobstore.ObjectInfo
+	if videoKeyErr == nil {
+		videoInfo, videoKeyErr = s.storeMediaFile(context.Background(), job.WorkspaceID, videoKey, result.VideoPath, "video/mp4", videoFilename)
+	}
+	if videoKeyErr == nil {
+		videoKeyErr = s.recordClipStudioExport(context.Background(), job.WorkspaceID, videoFilename, "ai_scene_video", generationID, "video/mp4", videoInfo)
+	}
+	zipKey, zipKeyErr := clipStudioOutputObjectKey(job.WorkspaceID, "ai-scenes", generationID, filepath.Base(zipPath))
+	var zipInfo blobstore.ObjectInfo
+	if zipKeyErr == nil {
+		zipInfo, zipKeyErr = s.storeMediaFile(context.Background(), job.WorkspaceID, zipKey, zipPath, "application/zip", filepath.Base(zipPath))
+	}
+	if zipKeyErr == nil {
+		zipKeyErr = s.recordClipStudioExport(context.Background(), job.WorkspaceID, filepath.Base(zipPath), "ai_scene_zip", generationID, "application/zip", zipInfo)
+	}
+	if videoKeyErr != nil || zipKeyErr != nil {
+		response.Success = false
+		response.RenderStatus = renderer.StatusFailed
+		response.GenerationStatus = "failed"
+		response.Notes = "local AI scene storage failed."
+		s.updateAISceneGeneration(generationID, func(job *aiSceneGenerationJob) {
+			job.Status = "failed"
+			job.ProgressPercent = 90
+			job.CurrentStep = "Storage failed"
+			job.EstimatedNextAction = "Retry generation."
+			job.Response = response
+			job.Err = response.Notes
+			job.UpdatedAt = time.Now().UTC()
+		})
+		return
+	}
 	s.updateAISceneGeneration(generationID, func(job *aiSceneGenerationJob) {
 		job.Status = "completed"
 		job.ProgressPercent = 100
@@ -1169,6 +1223,7 @@ func (s *Server) runAISceneGeneration(generationID string) {
 		job.Response = response
 		job.VideoDownloadURL = "/api/clip-studio/ai-scenes/generations/" + generationID + "/video"
 		job.VideoDownloadName = videoFilename
+		job.VideoStorageKey = videoInfo.Key
 		job.UpdatedAt = time.Now().UTC()
 	})
 }
@@ -1177,7 +1232,17 @@ func (s *Server) handleGetAISceneGeneration(w http.ResponseWriter, r *http.Reque
 	id := strings.TrimSpace(r.PathValue("id"))
 	job := s.getAISceneGeneration(id)
 	if job == nil {
-		jsonError(w, "AI scene generation not found", http.StatusNotFound)
+		workspaceID, err := s.defaultWorkspaceID(r.Context())
+		if err != nil {
+			jsonError(w, "workspace lookup failed: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		obj, err := s.readClipStudioExportByGeneration(r.Context(), workspaceID, id, "ai_scene_video")
+		if err != nil {
+			jsonError(w, "AI scene generation not found", http.StatusNotFound)
+			return
+		}
+		_ = s.serveClipStudioObject(r.Context(), w, r, obj, firstNonEmpty(obj.Filename, aiSceneVideoFilename(time.Now().UTC())))
 		return
 	}
 	jsonOK(w, aiSceneGenerationStatus(job))
@@ -1195,6 +1260,22 @@ func (s *Server) handleDownloadAISceneVideo(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	if _, err := os.Stat(job.Response.VideoPath); err != nil {
+		if strings.TrimSpace(job.VideoStorageKey) != "" {
+			store, storeErr := s.ensureMediaStore()
+			if storeErr != nil {
+				jsonError(w, "AI scene video not found", http.StatusNotFound)
+				return
+			}
+			_ = s.serveClipStudioObject(r.Context(), w, r, clipStudioExportObject{
+				Filename:        firstNonEmpty(job.VideoDownloadName, aiSceneVideoFilename(job.StartedAt)),
+				ExportKind:      "ai_scene_video",
+				GenerationID:    id,
+				StorageProvider: store.Provider(),
+				StorageKey:      job.VideoStorageKey,
+				MimeType:        "video/mp4",
+			}, firstNonEmpty(job.VideoDownloadName, aiSceneVideoFilename(job.StartedAt)))
+			return
+		}
 		jsonError(w, "AI scene video not found", http.StatusNotFound)
 		return
 	}
@@ -1214,6 +1295,10 @@ func (s *Server) handleDownloadClipStudio(w http.ResponseWriter, r *http.Request
 	filename = filepath.Base(filename)
 	if filename == "." || filename == "/" || filename == "" {
 		jsonError(w, "clip studio export filename is required", http.StatusBadRequest)
+		return
+	}
+	if obj, err := s.readClipStudioExportByFilename(r.Context(), workspaceID, filename); err == nil {
+		_ = s.serveClipStudioObject(r.Context(), w, r, obj, filename)
 		return
 	}
 	path := filepath.Join(s.cfg.ExportDir, workspaceID, "clip-studio", filename)
@@ -1349,6 +1434,109 @@ func (s *Server) storeMediaFile(ctx context.Context, workspaceID, key, path, con
 		return blobstore.ObjectInfo{}, err
 	}
 	return info, nil
+}
+
+func (s *Server) recordClipStudioExport(ctx context.Context, workspaceID, filename, kind, generationID, mimeType string, info blobstore.ObjectInfo) error {
+	if s.db == nil || info.Key == "" {
+		return nil
+	}
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO clip_studio_exports (
+			workspace_id, filename, export_kind, generation_id, storage_provider, storage_key,
+			storage_etag, storage_checksum_sha256, mime_type, size_bytes, updated_at
+		)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,NOW())
+		ON CONFLICT (workspace_id, filename) DO UPDATE SET
+			export_kind = EXCLUDED.export_kind,
+			generation_id = EXCLUDED.generation_id,
+			storage_provider = EXCLUDED.storage_provider,
+			storage_key = EXCLUDED.storage_key,
+			storage_etag = EXCLUDED.storage_etag,
+			storage_checksum_sha256 = EXCLUDED.storage_checksum_sha256,
+			mime_type = EXCLUDED.mime_type,
+			size_bytes = EXCLUDED.size_bytes,
+			updated_at = NOW()`,
+		workspaceID, filename, kind, nullableString(generationID), info.Provider, info.Key, nullableString(info.ETag), nullableString(info.SHA256), mimeType, nullableInt64(info.Size))
+	return err
+}
+
+func (s *Server) readClipStudioExportByFilename(ctx context.Context, workspaceID, filename string) (clipStudioExportObject, error) {
+	if s.db == nil {
+		return clipStudioExportObject{}, sql.ErrNoRows
+	}
+	var out clipStudioExportObject
+	var generationID sql.NullString
+	var size sql.NullInt64
+	err := s.db.QueryRowContext(ctx, `
+		SELECT filename, export_kind, COALESCE(generation_id, ''), storage_provider, storage_key, mime_type, size_bytes
+		FROM clip_studio_exports
+		WHERE workspace_id = $1 AND filename = $2`, workspaceID, filename).
+		Scan(&out.Filename, &out.ExportKind, &generationID, &out.StorageProvider, &out.StorageKey, &out.MimeType, &size)
+	if err != nil {
+		return clipStudioExportObject{}, err
+	}
+	out.GenerationID = generationID.String
+	if size.Valid {
+		out.SizeBytes = size.Int64
+	}
+	return out, nil
+}
+
+func (s *Server) readClipStudioExportByGeneration(ctx context.Context, workspaceID, generationID, kind string) (clipStudioExportObject, error) {
+	if s.db == nil {
+		return clipStudioExportObject{}, sql.ErrNoRows
+	}
+	var out clipStudioExportObject
+	var size sql.NullInt64
+	err := s.db.QueryRowContext(ctx, `
+		SELECT filename, export_kind, COALESCE(generation_id, ''), storage_provider, storage_key, mime_type, size_bytes
+		FROM clip_studio_exports
+		WHERE workspace_id = $1 AND generation_id = $2 AND export_kind = $3
+		ORDER BY updated_at DESC
+		LIMIT 1`, workspaceID, generationID, kind).
+		Scan(&out.Filename, &out.ExportKind, &out.GenerationID, &out.StorageProvider, &out.StorageKey, &out.MimeType, &size)
+	if err != nil {
+		return clipStudioExportObject{}, err
+	}
+	if size.Valid {
+		out.SizeBytes = size.Int64
+	}
+	return out, nil
+}
+
+func (s *Server) serveClipStudioObject(ctx context.Context, w http.ResponseWriter, r *http.Request, obj clipStudioExportObject, filename string) bool {
+	store, err := s.ensureMediaStore()
+	if err != nil {
+		jsonError(w, "clip studio export storage unavailable", http.StatusGone)
+		return false
+	}
+	if _, err := store.Stat(ctx, obj.StorageKey); err != nil {
+		jsonError(w, "clip studio export not found", http.StatusNotFound)
+		return false
+	}
+	contentType := firstNonEmpty(obj.MimeType, "application/octet-stream")
+	if obj.StorageProvider == blobstore.ProviderS3 {
+		u, err := store.PresignGet(ctx, obj.StorageKey, blobstore.PresignOptions{
+			TTL:                s.cfg.MediaStorageSignedURLTTL,
+			ContentDisposition: `attachment; filename="` + safeDownloadFilename(filename, contentType) + `"`,
+		})
+		if err != nil {
+			jsonError(w, "clip studio export download could not be prepared", http.StatusBadGateway)
+			return false
+		}
+		http.Redirect(w, r, u, http.StatusFound)
+		return true
+	}
+	body, _, err := store.Open(ctx, obj.StorageKey)
+	if err != nil {
+		jsonError(w, "clip studio export not found", http.StatusNotFound)
+		return false
+	}
+	defer body.Close()
+	w.Header().Set("Content-Type", contentType)
+	w.Header().Set("Content-Disposition", `attachment; filename="`+safeDownloadFilename(filename, contentType)+`"`)
+	_, _ = io.Copy(w, body)
+	return true
 }
 
 func (s *Server) materializeClipStudioSource(ctx context.Context, workspaceID string, meta clipStudioSourceMetadata) (string, func(), error) {
