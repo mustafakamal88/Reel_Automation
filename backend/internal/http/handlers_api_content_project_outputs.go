@@ -6,12 +6,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"math"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
+	"trendcortex/api/internal/blobstore"
 )
 
 const (
@@ -67,6 +69,10 @@ type contentProjectOutput struct {
 type projectOutputRecord struct {
 	contentProjectOutput
 	StorageReference string
+	StorageProvider  string
+	StorageKey       string
+	StorageETag      string
+	StorageSHA256    string
 	RequestPayload   []byte
 }
 
@@ -84,6 +90,10 @@ type contentProjectOutputMutation struct {
 	Width              *int
 	Height             *int
 	StorageReference   string
+	StorageProvider    string
+	StorageKey         string
+	StorageETag        string
+	StorageSHA256      string
 	FailureCategory    string
 	FailureMessage     string
 	Retryable          bool
@@ -243,6 +253,52 @@ func (s *Server) handleDownloadContentProjectOutput(w http.ResponseWriter, r *ht
 		jsonErrorCode(w, "validation_error", "project output is not ready to download", http.StatusConflict)
 		return
 	}
+	filename := safeDownloadFilename(output.DisplayName, output.MimeType)
+	contentType := firstNonEmpty(output.MimeType, "application/octet-stream")
+	if output.StorageProvider != "" && output.StorageKey != "" {
+		store, err := s.ensureMediaStore()
+		if err != nil {
+			_ = s.markContentProjectOutputUnavailable(r.Context(), project.ID, output.ID)
+			jsonErrorCode(w, "unavailable", "project output file is unavailable", http.StatusGone)
+			return
+		}
+		if _, err := store.Stat(r.Context(), output.StorageKey); err != nil {
+			if errors.Is(err, blobstore.ErrNotFound) {
+				_ = s.markContentProjectOutputUnavailable(r.Context(), project.ID, output.ID)
+				jsonErrorCode(w, "unavailable", "project output file is unavailable", http.StatusGone)
+				return
+			}
+			jsonError(w, "project output storage lookup failed", http.StatusBadGateway)
+			return
+		}
+		if output.StorageProvider == blobstore.ProviderS3 {
+			u, err := store.PresignGet(r.Context(), output.StorageKey, blobstore.PresignOptions{
+				TTL:                s.cfg.MediaStorageSignedURLTTL,
+				ContentDisposition: `attachment; filename="` + filename + `"`,
+			})
+			if err != nil {
+				jsonError(w, "project output download could not be prepared", http.StatusBadGateway)
+				return
+			}
+			http.Redirect(w, r, u, http.StatusFound)
+			return
+		}
+		body, _, err := store.Open(r.Context(), output.StorageKey)
+		if err != nil {
+			if errors.Is(err, blobstore.ErrNotFound) {
+				_ = s.markContentProjectOutputUnavailable(r.Context(), project.ID, output.ID)
+				jsonErrorCode(w, "unavailable", "project output file is unavailable", http.StatusGone)
+				return
+			}
+			jsonError(w, "project output download failed", http.StatusBadGateway)
+			return
+		}
+		defer body.Close()
+		w.Header().Set("Content-Type", contentType)
+		w.Header().Set("Content-Disposition", `attachment; filename="`+filename+`"`)
+		_, _ = io.Copy(w, body)
+		return
+	}
 	path := filepath.Clean(output.StorageReference)
 	if path == "." || path == "" {
 		jsonErrorCode(w, "unavailable", "project output file is unavailable", http.StatusGone)
@@ -253,8 +309,6 @@ func (s *Server) handleDownloadContentProjectOutput(w http.ResponseWriter, r *ht
 		jsonErrorCode(w, "unavailable", "project output file is unavailable", http.StatusGone)
 		return
 	}
-	filename := safeDownloadFilename(output.DisplayName, output.MimeType)
-	contentType := firstNonEmpty(output.MimeType, "application/octet-stream")
 	w.Header().Set("Content-Type", contentType)
 	w.Header().Set("Content-Disposition", `attachment; filename="`+filename+`"`)
 	http.ServeFile(w, r, path)
@@ -327,9 +381,10 @@ func (s *Server) upsertContentProjectOutput(ctx context.Context, workspaceID, pr
 		INSERT INTO content_project_outputs (
 			project_id, scene_id, output_scope, output_type, source_workflow, render_job_id, status,
 			original_filename, display_name, mime_type, file_size_bytes, duration_seconds, width, height,
-			storage_reference, failure_category, failure_message, retryable, request_payload, completed_at
+			storage_reference, storage_provider, storage_key, storage_etag, storage_checksum_sha256,
+			failure_category, failure_message, retryable, request_payload, completed_at
 		)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,
 			CASE WHEN $7 = 'completed' THEN NOW() ELSE NULL END)
 		ON CONFLICT (project_id, render_job_id) WHERE render_job_id IS NOT NULL AND render_job_id <> '' DO UPDATE SET
 			status = EXCLUDED.status,
@@ -341,6 +396,10 @@ func (s *Server) upsertContentProjectOutput(ctx context.Context, workspaceID, pr
 			width = COALESCE(EXCLUDED.width, content_project_outputs.width),
 			height = COALESCE(EXCLUDED.height, content_project_outputs.height),
 			storage_reference = COALESCE(EXCLUDED.storage_reference, content_project_outputs.storage_reference),
+			storage_provider = COALESCE(EXCLUDED.storage_provider, content_project_outputs.storage_provider),
+			storage_key = COALESCE(EXCLUDED.storage_key, content_project_outputs.storage_key),
+			storage_etag = COALESCE(EXCLUDED.storage_etag, content_project_outputs.storage_etag),
+			storage_checksum_sha256 = COALESCE(EXCLUDED.storage_checksum_sha256, content_project_outputs.storage_checksum_sha256),
 			failure_category = EXCLUDED.failure_category,
 			failure_message = EXCLUDED.failure_message,
 			retryable = EXCLUDED.retryable,
@@ -350,7 +409,8 @@ func (s *Server) upsertContentProjectOutput(ctx context.Context, workspaceID, pr
 		RETURNING `+contentProjectOutputReturningColumns,
 		projectID, sceneID, m.OutputScope, m.OutputType, m.SourceWorkflow, nullableString(m.RenderJobID), m.Status,
 		nullableString(m.OriginalFilename), m.DisplayName, nullableString(m.MimeType), m.FileSizeBytes, m.DurationSeconds, m.Width, m.Height,
-		nullableString(m.StorageReference), nullableString(m.FailureCategory), nullableString(m.FailureMessage), m.Retryable, nullableJSON(m.RequestPayloadJSON),
+		nullableString(m.StorageReference), nullableString(m.StorageProvider), nullableString(m.StorageKey), nullableString(m.StorageETag), nullableString(m.StorageSHA256),
+		nullableString(m.FailureCategory), nullableString(m.FailureMessage), m.Retryable, nullableJSON(m.RequestPayloadJSON),
 	)
 	return scanContentProjectOutput(row, projectID)
 }
@@ -371,14 +431,19 @@ func (s *Server) updateContentProjectOutput(ctx context.Context, projectID, outp
 			width = $9,
 			height = $10,
 			storage_reference = $11,
-			failure_category = $12,
-			failure_message = $13,
-			retryable = $14,
+			storage_provider = $12,
+			storage_key = $13,
+			storage_etag = $14,
+			storage_checksum_sha256 = $15,
+			failure_category = $16,
+			failure_message = $17,
+			retryable = $18,
 			completed_at = CASE WHEN $3 = 'completed' THEN NOW() ELSE completed_at END,
 			updated_at = NOW()
 		WHERE project_id = $1 AND id = $2`,
 		projectID, outputID, m.Status, m.OutputType, m.DisplayName, nullableString(m.MimeType), m.FileSizeBytes, m.DurationSeconds,
-		m.Width, m.Height, nullableString(m.StorageReference), nullableString(m.FailureCategory), nullableString(m.FailureMessage), m.Retryable,
+		m.Width, m.Height, nullableString(m.StorageReference), nullableString(m.StorageProvider), nullableString(m.StorageKey), nullableString(m.StorageETag), nullableString(m.StorageSHA256),
+		nullableString(m.FailureCategory), nullableString(m.FailureMessage), m.Retryable,
 	)
 	if err != nil {
 		return projectOutputRecord{}, err
@@ -491,6 +556,7 @@ const contentProjectOutputSelectColumns = `
 	o.id, o.project_id, o.scene_id, COALESCE(sc.title, ''), o.output_scope, o.output_type, o.source_workflow,
 	COALESCE(o.render_job_id, ''), o.status, COALESCE(o.original_filename, ''), o.display_name, COALESCE(o.mime_type, ''),
 	o.file_size_bytes, o.duration_seconds, o.width, o.height, COALESCE(o.storage_reference, ''),
+	COALESCE(o.storage_provider, ''), COALESCE(o.storage_key, ''), COALESCE(o.storage_etag, ''), COALESCE(o.storage_checksum_sha256, ''),
 	COALESCE(o.failure_category, ''), COALESCE(o.failure_message, ''), o.retryable, o.retry_count,
 	o.request_payload, o.archived_at, o.created_at, o.updated_at, o.completed_at`
 
@@ -498,6 +564,7 @@ const contentProjectOutputReturningColumns = `
 	id, project_id, scene_id, '', output_scope, output_type, source_workflow,
 	COALESCE(render_job_id, ''), status, COALESCE(original_filename, ''), display_name, COALESCE(mime_type, ''),
 	file_size_bytes, duration_seconds, width, height, COALESCE(storage_reference, ''),
+	COALESCE(storage_provider, ''), COALESCE(storage_key, ''), COALESCE(storage_etag, ''), COALESCE(storage_checksum_sha256, ''),
 	COALESCE(failure_category, ''), COALESCE(failure_message, ''), retryable, retry_count,
 	request_payload, archived_at, created_at, updated_at, completed_at`
 
@@ -515,6 +582,7 @@ func scanContentProjectOutput(row projectOutputScanner, projectID string) (proje
 	err := row.Scan(&out.ID, &out.ProjectID, &sceneID, &out.SceneLabel, &out.OutputScope, &out.OutputType, &out.SourceWorkflow,
 		&out.RenderJobID, &out.Status, &out.OriginalFilename, &out.DisplayName, &out.MimeType,
 		&fileSize, &duration, &width, &height, &out.StorageReference,
+		&out.StorageProvider, &out.StorageKey, &out.StorageETag, &out.StorageSHA256,
 		&out.FailureCategory, &out.FailureMessage, &out.Retryable, &out.RetryCount,
 		&requestPayload, &out.ArchivedAt, &out.CreatedAt, &out.UpdatedAt, &out.CompletedAt)
 	if err != nil {
@@ -538,7 +606,7 @@ func scanContentProjectOutput(row projectOutputScanner, projectID string) (proje
 		out.Height = &v
 	}
 	out.RequestPayload = requestPayload
-	out.Available = outputStorageAvailable(out.Status, out.StorageReference)
+	out.Available = outputStorageAvailable(out.Status, out.StorageReference, out.StorageProvider, out.StorageKey)
 	if out.Status == projectOutputStatusCompleted && out.Available {
 		out.DownloadURL = fmt.Sprintf("/api/content-projects/%s/outputs/%s/download", projectID, out.ID)
 		out.OpenURL = out.DownloadURL
@@ -566,6 +634,10 @@ func normalizeProjectOutputMutation(m contentProjectOutputMutation) contentProje
 	m.FailureMessage = safeFailureMessage(m.FailureMessage)
 	m.RenderJobID = limitText(strings.TrimSpace(m.RenderJobID), 160)
 	m.StorageReference = strings.TrimSpace(m.StorageReference)
+	m.StorageProvider = limitText(strings.TrimSpace(m.StorageProvider), 20)
+	m.StorageKey = strings.TrimSpace(m.StorageKey)
+	m.StorageETag = limitText(strings.TrimSpace(m.StorageETag), 200)
+	m.StorageSHA256 = limitText(strings.TrimSpace(m.StorageSHA256), 64)
 	return m
 }
 
@@ -591,11 +663,28 @@ func validateProjectOutputMutation(m contentProjectOutputMutation) error {
 	if m.Height != nil && *m.Height < 0 {
 		return errors.New("height cannot be negative")
 	}
+	if m.StorageProvider != "" && m.StorageProvider != "local" && m.StorageProvider != "s3" {
+		return errors.New("invalid storage provider")
+	}
+	if m.StorageKey != "" {
+		if strings.HasPrefix(m.StorageKey, "/") || strings.Contains(m.StorageKey, "\\") || strings.Contains(m.StorageKey, "..") {
+			return errors.New("invalid storage key")
+		}
+	}
+	if m.StorageSHA256 != "" && len(m.StorageSHA256) != 64 {
+		return errors.New("invalid storage checksum")
+	}
 	return nil
 }
 
-func outputStorageAvailable(status, storageReference string) bool {
-	if status != projectOutputStatusCompleted || strings.TrimSpace(storageReference) == "" {
+func outputStorageAvailable(status, storageReference, storageProvider, storageKey string) bool {
+	if status != projectOutputStatusCompleted {
+		return false
+	}
+	if strings.TrimSpace(storageProvider) != "" && strings.TrimSpace(storageKey) != "" {
+		return true
+	}
+	if strings.TrimSpace(storageReference) == "" {
 		return false
 	}
 	_, err := os.Stat(storageReference)
@@ -660,6 +749,13 @@ func nullableString(value string) any {
 
 func nullableJSON(value []byte) any {
 	if len(value) == 0 {
+		return nil
+	}
+	return value
+}
+
+func nullableInt64(value int64) any {
+	if value < 0 {
 		return nil
 	}
 	return value

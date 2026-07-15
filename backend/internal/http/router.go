@@ -4,10 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 	"trendcortex/api/internal/audit"
+	"trendcortex/api/internal/blobstore"
 	"trendcortex/api/internal/config"
 	"trendcortex/api/internal/content"
 	"trendcortex/api/internal/database"
@@ -23,6 +26,7 @@ type Server struct {
 	db                     *database.DB
 	registry               oauth.Registry
 	audit                  *audit.Logger
+	mediaStore             blobstore.Store
 	content                content.Generator
 	discover               func(ctx context.Context, region, language string, limit int) (trenddiscovery.DiscoverResult, error)
 	renderDailyPackageReel func(ctx context.Context, cfg renderer.Config, input renderer.ReelInput) renderer.Result
@@ -39,7 +43,48 @@ type Server struct {
 
 // NewServer constructs the Server with all dependencies.
 func NewServer(cfg *config.Config, db *database.DB, reg oauth.Registry, al *audit.Logger) *Server {
-	return &Server{cfg: cfg, db: db, registry: reg, audit: al, dailyRenderJobs: map[string]dailyPackageRenderJob{}, aiSceneJobs: map[string]*aiSceneGenerationJob{}, nicheReports: map[string]nicheReportCacheItem{}, nicheYouTubeCache: research.NewYouTubeEvidenceCache(24 * time.Hour), nicheYouTubeDaily: research.NewDailyYouTubeSearchLimiter(80, nil)}
+	localDir := cfg.MediaStorageLocalDir
+	if strings.TrimSpace(localDir) == "" {
+		localDir = filepath.Join(os.TempDir(), "trendcortex", "media-objects")
+	}
+	provider := cfg.MediaStorageProvider
+	if strings.TrimSpace(provider) == "" {
+		provider = blobstore.ProviderLocal
+	}
+	store, _ := blobstore.New(context.Background(), blobstore.Config{
+		Provider: provider,
+		LocalDir: localDir,
+		Prefix:   cfg.MediaStoragePrefix,
+	})
+	return NewServerWithMediaStore(cfg, db, reg, al, store)
+}
+
+func NewServerWithMediaStore(cfg *config.Config, db *database.DB, reg oauth.Registry, al *audit.Logger, store blobstore.Store) *Server {
+	return &Server{cfg: cfg, db: db, registry: reg, audit: al, mediaStore: store, dailyRenderJobs: map[string]dailyPackageRenderJob{}, aiSceneJobs: map[string]*aiSceneGenerationJob{}, nicheReports: map[string]nicheReportCacheItem{}, nicheYouTubeCache: research.NewYouTubeEvidenceCache(24 * time.Hour), nicheYouTubeDaily: research.NewDailyYouTubeSearchLimiter(80, nil)}
+}
+
+func (s *Server) ensureMediaStore() (blobstore.Store, error) {
+	if s.mediaStore != nil {
+		return s.mediaStore, nil
+	}
+	localDir := ""
+	prefix := ""
+	if s.cfg != nil {
+		localDir = s.cfg.MediaStorageLocalDir
+		prefix = s.cfg.MediaStoragePrefix
+		if strings.TrimSpace(localDir) == "" && strings.TrimSpace(s.cfg.MediaOutputDir) != "" {
+			localDir = filepath.Join(s.cfg.MediaOutputDir, "objects")
+		}
+	}
+	if strings.TrimSpace(localDir) == "" {
+		localDir = filepath.Join(os.TempDir(), "trendcortex", "media-objects")
+	}
+	store, err := blobstore.New(context.Background(), blobstore.Config{Provider: blobstore.ProviderLocal, LocalDir: localDir, Prefix: prefix})
+	if err != nil {
+		return nil, err
+	}
+	s.mediaStore = store
+	return store, nil
 }
 
 // Routes returns the root http.Handler with all routes registered.

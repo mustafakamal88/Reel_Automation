@@ -1,11 +1,13 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
 	"trendcortex/api/internal/audit"
+	"trendcortex/api/internal/blobstore"
 	"trendcortex/api/internal/config"
 	"trendcortex/api/internal/database"
 	tchttp "trendcortex/api/internal/http"
@@ -36,7 +38,28 @@ func main() {
 	registry := platforms.BuildRegistry(cfg)
 	al := audit.New(db.DB)
 
-	srv := tchttp.NewServer(cfg, db, registry, al)
+	mediaStore, err := blobstore.New(context.Background(), blobstore.Config{
+		Provider:        cfg.MediaStorageProvider,
+		LocalDir:        cfg.MediaStorageLocalDir,
+		Endpoint:        cfg.MediaStorageEndpoint,
+		Region:          cfg.MediaStorageRegion,
+		Bucket:          cfg.MediaStorageBucket,
+		AccessKeyID:     cfg.MediaStorageAccessKeyID,
+		SecretAccessKey: cfg.MediaStorageSecretAccessKey,
+		SessionToken:    cfg.MediaStorageSessionToken,
+		ForcePathStyle:  cfg.MediaStorageForcePathStyle,
+		Prefix:          cfg.MediaStoragePrefix,
+		SignedURLTTL:    cfg.MediaStorageSignedURLTTL,
+	})
+	if err != nil {
+		log.Fatalf("media storage: %v", err)
+	}
+	if cfg.AppEnv == "production" && mediaStore.Provider() == blobstore.ProviderLocal {
+		log.Printf("warning: MEDIA_STORAGE_PROVIDER=local in production; uploaded media is not durable across redeploys")
+	}
+	log.Printf("media storage: provider=%s", mediaStore.Provider())
+
+	srv := tchttp.NewServerWithMediaStore(cfg, db, registry, al, mediaStore)
 
 	addr := ":" + cfg.Port
 	log.Printf("trendcortex-api listening on %s (app base: %s)", addr, cfg.AppBase)

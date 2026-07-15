@@ -3,6 +3,7 @@ package http
 import (
 	"context"
 	"crypto/rand"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,6 +15,7 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+	"trendcortex/api/internal/blobstore"
 	"trendcortex/api/internal/renderer"
 	"trendcortex/api/internal/storage"
 )
@@ -45,20 +47,24 @@ type clipStudioRenderResponse struct {
 }
 
 type clipStudioSourceMetadata struct {
-	SourceID      string                      `json:"source_id"`
-	Kind          string                      `json:"kind"`
-	OriginalName  string                      `json:"original_name,omitempty"`
-	URL           string                      `json:"url,omitempty"`
-	FilePath      string                      `json:"file_path,omitempty"`
-	ContentType   string                      `json:"content_type,omitempty"`
-	SizeBytes     int64                       `json:"size_bytes,omitempty"`
-	SourceModel   string                      `json:"source_model,omitempty"`
-	Rights        renderer.ClipRightsMetadata `json:"rights"`
-	Status        string                      `json:"status"`
-	Message       string                      `json:"message,omitempty"`
-	CreatedAt     time.Time                   `json:"created_at"`
-	DirectVideo   bool                        `json:"direct_video"`
-	SupportedType bool                        `json:"supported_type"`
+	SourceID        string                      `json:"source_id"`
+	Kind            string                      `json:"kind"`
+	OriginalName    string                      `json:"original_name,omitempty"`
+	URL             string                      `json:"url,omitempty"`
+	FilePath        string                      `json:"file_path,omitempty"`
+	StorageProvider string                      `json:"-"`
+	StorageKey      string                      `json:"-"`
+	StorageETag     string                      `json:"-"`
+	StorageSHA256   string                      `json:"-"`
+	ContentType     string                      `json:"content_type,omitempty"`
+	SizeBytes       int64                       `json:"size_bytes,omitempty"`
+	SourceModel     string                      `json:"source_model,omitempty"`
+	Rights          renderer.ClipRightsMetadata `json:"rights"`
+	Status          string                      `json:"status"`
+	Message         string                      `json:"message,omitempty"`
+	CreatedAt       time.Time                   `json:"created_at"`
+	DirectVideo     bool                        `json:"direct_video"`
+	SupportedType   bool                        `json:"supported_type"`
 }
 
 type clipStudioSourceRequest struct {
@@ -253,19 +259,28 @@ func (s *Server) handleRenderClipStudio(w http.ResponseWriter, r *http.Request) 
 		jsonError(w, "workspace lookup failed: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	if strings.TrimSpace(req.SourceVideoPath) == "" && strings.TrimSpace(req.SourceID) != "" {
+	if strings.TrimSpace(req.SourceID) != "" {
 		meta, err := s.readClipStudioSource(r.Context(), workspaceID, req.SourceID)
 		if err != nil {
 			jsonError(w, "clip studio source not found: "+err.Error(), http.StatusBadRequest)
 			return
 		}
-		req.SourceVideoPath = meta.FilePath
+		path, cleanup, err := s.materializeClipStudioSource(r.Context(), workspaceID, meta)
+		if err != nil {
+			jsonError(w, "source media unavailable", http.StatusGone)
+			return
+		}
+		defer cleanup()
+		req.SourceVideoPath = path
 		if req.Rights.SourceURL == "" {
 			req.Rights = meta.Rights
 		}
 		if req.SourceModel == "" {
 			req.SourceModel = meta.SourceModel
 		}
+	} else if strings.TrimSpace(req.SourceVideoPath) != "" && s.cfg.AppEnv == "production" {
+		jsonError(w, "source_id is required for rendering", http.StatusBadRequest)
+		return
 	}
 	clipID := "clip-" + time.Now().UTC().Format("20060102-150405")
 	input := renderer.ClipInput{
@@ -323,6 +338,15 @@ func (s *Server) handleRenderClipStudio(w http.ResponseWriter, r *http.Request) 
 		jsonError(w, "clip studio export failed: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
+	objectKey, err := clipStudioOutputObjectKey(workspaceID, "manual-renders", clipID, filepath.Base(zipPath))
+	if err != nil {
+		jsonError(w, "clip studio export key failed", http.StatusInternalServerError)
+		return
+	}
+	if _, err := s.storeMediaFile(r.Context(), workspaceID, objectKey, zipPath, "application/zip", filepath.Base(zipPath)); err != nil {
+		jsonError(w, "clip studio export storage failed: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
 
 	jsonOK(w, clipStudioRenderResponse{
 		Success:       true,
@@ -332,8 +356,6 @@ func (s *Server) handleRenderClipStudio(w http.ResponseWriter, r *http.Request) 
 		ZipFilename:   filepath.Base(zipPath),
 		DownloadURL:   "/api/clip-studio/download/" + filepath.Base(zipPath),
 		IncludedFiles: included,
-		VideoPath:     result.VideoPath,
-		ThumbnailPath: result.ThumbnailPath,
 	})
 }
 
@@ -371,21 +393,39 @@ func (s *Server) handleUploadClipStudioSource(w http.ResponseWriter, r *http.Req
 		jsonError(w, "store upload failed: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
+	objectKey, err := clipStudioSourceObjectKey(workspaceID, sourceID, ext)
+	if err != nil {
+		jsonError(w, "create source object key failed", http.StatusInternalServerError)
+		return
+	}
+	contentType := normalizeMediaType(header.Header.Get("Content-Type"))
+	if contentType == "" {
+		contentType = "video/mp4"
+	}
+	objectInfo, err := s.storeMediaFile(r.Context(), workspaceID, objectKey, dstPath, contentType, header.Filename)
+	if err != nil {
+		jsonError(w, "store upload in media storage failed: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
 
 	meta := clipStudioSourceMetadata{
-		SourceID:      sourceID,
-		Kind:          "upload",
-		OriginalName:  header.Filename,
-		FilePath:      dstPath,
-		ContentType:   header.Header.Get("Content-Type"),
-		SizeBytes:     size,
-		SourceModel:   renderer.ClipSourceUserUpload,
-		Rights:        renderer.ClipRightsMetadata{UserConfirmedRights: false, PlatformSource: "upload"},
-		Status:        "ready",
-		Message:       "Upload ready for clip generation.",
-		CreatedAt:     time.Now().UTC(),
-		DirectVideo:   true,
-		SupportedType: true,
+		SourceID:        sourceID,
+		Kind:            "upload",
+		OriginalName:    header.Filename,
+		FilePath:        dstPath,
+		StorageProvider: objectInfo.Provider,
+		StorageKey:      objectInfo.Key,
+		StorageETag:     objectInfo.ETag,
+		StorageSHA256:   objectInfo.SHA256,
+		ContentType:     contentType,
+		SizeBytes:       size,
+		SourceModel:     renderer.ClipSourceUserUpload,
+		Rights:          renderer.ClipRightsMetadata{UserConfirmedRights: false, PlatformSource: "upload"},
+		Status:          "ready",
+		Message:         "Upload ready for clip generation.",
+		CreatedAt:       time.Now().UTC(),
+		DirectVideo:     true,
+		SupportedType:   true,
 	}
 	if err := s.writeClipStudioSource(workspaceID, meta); err != nil {
 		jsonError(w, "store source metadata failed: "+err.Error(), http.StatusInternalServerError)
@@ -406,6 +446,10 @@ func (s *Server) handleUploadClipStudioSource(w http.ResponseWriter, r *http.Req
 			DisplayName:      safeOutputDisplayName(header.Filename, "Uploaded clip"),
 			MimeType:         firstNonEmpty(meta.ContentType, "video/mp4"),
 			FileSizeBytes:    &size,
+			StorageProvider:  meta.StorageProvider,
+			StorageKey:       meta.StorageKey,
+			StorageETag:      meta.StorageETag,
+			StorageSHA256:    meta.StorageSHA256,
 			StorageReference: dstPath,
 			Retryable:        false,
 		})
@@ -503,7 +547,21 @@ func (s *Server) handleCreateClipStudioSource(w http.ResponseWriter, r *http.Req
 			jsonError(w, "download direct video failed: "+err.Error(), http.StatusBadGateway)
 			return
 		}
+		objectKey, err := clipStudioSourceObjectKey(workspaceID, sourceID, ext)
+		if err != nil {
+			jsonError(w, "create source object key failed", http.StatusInternalServerError)
+			return
+		}
+		objectInfo, err := s.storeMediaFile(r.Context(), workspaceID, objectKey, dstPath, contentType, filepath.Base(parsed.Path))
+		if err != nil {
+			jsonError(w, "store source in media storage failed: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
 		meta.FilePath = dstPath
+		meta.StorageProvider = objectInfo.Provider
+		meta.StorageKey = objectInfo.Key
+		meta.StorageETag = objectInfo.ETag
+		meta.StorageSHA256 = objectInfo.SHA256
 		meta.SizeBytes = size
 		meta.ContentType = contentType
 		meta.Status = "ready"
@@ -574,6 +632,10 @@ func (s *Server) handleImportClipStudioURL(w http.ResponseWriter, r *http.Reques
 			MimeType:         mimeType,
 			FileSizeBytes:    size,
 			StorageReference: storageReference,
+			StorageProvider:  source.StorageProvider,
+			StorageKey:       source.StorageKey,
+			StorageETag:      source.StorageETag,
+			StorageSHA256:    source.StorageSHA256,
 			FailureCategory:  failureCategory,
 			FailureMessage:   failureMessage,
 			Retryable:        retryable,
@@ -664,7 +726,7 @@ func (s *Server) performClipStudioGeneration(ctx context.Context, workspaceID, p
 			outputID = *existingOutputID
 		}
 	}
-	if source.FilePath == "" || source.Status != "ready" {
+	if (source.FilePath == "" && source.StorageKey == "") || source.Status != "ready" {
 		response := clipStudioGenerateResponse{
 			Success:            false,
 			RenderStatus:       "unsupported_source",
@@ -688,13 +750,18 @@ func (s *Server) performClipStudioGeneration(ctx context.Context, workspaceID, p
 		}
 		return response, nil
 	}
+	sourcePath, cleanupSource, err := s.materializeClipStudioSource(ctx, workspaceID, source)
+	if err != nil {
+		return clipStudioGenerateResponse{}, fmt.Errorf("source media unavailable: %w", err)
+	}
+	defer cleanupSource()
 
 	rights := source.Rights
 	rights.UserConfirmedRights = true
 	applyAdvancedRights(&rights, req.Advanced)
 	clipLengthSeconds := clipLengthToSeconds(req.ClipLength)
 	clipCount := normalizeClipCount(req.ClipCount)
-	duration := renderer.ProbeDuration(ctx, s.cfg.FFprobePath, source.FilePath)
+	duration := renderer.ProbeDuration(ctx, s.cfg.FFprobePath, sourcePath)
 	ranges := evenlySpacedClipRanges(duration, clipLengthSeconds, clipCount)
 	jobs := make([]clipStudioGeneratedJob, 0, len(ranges))
 	generated := make([]storage.ClipStudioGeneratedClip, 0, len(ranges))
@@ -705,7 +772,7 @@ func (s *Server) performClipStudioGeneration(ctx context.Context, workspaceID, p
 			WorkspaceID:     workspaceID,
 			ClipID:          clipID,
 			SourceModel:     firstNonEmpty(req.Advanced.SourceModel, source.SourceModel, renderer.ClipSourceUserUpload),
-			SourceVideoPath: source.FilePath,
+			SourceVideoPath: sourcePath,
 			Rights:          rights,
 			Branding:        req.Branding,
 			ManualRange:     manualRange,
@@ -720,12 +787,10 @@ func (s *Server) performClipStudioGeneration(ctx context.Context, workspaceID, p
 			FFprobePath: s.cfg.FFprobePath,
 		}, input)
 		jobs = append(jobs, clipStudioGeneratedJob{
-			ClipID:        clipID,
-			RenderStatus:  result.Status,
-			Notes:         result.Notes,
-			ManualRange:   manualRange,
-			VideoPath:     result.VideoPath,
-			ThumbnailPath: result.ThumbnailPath,
+			ClipID:       clipID,
+			RenderStatus: result.Status,
+			Notes:        result.Notes,
+			ManualRange:  manualRange,
 		})
 		if result.Status != renderer.StatusCompleted {
 			overallStatus = result.Status
@@ -827,6 +892,28 @@ func (s *Server) performClipStudioGeneration(ctx context.Context, workspaceID, p
 			failureMessage = "One or more clips failed to render."
 			retryable = true
 		}
+		objectKey, keyErr := clipStudioOutputObjectKey(workspaceID, "outputs", outputID, filepath.Base(zipPath))
+		var objectInfo blobstore.ObjectInfo
+		if keyErr == nil {
+			objectInfo, keyErr = s.storeMediaFile(ctx, workspaceID, objectKey, zipPath, "application/zip", filepath.Base(zipPath))
+		}
+		if keyErr != nil {
+			updated, _ := s.updateContentProjectOutput(ctx, projectID, outputID, contentProjectOutputMutation{
+				OutputScope:     outputScopeFromRequest(req.OutputScope, optionalSceneID(req.SceneID)),
+				OutputType:      projectOutputTypeGenerated,
+				Status:          projectOutputStatusFailed,
+				DisplayName:     "Generated clip package",
+				MimeType:        "application/zip",
+				FailureCategory: "storage_upload_failed",
+				FailureMessage:  "Generated media could not be stored durably.",
+				Retryable:       true,
+			})
+			response.ProjectOutput = &updated.contentProjectOutput
+			response.Success = false
+			response.RenderStatus = renderer.StatusFailed
+			response.Notes = "Generated media could not be stored durably."
+			return response, nil
+		}
 		updated, _ := s.updateContentProjectOutput(ctx, projectID, outputID, contentProjectOutputMutation{
 			OutputScope:      outputScopeFromRequest(req.OutputScope, optionalSceneID(req.SceneID)),
 			OutputType:       projectOutputTypeGenerated,
@@ -835,6 +922,10 @@ func (s *Server) performClipStudioGeneration(ctx context.Context, workspaceID, p
 			MimeType:         "application/zip",
 			FileSizeBytes:    size,
 			StorageReference: zipPath,
+			StorageProvider:  objectInfo.Provider,
+			StorageKey:       objectInfo.Key,
+			StorageETag:      objectInfo.ETag,
+			StorageSHA256:    objectInfo.SHA256,
 			FailureCategory:  failureCategory,
 			FailureMessage:   failureMessage,
 			Retryable:        retryable,
@@ -1205,7 +1296,19 @@ func (s *Server) createClipStudioSourceFromURL(ctx context.Context, workspaceID 
 	if err != nil {
 		return clipStudioSourceMetadata{}, fmt.Errorf("download direct video failed: %w", err)
 	}
+	objectKey, err := clipStudioSourceObjectKey(workspaceID, sourceID, ext)
+	if err != nil {
+		return clipStudioSourceMetadata{}, fmt.Errorf("create source object key failed: %w", err)
+	}
+	objectInfo, err := s.storeMediaFile(ctx, workspaceID, objectKey, dstPath, contentType, filepath.Base(parsed.Path))
+	if err != nil {
+		return clipStudioSourceMetadata{}, fmt.Errorf("store source in media storage failed: %w", err)
+	}
 	meta.FilePath = dstPath
+	meta.StorageProvider = objectInfo.Provider
+	meta.StorageKey = objectInfo.Key
+	meta.StorageETag = objectInfo.ETag
+	meta.StorageSHA256 = objectInfo.SHA256
 	meta.SizeBytes = size
 	meta.ContentType = contentType
 	meta.SourceModel = renderer.ClipSourceUserUpload
@@ -1221,7 +1324,104 @@ func (s *Server) clipStudioSourceDir(workspaceID, sourceID string) string {
 	return filepath.Join(s.cfg.MediaOutputDir, workspaceID, "clip-studio-sources", filepath.Base(sourceID))
 }
 
+func clipStudioSourceObjectKey(workspaceID, sourceID, ext string) (string, error) {
+	if ext == "" {
+		ext = ".mp4"
+	}
+	return blobstore.JoinKey("workspaces", blobstore.SafeSegment(workspaceID, "workspace"), "clip-studio", "sources", blobstore.SafeSegment(sourceID, "source"), "source"+ext)
+}
+
+func clipStudioOutputObjectKey(workspaceID, kind, id, filename string) (string, error) {
+	return blobstore.JoinKey("workspaces", blobstore.SafeSegment(workspaceID, "workspace"), "clip-studio", kind, blobstore.SafeSegment(id, "output"), blobstore.SafeSegment(filename, "package.zip"))
+}
+
+func (s *Server) storeMediaFile(ctx context.Context, workspaceID, key, path, contentType, displayName string) (blobstore.ObjectInfo, error) {
+	store, err := s.ensureMediaStore()
+	if err != nil {
+		return blobstore.ObjectInfo{}, err
+	}
+	info, err := store.PutFile(ctx, key, path, blobstore.PutOptions{
+		ContentType:        blobstore.DetectContentType(path, contentType),
+		ContentDisposition: `attachment; filename="` + safeDownloadFilename(displayName, contentType) + `"`,
+		OriginalFilename:   displayName,
+	})
+	if err != nil {
+		return blobstore.ObjectInfo{}, err
+	}
+	return info, nil
+}
+
+func (s *Server) materializeClipStudioSource(ctx context.Context, workspaceID string, meta clipStudioSourceMetadata) (string, func(), error) {
+	_ = workspaceID
+	if meta.StorageKey == "" {
+		if meta.FilePath == "" {
+			return "", nil, errors.New("source media is unavailable")
+		}
+		return meta.FilePath, func() {}, nil
+	}
+	store, err := s.ensureMediaStore()
+	if err != nil {
+		return "", nil, err
+	}
+	dir, err := os.MkdirTemp("", "trendcortex-source-*")
+	if err != nil {
+		return "", nil, err
+	}
+	cleanupDir := func() { _ = os.RemoveAll(dir) }
+	ext := filepath.Ext(meta.OriginalName)
+	if ext == "" && meta.URL != "" {
+		ext = filepath.Ext(meta.URL)
+	}
+	if ext == "" {
+		ext = ".mp4"
+	}
+	path, cleanupFile, _, err := store.Materialize(ctx, meta.StorageKey, dir, "source"+ext)
+	if err != nil {
+		cleanupDir()
+		return "", nil, err
+	}
+	return path, func() {
+		if cleanupFile != nil {
+			cleanupFile()
+		}
+		cleanupDir()
+	}, nil
+}
+
 func (s *Server) writeClipStudioSource(workspaceID string, meta clipStudioSourceMetadata) error {
+	if s.db != nil {
+		rights, _ := json.Marshal(meta.Rights)
+		_, err := s.db.Exec(`
+			INSERT INTO clip_studio_sources (
+				id, workspace_id, source_kind, original_filename, original_url, storage_provider, storage_key,
+				storage_etag, storage_checksum_sha256, content_type, size_bytes, source_model, rights_metadata,
+				status, status_message, direct_video, supported_type, created_at, updated_at
+			)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,NOW())
+			ON CONFLICT (id) DO UPDATE SET
+				original_filename = EXCLUDED.original_filename,
+				original_url = EXCLUDED.original_url,
+				storage_provider = EXCLUDED.storage_provider,
+				storage_key = EXCLUDED.storage_key,
+				storage_etag = EXCLUDED.storage_etag,
+				storage_checksum_sha256 = EXCLUDED.storage_checksum_sha256,
+				content_type = EXCLUDED.content_type,
+				size_bytes = EXCLUDED.size_bytes,
+				source_model = EXCLUDED.source_model,
+				rights_metadata = EXCLUDED.rights_metadata,
+				status = EXCLUDED.status,
+				status_message = EXCLUDED.status_message,
+				direct_video = EXCLUDED.direct_video,
+				supported_type = EXCLUDED.supported_type,
+				updated_at = NOW()`,
+			meta.SourceID, workspaceID, meta.Kind, nullableString(meta.OriginalName), nullableString(meta.URL),
+			nullableString(meta.StorageProvider), nullableString(meta.StorageKey), nullableString(meta.StorageETag),
+			nullableString(meta.StorageSHA256), nullableString(meta.ContentType), nullableInt64(meta.SizeBytes),
+			nullableString(meta.SourceModel), rights, meta.Status, nullableString(meta.Message), meta.DirectVideo, meta.SupportedType, meta.CreatedAt)
+		if err != nil {
+			return err
+		}
+	}
 	dir := s.clipStudioSourceDir(workspaceID, meta.SourceID)
 	if err := os.MkdirAll(dir, 0750); err != nil {
 		return err
@@ -1234,7 +1434,37 @@ func (s *Server) writeClipStudioSource(workspaceID string, meta clipStudioSource
 }
 
 func (s *Server) readClipStudioSource(ctx context.Context, workspaceID, sourceID string) (clipStudioSourceMetadata, error) {
-	_ = ctx
+	if s.db != nil {
+		var meta clipStudioSourceMetadata
+		var rights []byte
+		var originalName, originalURL, storageProvider, storageKey, storageETag, storageSHA, contentType, sourceModel, message sql.NullString
+		var size sql.NullInt64
+		var createdAt, updatedAt time.Time
+		err := s.db.QueryRowContext(ctx, `
+			SELECT id, source_kind, original_filename, original_url, storage_provider, storage_key, storage_etag,
+				storage_checksum_sha256, content_type, size_bytes, source_model, rights_metadata, status,
+				status_message, direct_video, supported_type, created_at, updated_at
+			FROM clip_studio_sources
+			WHERE workspace_id = $1 AND id = $2`, workspaceID, sourceID).
+			Scan(&meta.SourceID, &meta.Kind, &originalName, &originalURL, &storageProvider, &storageKey, &storageETag,
+				&storageSHA, &contentType, &size, &sourceModel, &rights, &meta.Status, &message, &meta.DirectVideo, &meta.SupportedType, &createdAt, &updatedAt)
+		if err == nil {
+			meta.OriginalName = originalName.String
+			meta.URL = originalURL.String
+			meta.StorageProvider = storageProvider.String
+			meta.StorageKey = storageKey.String
+			meta.StorageETag = storageETag.String
+			meta.StorageSHA256 = storageSHA.String
+			meta.ContentType = contentType.String
+			meta.SizeBytes = size.Int64
+			meta.SourceModel = sourceModel.String
+			meta.Message = message.String
+			meta.CreatedAt = createdAt
+			_ = updatedAt
+			_ = json.Unmarshal(rights, &meta.Rights)
+			return meta, nil
+		}
+	}
 	path := filepath.Join(s.clipStudioSourceDir(workspaceID, sourceID), "source.json")
 	f, err := os.Open(path)
 	if err != nil {
