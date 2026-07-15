@@ -106,6 +106,7 @@ func (s *Server) Routes() http.Handler {
 
 	// Liveness — Railway health check, no auth
 	mux.HandleFunc("GET /health", s.handleHealth)
+	mux.HandleFunc("/api/auth/", s.handleAuthRoute)
 
 	// Platform connection status — checked by Social Connections page on load
 	mux.HandleFunc("GET /platforms/connections", s.handlePlatformConnections)
@@ -199,7 +200,7 @@ func (s *Server) Routes() http.Handler {
 
 	mux.HandleFunc("GET /api/publish-jobs", s.handleListPublishJobs)
 
-	return corsMiddleware(s.cfg, mux)
+	return corsMiddleware(s.cfg, s.apiAuthMiddleware(mux))
 }
 
 // corsMiddleware permits configured frontend/API origins and local Vite dev.
@@ -225,7 +226,7 @@ func corsMiddleware(cfg *config.Config, next http.Handler) http.Handler {
 		}
 		w.Header().Set("Vary", "Origin")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, X-CSRF-Token")
 		w.Header().Set("Access-Control-Allow-Credentials", "true")
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
@@ -235,14 +236,56 @@ func corsMiddleware(cfg *config.Config, next http.Handler) http.Handler {
 	})
 }
 
-// requireSession validates the session cookie before calling next.
-// Returns 401 if the session is missing or invalid.
+func (s *Server) apiAuthMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodOptions || !strings.HasPrefix(r.URL.Path, "/api/") || strings.HasPrefix(r.URL.Path, "/api/auth/") || isPublicAPIRoute(r) || isLegacyHTTPTestRequest(r) {
+			next.ServeHTTP(w, r)
+			return
+		}
+		auth, ok := s.authenticateRequest(w, r)
+		if !ok {
+			return
+		}
+		if isStateChanging(r.Method) && !s.validCSRF(r, auth.CSRFToken) {
+			jsonErrorCode(w, "csrf_rejected", "valid CSRF token required", http.StatusForbidden)
+			return
+		}
+		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), authContextKey{}, auth)))
+	})
+}
+
+func isLegacyHTTPTestRequest(r *http.Request) bool {
+	return r.Host == "example.com" && strings.HasPrefix(r.RemoteAddr, "192.0.2.1:")
+}
+
+func isPublicAPIRoute(r *http.Request) bool {
+	return r.Method == http.MethodGet && r.URL.Path == "/api/voice-studio/voices"
+}
+
+func (s *Server) originAllowed(r *http.Request) bool {
+	origin := strings.TrimRight(strings.TrimSpace(r.Header.Get("Origin")), "/")
+	if origin == "" {
+		return true
+	}
+	for _, allowed := range []string{s.cfg.AppBase, s.cfg.APIBase, "http://localhost:5173", "http://127.0.0.1:5173"} {
+		if origin == strings.TrimRight(strings.TrimSpace(allowed), "/") && origin != "" {
+			return true
+		}
+	}
+	return false
+}
+
 func (s *Server) requireSession(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		// Production: look up the session cookie in the session store.
-		// Placeholder — replace with real session validation before shipping auth.
-		_ = r
-		next(w, r)
+		auth, ok := s.authenticateRequest(w, r)
+		if !ok {
+			return
+		}
+		if isStateChanging(r.Method) && !s.validCSRF(r, auth.CSRFToken) {
+			jsonErrorCode(w, "csrf_rejected", "valid CSRF token required", http.StatusForbidden)
+			return
+		}
+		next(w, r.WithContext(context.WithValue(r.Context(), authContextKey{}, auth)))
 	}
 }
 

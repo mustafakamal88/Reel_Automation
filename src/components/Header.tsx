@@ -24,9 +24,11 @@ const VIEW_META: Record<View, { title: string; sub: string }> = {
 interface Props {
   view: View;
   onMenuClick?: () => void;
+  userEmail?: string;
+  onLogout?: () => void;
 }
 
-export function Header({ view, onMenuClick }: Props) {
+export function Header({ view, onMenuClick, userEmail, onLogout }: Props) {
   const { title, sub } = VIEW_META[view];
 
   return (
@@ -42,6 +44,12 @@ export function Header({ view, onMenuClick }: Props) {
           <div className="header-title">{title}</div>
           <div className="header-subtitle">{sub}</div>
         </div>
+        {userEmail && (
+          <div className="header-auth">
+            <span>{userEmail}</span>
+            <button type="button" onClick={onLogout}>Sign out</button>
+          </div>
+        )}
       </div>
     </header>
   );

@@ -44,11 +44,18 @@ export function apiUrl(path: string): string {
 }
 
 export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
+  const headers = new Headers(init?.headers);
+  if (!headers.has('Content-Type') && !(init?.body instanceof FormData)) headers.set('Content-Type', 'application/json');
+  const method = (init?.method || 'GET').toUpperCase();
+  if (['POST', 'PATCH', 'PUT', 'DELETE'].includes(method) && !headers.has('X-CSRF-Token')) {
+    const csrf = readCookie('tc_csrf');
+    if (csrf) headers.set('X-CSRF-Token', csrf);
+  }
   let res: Response;
   try {
     res = await fetch(apiUrl(path), {
       credentials: 'include',
-      headers: { 'Content-Type': 'application/json', ...init?.headers },
+      headers,
       ...init,
     });
   } catch {
@@ -70,6 +77,38 @@ export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> 
   }
 
   return res.json() as Promise<T>;
+}
+
+function readCookie(name: string): string {
+  return document.cookie
+    .split(';')
+    .map(part => part.trim())
+    .find(part => part.startsWith(`${name}=`))
+    ?.slice(name.length + 1) || '';
+}
+
+function csrfHeaders(): HeadersInit {
+  const csrf = readCookie('tc_csrf');
+  return csrf ? { 'X-CSRF-Token': csrf } : {};
+}
+
+export interface AuthUser {
+  user_id: string;
+  email: string;
+  workspace_id: string;
+  role: string;
+}
+
+export async function getCurrentUser(): Promise<{ user: AuthUser }> {
+  return apiFetch('/api/auth/me');
+}
+
+export async function login(email: string, password: string): Promise<{ user: AuthUser }> {
+  return apiFetch('/api/auth/login', { method: 'POST', body: JSON.stringify({ email, password }) });
+}
+
+export async function logout(): Promise<{ ok: boolean }> {
+  return apiFetch('/api/auth/logout', { method: 'POST' });
 }
 
 // ── Health ───────────────────────────────────────────────────────────────────
@@ -254,7 +293,7 @@ export async function uploadVoiceover(file: File, projectID?: string): Promise<{
   if (projectID) body.set('project_id', projectID);
   let res: Response;
   try {
-    res = await fetch(apiUrl('/api/voice-studio/upload'), { method: 'POST', credentials: 'include', body });
+    res = await fetch(apiUrl('/api/voice-studio/upload'), { method: 'POST', credentials: 'include', headers: csrfHeaders(), body });
   } catch {
     throw new ApiError(0, 'network_error', 'Cannot reach the Go backend.');
   }
@@ -397,7 +436,7 @@ export async function uploadMovieMedia(file: File, projectID?: string): Promise<
   body.set('file', file);
   let res: Response;
   try {
-    res = await fetch(apiUrl(`/api/movie-studio/uploads${q}`), { method: 'POST', credentials: 'include', body });
+    res = await fetch(apiUrl(`/api/movie-studio/uploads${q}`), { method: 'POST', credentials: 'include', headers: csrfHeaders(), body });
   } catch {
     throw new ApiError(0, 'network_error', 'Cannot reach the Go backend.');
   }
@@ -2243,6 +2282,7 @@ export async function uploadClipStudioSource(file: File, projectID?: string, sce
     res = await fetch(apiUrl('/api/clip-studio/upload'), {
       method: 'POST',
       credentials: 'include',
+      headers: csrfHeaders(),
       body: form,
     });
   } catch {

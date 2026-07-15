@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useRef, useState, useCallback, type FormEvent } from 'react';
 import type { View } from './types';
 import { storage } from './lib/storage';
 import { MobileNavDrawer, Sidebar } from './components/Sidebar';
@@ -15,7 +15,7 @@ import { SocialConnectionsPage } from './pages/SocialConnections';
 import { SettingsPage } from './pages/Settings';
 import { DeveloperSystemStatusPage } from './pages/DeveloperSystemStatus';
 import { ComingSoonPage } from './pages/ComingSoon';
-import type { ReelContentPackage, TrendCandidate } from './lib/api/client';
+import { ApiError, getCurrentUser, login, logout, type AuthUser, type ReelContentPackage, type TrendCandidate } from './lib/api/client';
 
 const VIEW_ROUTES: Record<View, string> = {
   dashboard: '/',
@@ -81,6 +81,9 @@ export default function App() {
   const [settings, setSettings] = useState(() => storage.getSettings());
   const [latestScript, setLatestScript] = useState(() => storage.getScriptPackage());
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [authUser, setAuthUser] = useState<AuthUser | null>(null);
+  const [authLoading, setAuthLoading] = useState(true);
+  const [authError, setAuthError] = useState('');
 
   useEffect(() => {
     const handlePopState = () => {
@@ -91,6 +94,18 @@ export default function App() {
     };
     window.addEventListener('popstate', handlePopState);
     return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    getCurrentUser()
+      .then(resp => { if (!cancelled) setAuthUser(resp.user); })
+      .catch(err => {
+        if (cancelled) return;
+        if (err instanceof ApiError && err.status !== 401) setAuthError(err.message);
+      })
+      .finally(() => { if (!cancelled) setAuthLoading(false); });
+    return () => { cancelled = true; };
   }, []);
 
   useEffect(() => {
@@ -132,6 +147,25 @@ export default function App() {
     }));
   }, []);
 
+  const handleLogin = useCallback(async (email: string, password: string) => {
+    setAuthError('');
+    const resp = await login(email, password);
+    setAuthUser(resp.user);
+  }, []);
+
+  const handleLogout = useCallback(async () => {
+    await logout().catch(() => undefined);
+    setAuthUser(null);
+  }, []);
+
+  if (authLoading) {
+    return <div className="auth-screen"><div className="auth-panel"><div className="page-eyebrow">TrendCortex</div><h1>Checking session</h1></div></div>;
+  }
+
+  if (!authUser) {
+    return <LoginScreen error={authError} onLogin={handleLogin} />;
+  }
+
   return (
     <div className="app-shell">
       <Sidebar
@@ -143,6 +177,8 @@ export default function App() {
         <Header
           view={view}
           onMenuClick={() => setMobileMenuOpen(true)}
+          userEmail={authUser.email}
+          onLogout={handleLogout}
         />
 
         <div className="scroll-area" ref={scrollAreaRef}>
@@ -210,6 +246,39 @@ export default function App() {
         open={mobileMenuOpen}
         onClose={() => setMobileMenuOpen(false)}
       />
+    </div>
+  );
+}
+
+function LoginScreen({ error, onLogin }: { error: string; onLogin: (email: string, password: string) => Promise<void> }) {
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [pending, setPending] = useState(false);
+  const [localError, setLocalError] = useState(error);
+
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    setPending(true);
+    setLocalError('');
+    try {
+      await onLogin(email, password);
+    } catch (err) {
+      setLocalError(err instanceof Error ? err.message : 'Login failed.');
+    } finally {
+      setPending(false);
+    }
+  }
+
+  return (
+    <div className="auth-screen">
+      <form className="auth-panel" onSubmit={submit}>
+        <div className="page-eyebrow">TrendCortex</div>
+        <h1>Sign in</h1>
+        <label><span>Email</span><input type="email" value={email} onChange={event => setEmail(event.target.value)} autoComplete="email" required /></label>
+        <label><span>Password</span><input type="password" value={password} onChange={event => setPassword(event.target.value)} autoComplete="current-password" required /></label>
+        {localError && <div className="confirmation-error" role="alert">{localError}</div>}
+        <button className="generate-btn" type="submit" disabled={pending}>{pending ? 'Signing in...' : 'Sign in'}</button>
+      </form>
     </div>
   );
 }

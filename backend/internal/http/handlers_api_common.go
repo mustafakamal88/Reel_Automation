@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"strings"
 )
 
 // defaultWorkspaceID returns the single workspace this Phase 4A pipeline
@@ -15,6 +16,9 @@ import (
 // TODO(auth): once login/session handling lands, derive workspace_id from
 // the authenticated session instead of a single shared default workspace.
 func (s *Server) defaultWorkspaceID(ctx context.Context) (string, error) {
+	if auth, ok := currentAuth(ctx); ok && strings.TrimSpace(auth.WorkspaceID) != "" {
+		return auth.WorkspaceID, nil
+	}
 	if s.db == nil {
 		return "default-workspace", nil
 	}

@@ -66,7 +66,17 @@ export function MovieStudioPage({ onNavigate }: MovieStudioPageProps) {
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [previewPlaying, setPreviewPlaying] = useState(false);
+  const [playhead, setPlayhead] = useState(0);
+  const [volume, setVolume] = useState(0.8);
+  const [narrationMuted, setNarrationMuted] = useState(false);
+  const [musicMuted, setMusicMuted] = useState(false);
+  const [safeGuides, setSafeGuides] = useState(true);
+  const [viewerMode, setViewerMode] = useState<'preview' | 'final'>('preview');
+  const [saveState, setSaveState] = useState<'saved' | 'saving' | 'unsaved' | 'failed'>('saved');
+  const [undoStack, setUndoStack] = useState<MovieEdit[]>([]);
+  const [redoStack, setRedoStack] = useState<MovieEdit[]>([]);
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const finalVideoRef = useRef<HTMLVideoElement | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -116,13 +126,39 @@ export function MovieStudioPage({ onNavigate }: MovieStudioPageProps) {
   }, [edit, renderJob]);
 
   const selectedProject = projects.find(project => project.id === projectID);
-  const selectedScene = edit?.scenes.find(scene => scene.id === selectedSceneID) || edit?.scenes[0];
-  const selectedVisual = assets.find(asset => asset.id === selectedScene?.visual_asset_id);
+  const playbackScene = useMemo(() => sceneAtTime(edit?.scenes || [], playhead), [edit, playhead]);
+  const selectedScene = edit?.scenes.find(scene => scene.id === selectedSceneID) || playbackScene || edit?.scenes[0];
+  const selectedVisual = assets.find(asset => asset.id === (viewerMode === 'preview' ? (playbackScene || selectedScene)?.visual_asset_id : selectedScene?.visual_asset_id));
   const completedRender = edit?.renders?.find(render => render.status === 'completed' && render.output_asset_id);
   const totalDuration = useMemo(() => edit?.scenes.reduce((sum, scene) => sum + scene.duration_seconds, 0) || 0, [edit]);
   const missingVisuals = edit?.scenes.filter(scene => !scene.visual_asset_id).length || 0;
   const visualAssets = assets.filter(asset => asset.asset_type.includes('video') || asset.mime_type?.startsWith('image/') || asset.asset_type === 'thumbnail');
   const audioAssets = assets.filter(asset => asset.asset_type === 'audio' || asset.asset_type === 'voiceover');
+  const finalAsset = assets.find(asset => asset.id === completedRender?.output_asset_id);
+  const preflight = useMemo(() => buildPreflight(edit, assets), [edit, assets]);
+
+  useEffect(() => {
+    if (!previewPlaying || viewerMode !== 'preview') return undefined;
+    const id = window.setInterval(() => {
+      setPlayhead(current => {
+        const next = current + 0.1;
+        if (next >= totalDuration) {
+          setPreviewPlaying(false);
+          return totalDuration;
+        }
+        return next;
+      });
+    }, 100);
+    return () => window.clearInterval(id);
+  }, [previewPlaying, totalDuration, viewerMode]);
+
+  useEffect(() => {
+    if (!edit || saveState !== 'unsaved') return undefined;
+    const id = window.setTimeout(() => {
+      void saveEdit(edit, true);
+    }, 900);
+    return () => window.clearTimeout(id);
+  }, [edit, saveState]);
 
   async function chooseProject(nextProjectID: string) {
     setProjectID(nextProjectID);
@@ -160,11 +196,12 @@ export function MovieStudioPage({ onNavigate }: MovieStudioPageProps) {
     }
   }
 
-  async function saveEdit(nextEdit = edit) {
+  async function saveEdit(nextEdit = edit, quiet = false) {
     if (!nextEdit) return;
     setSaving(true);
     setError(null);
     try {
+      setSaveState('saving');
       const saved = await updateMovieEdit(nextEdit.id, {
         name: nextEdit.name,
         quality_preset: nextEdit.quality_preset,
@@ -175,8 +212,10 @@ export function MovieStudioPage({ onNavigate }: MovieStudioPageProps) {
         scenes: nextEdit.scenes,
       });
       setEdit(saved.edit);
-      setMessage('Saved.');
+      setSaveState('saved');
+      if (!quiet) setMessage('Saved.');
     } catch (err) {
+      setSaveState('failed');
       setError(friendlyMovieError(err, 'Save failed. Your edit is still open in the browser.'));
     } finally {
       setSaving(false);
@@ -217,15 +256,47 @@ export function MovieStudioPage({ onNavigate }: MovieStudioPageProps) {
 
   function patchEdit(patch: Partial<MovieEdit>) {
     if (!edit) return;
+    remember(edit);
     setEdit({ ...edit, ...patch });
+    setSaveState('unsaved');
   }
 
   function patchScene(sceneID: string | undefined, patch: Partial<MovieScene>) {
     if (!edit || !sceneID) return;
+    remember(edit);
     setEdit({
       ...edit,
       scenes: edit.scenes.map(scene => scene.id === sceneID ? { ...scene, ...patch } : scene),
     });
+    setSaveState('unsaved');
+  }
+
+  function remember(snapshot: MovieEdit) {
+    setUndoStack(stack => [...stack.slice(-24), snapshot]);
+    setRedoStack([]);
+  }
+
+  function restore(next: MovieEdit, redoFrom?: MovieEdit) {
+    if (redoFrom) setRedoStack(stack => [...stack.slice(-24), redoFrom]);
+    setEdit(next);
+    setSelectedSceneID(next.scenes[0]?.id || '');
+    setSaveState('unsaved');
+  }
+
+  function undo() {
+    if (!edit || undoStack.length === 0) return;
+    const previous = undoStack[undoStack.length - 1];
+    setUndoStack(stack => stack.slice(0, -1));
+    restore(previous, edit);
+  }
+
+  function redo() {
+    if (!edit || redoStack.length === 0) return;
+    const next = redoStack[redoStack.length - 1];
+    setRedoStack(stack => stack.slice(0, -1));
+    remember(edit);
+    setEdit(next);
+    setSaveState('unsaved');
   }
 
   function assignAsset(assetID = selectedAssetID) {
@@ -256,6 +327,58 @@ export function MovieStudioPage({ onNavigate }: MovieStudioPageProps) {
     setSelectedSceneID(resp.edit.scenes[0]?.id || '');
   }
 
+  function moveScene(sceneID: string | undefined, direction: -1 | 1) {
+    if (!edit || !sceneID) return;
+    const idx = edit.scenes.findIndex(scene => scene.id === sceneID);
+    const target = idx + direction;
+    if (idx < 0 || target < 0 || target >= edit.scenes.length) return;
+    remember(edit);
+    const scenes = [...edit.scenes];
+    const [scene] = scenes.splice(idx, 1);
+    scenes.splice(target, 0, scene);
+    setEdit({ ...edit, scenes: recalculateScenes(scenes) });
+    setSelectedSceneID(sceneID);
+    setSaveState('unsaved');
+  }
+
+  function duplicateScene(sceneID: string | undefined) {
+    if (!edit || !sceneID) return;
+    const idx = edit.scenes.findIndex(scene => scene.id === sceneID);
+    if (idx < 0) return;
+    remember(edit);
+    const source = edit.scenes[idx];
+    const copy = { ...source, id: undefined, title: `${source.title || `Scene ${idx + 1}`} copy`, voiceover_asset_id: undefined };
+    const scenes = [...edit.scenes.slice(0, idx + 1), copy, ...edit.scenes.slice(idx + 1)];
+    setEdit({ ...edit, scenes: recalculateScenes(scenes) });
+    setSaveState('unsaved');
+  }
+
+  function deleteScene(sceneID: string | undefined) {
+    if (!edit || !sceneID || edit.scenes.length <= 1) return;
+    remember(edit);
+    const scenes = recalculateScenes(edit.scenes.filter(scene => scene.id !== sceneID));
+    setEdit({ ...edit, scenes });
+    setSelectedSceneID(scenes[0]?.id || '');
+    setSaveState('unsaved');
+  }
+
+  function splitScene() {
+    if (!edit || !selectedScene) return;
+    const sceneStart = selectedScene.start_seconds || 0;
+    const offset = playhead - sceneStart;
+    if (offset <= 0.5 || offset >= selectedScene.duration_seconds - 0.5) {
+      setError('Move the playhead inside the selected scene before splitting.');
+      return;
+    }
+    remember(edit);
+    const idx = edit.scenes.findIndex(scene => scene === selectedScene || scene.id === selectedScene.id);
+    const first = { ...selectedScene, duration_seconds: offset };
+    const second = { ...selectedScene, id: undefined, title: `${selectedScene.title || 'Scene'} continued`, duration_seconds: selectedScene.duration_seconds - offset, voiceover_asset_id: undefined };
+    const scenes = recalculateScenes([...edit.scenes.slice(0, idx), first, second, ...edit.scenes.slice(idx + 1)]);
+    setEdit({ ...edit, scenes });
+    setSaveState('unsaved');
+  }
+
   async function markActive() {
     if (!edit?.content_project_id) return;
     await setActiveMovieEdit(edit.content_project_id, edit.id);
@@ -265,6 +388,14 @@ export function MovieStudioPage({ onNavigate }: MovieStudioPageProps) {
 
   function playPreview() {
     const video = videoRef.current;
+    if (viewerMode === 'final') {
+      const finalVideo = finalVideoRef.current;
+      if (!finalVideo) return;
+      if (previewPlaying) finalVideo.pause();
+      else void finalVideo.play();
+      setPreviewPlaying(!previewPlaying);
+      return;
+    }
     if (video && selectedVisual?.preview_url && selectedVisual.mime_type?.startsWith('video/')) {
       if (previewPlaying) video.pause();
       else void video.play();
@@ -288,8 +419,11 @@ export function MovieStudioPage({ onNavigate }: MovieStudioPageProps) {
             {projects.map(project => <option key={project.id} value={project.id}>{project.title}</option>)}
           </select>
           <button className="generate-btn secondary" type="button" onClick={() => onNavigate('voiceStudio', projectID)} disabled={!projectID}>Voice</button>
+          <button className="generate-btn secondary" type="button" onClick={undo} disabled={!undoStack.length}>Undo</button>
+          <button className="generate-btn secondary" type="button" onClick={redo} disabled={!redoStack.length}>Redo</button>
+          <span className={`movie-save-state ${saveState}`}>{saveState}</span>
           <button className="generate-btn secondary" type="button" onClick={() => void saveEdit()} disabled={!edit || saving}>{saving ? 'Saving...' : 'Save'}</button>
-          <button className="generate-btn" type="button" onClick={() => void startRender()} disabled={!edit || rendering}>{rendering ? 'Rendering...' : 'Render Video'}</button>
+          <button className="generate-btn" type="button" onClick={() => void startRender()} disabled={!edit || rendering || preflight.errors.length > 0}>{rendering ? 'Rendering...' : 'Render Video'}</button>
         </div>
       </section>
 
@@ -369,32 +503,51 @@ export function MovieStudioPage({ onNavigate }: MovieStudioPageProps) {
           </aside>
 
           <main className="movie-preview-column">
+            <div className="movie-view-mode" role="tablist" aria-label="Player mode">
+              <button className={viewerMode === 'preview' ? 'active' : ''} type="button" onClick={() => setViewerMode('preview')}>Edit Preview</button>
+              <button className={viewerMode === 'final' ? 'active' : ''} type="button" onClick={() => setViewerMode('final')} disabled={!completedRender?.output_asset_id}>Final Render</button>
+            </div>
             <div className="movie-preview-shell">
               <div className="movie-preview-canvas">
-                {selectedVisual?.mime_type?.startsWith('video/') && selectedVisual.preview_url ? (
+                {viewerMode === 'final' && completedRender?.output_asset_id ? (
+                  <video ref={finalVideoRef} src={apiUrl(`/api/movie-studio/renders/${completedRender.id}/download`)} controls playsInline />
+                ) : selectedVisual?.mime_type?.startsWith('video/') && selectedVisual.preview_url ? (
                   <video ref={videoRef} src={apiUrl(selectedVisual.preview_url)} muted playsInline />
                 ) : selectedVisual?.preview_url ? (
-                  <img src={apiUrl(selectedVisual.preview_url)} alt="" />
+                  <img className={`motion-${(playbackScene || selectedScene)?.motion_preset || 'none'}`} style={{ objectFit: selectedScene?.fit_mode === 'original' ? 'contain' : 'cover', transformOrigin: `${(selectedScene?.focal_x ?? 0.5) * 100}% ${(selectedScene?.focal_y ?? 0.5) * 100}%` }} src={apiUrl(selectedVisual.preview_url)} alt="" />
                 ) : (
                   <div className="movie-preview-empty">Scene needs a visual</div>
                 )}
-                <div className="movie-safe-area" aria-hidden="true" />
+                {safeGuides && <div className="movie-safe-area" aria-hidden="true" />}
                 {edit.caption_settings.enabled !== false && <div className="movie-caption-preview">{String(selectedScene?.caption_text || selectedScene?.script_text || selectedProject?.caption || '')}</div>}
                 {Boolean(edit.branding_settings.text) && <div className="movie-brand-preview">{String(edit.branding_settings.text)}</div>}
               </div>
               <div className="movie-preview-controls">
+                <button type="button" onClick={() => setPlayhead(0)}>Restart</button>
                 <button type="button" onClick={playPreview}>{previewPlaying ? 'Pause' : 'Play'}</button>
-                <span>{formatDuration(totalDuration)} · 1080x1920 · {edit.frame_rate} fps</span>
-                <span>{missingVisuals ? `${missingVisuals} missing visuals` : 'Ready to render'}</span>
+                <button type="button" onClick={() => seekScene(edit.scenes, playhead, -1, setPlayhead, setSelectedSceneID)}>Prev</button>
+                <button type="button" onClick={() => seekScene(edit.scenes, playhead, 1, setPlayhead, setSelectedSceneID)}>Next</button>
+                <input aria-label="Timeline scrubber" type="range" min="0" max={Math.max(totalDuration, 0.1)} step="0.1" value={playhead} onChange={event => { const next = Number(event.target.value); setPlayhead(next); setSelectedSceneID(sceneAtTime(edit.scenes, next)?.id || ''); }} />
+                <span>{formatDuration(playhead)} / {formatDuration(totalDuration)} · 1080x1920 · {edit.frame_rate} fps</span>
+                <label className="movie-inline-control"><span>Vol</span><input type="range" min="0" max="1" step="0.05" value={volume} onChange={event => setVolume(Number(event.target.value))} /></label>
+                <label className="movie-check"><input type="checkbox" checked={narrationMuted} onChange={event => setNarrationMuted(event.target.checked)} /> Narration mute</label>
+                <label className="movie-check"><input type="checkbox" checked={musicMuted} onChange={event => setMusicMuted(event.target.checked)} /> Music mute</label>
+                <label className="movie-check"><input type="checkbox" checked={safeGuides} onChange={event => setSafeGuides(event.target.checked)} /> Safe area</label>
               </div>
             </div>
             <div className="movie-timeline" aria-label="Scene timeline">
               {edit.scenes.map(scene => (
-                <button key={scene.id || scene.position} type="button" className={selectedScene?.id === scene.id ? 'active' : ''} onClick={() => setSelectedSceneID(scene.id || '')}>
+                <button key={scene.id || scene.position} type="button" style={{ flexBasis: `${Math.max(86, scene.duration_seconds * 18)}px` }} className={selectedScene?.id === scene.id ? 'active' : ''} onClick={() => { setSelectedSceneID(scene.id || ''); setPlayhead(scene.start_seconds || 0); }}>
                   <span>{scene.position}</span>
+                  <small>{scene.transition_type}</small>
                   <strong>{formatDuration(scene.duration_seconds)}</strong>
                 </button>
               ))}
+              <div className="movie-playhead" style={{ left: `${totalDuration ? (playhead / totalDuration) * 100 : 0}%` }} />
+            </div>
+            <div className={`movie-preflight ${preflight.errors.length ? 'blocked' : 'ready'}`}>
+              <strong>{preflight.errors.length ? 'Preflight needs attention' : 'Ready to render'}</strong>
+              {(preflight.errors.length ? preflight.errors : preflight.warnings).slice(0, 4).map(item => <span key={item}>{item}</span>)}
             </div>
           </main>
 
@@ -405,8 +558,18 @@ export function MovieStudioPage({ onNavigate }: MovieStudioPageProps) {
             {rightTab === 'scene' && selectedScene && (
               <div className="movie-field-stack">
                 <label><span>Scene title</span><input value={selectedScene.title} onChange={event => patchScene(selectedScene.id, { title: event.target.value })} /></label>
+                <div className="movie-button-grid">
+                  <button type="button" onClick={() => moveScene(selectedScene.id, -1)}>Move left</button>
+                  <button type="button" onClick={() => moveScene(selectedScene.id, 1)}>Move right</button>
+                  <button type="button" onClick={splitScene}>Split</button>
+                  <button type="button" onClick={() => duplicateScene(selectedScene.id)}>Duplicate</button>
+                  <button type="button" onClick={() => deleteScene(selectedScene.id)}>Delete</button>
+                </div>
                 <label><span>Duration</span><input type="number" min="1" max="120" step="0.5" value={selectedScene.duration_seconds} onChange={event => patchScene(selectedScene.id, { duration_seconds: Number(event.target.value) })} /></label>
                 <label><span>Fit</span><select value={selectedScene.fit_mode} onChange={event => patchScene(selectedScene.id, { fit_mode: event.target.value as MovieScene['fit_mode'] })}>{FIT_MODES.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+                <label><span>Focal X</span><input type="range" min="0" max="1" step="0.01" value={selectedScene.focal_x ?? 0.5} onChange={event => patchScene(selectedScene.id, { focal_x: Number(event.target.value) })} /></label>
+                <label><span>Focal Y</span><input type="range" min="0" max="1" step="0.01" value={selectedScene.focal_y ?? 0.5} onChange={event => patchScene(selectedScene.id, { focal_y: Number(event.target.value) })} /></label>
+                <label><span>Zoom</span><input type="range" min="0.5" max="3" step="0.05" value={selectedScene.zoom ?? 1} onChange={event => patchScene(selectedScene.id, { zoom: Number(event.target.value) })} /></label>
                 <label><span>Motion</span><select value={selectedScene.motion_preset} onChange={event => patchScene(selectedScene.id, { motion_preset: event.target.value as MovieScene['motion_preset'] })}>{MOTIONS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
                 <label><span>Transition</span><select value={selectedScene.transition_type} onChange={event => patchScene(selectedScene.id, { transition_type: event.target.value as MovieScene['transition_type'] })}>{TRANSITIONS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
                 <label><span>Trim start</span><input type="number" min="0" step="0.1" value={selectedScene.trim_in_seconds ?? ''} onChange={event => patchScene(selectedScene.id, { trim_in_seconds: event.target.value === '' ? undefined : Number(event.target.value) })} /></label>
@@ -430,6 +593,7 @@ export function MovieStudioPage({ onNavigate }: MovieStudioPageProps) {
                 <label><span>Movie name</span><input value={edit.name} onChange={event => patchEdit({ name: event.target.value })} /></label>
                 <label><span>Quality</span><select value={edit.quality_preset} onChange={event => patchEdit({ quality_preset: event.target.value as MovieEdit['quality_preset'] })}><option value="draft">Draft</option><option value="standard">Standard</option><option value="high">High</option></select></label>
                 {renderJob && <div className={`movie-render-status ${renderJob.status}`}><strong>{renderJob.current_stage}</strong><span>{renderJob.completed_scene_count}/{renderJob.total_scene_count} scenes</span>{renderJob.failure_message && <small>{renderJob.failure_message}</small>}</div>}
+                {finalAsset && <div className="movie-final-meta"><strong>{finalAsset.display_name}</strong><span>{finalAsset.width || edit.output_width}x{finalAsset.height || edit.output_height}</span><span>{finalAsset.size_bytes ? `${Math.round(finalAsset.size_bytes / 1024)} KB` : 'Stored movie asset'}</span></div>}
                 {completedRender?.output_asset_id && <a className="generate-btn secondary movie-download-link" href={apiUrl(`/api/movie-studio/renders/${completedRender.id}/download`)}>Download MP4</a>}
                 <button className="generate-btn secondary" type="button" onClick={() => void markActive()} disabled={!completedRender?.output_asset_id}>Mark active/final</button>
                 <button className="generate-btn secondary" type="button" onClick={() => void duplicateCurrentEdit()}>Duplicate draft</button>
@@ -448,6 +612,53 @@ function formatDuration(seconds: number): string {
   const mins = Math.floor(rounded / 60);
   const secs = rounded % 60;
   return `${mins}:${String(secs).padStart(2, '0')}`;
+}
+
+function sceneAtTime(scenes: MovieScene[], time: number): MovieScene | undefined {
+  if (!scenes.length) return undefined;
+  return scenes.find(scene => {
+    const start = scene.start_seconds || 0;
+    return time >= start && time < start + scene.duration_seconds;
+  }) || scenes[scenes.length - 1];
+}
+
+function recalculateScenes(scenes: MovieScene[]): MovieScene[] {
+  let start = 0;
+  return scenes.map((scene, index) => {
+    const next = { ...scene, position: index + 1, start_seconds: start };
+    start += Math.max(0.5, Number(scene.duration_seconds) || 4);
+    next.duration_seconds = Math.max(0.5, Number(scene.duration_seconds) || 4);
+    return next;
+  });
+}
+
+function seekScene(scenes: MovieScene[], time: number, direction: -1 | 1, setTime: (time: number) => void, setScene: (id: string) => void) {
+  if (!scenes.length) return;
+  const current = sceneAtTime(scenes, time);
+  const idx = Math.max(0, scenes.findIndex(scene => scene === current || scene.id === current?.id));
+  const next = scenes[Math.min(scenes.length - 1, Math.max(0, idx + direction))];
+  setTime(next.start_seconds || 0);
+  setScene(next.id || '');
+}
+
+function buildPreflight(edit: MovieEdit | null, assets: MediaAsset[]): { errors: string[]; warnings: string[] } {
+  const errors: string[] = [];
+  const warnings: string[] = [];
+  if (!edit) return { errors: ['Open or create a movie edit.'], warnings };
+  if (!edit.scenes.length) errors.push('Add at least one scene.');
+  const assetIDs = new Set(assets.map(asset => asset.id));
+  edit.scenes.forEach((scene, index) => {
+    if (!scene.visual_asset_id) errors.push(`Scene ${index + 1} needs a visual.`);
+    if (scene.visual_asset_id && !assetIDs.has(scene.visual_asset_id)) errors.push(`Scene ${index + 1} visual is missing from the Asset Library.`);
+    if (scene.duration_seconds <= 0) errors.push(`Scene ${index + 1} needs a positive duration.`);
+    if (scene.trim_in_seconds !== undefined && scene.trim_in_seconds < 0) errors.push(`Scene ${index + 1} trim start is invalid.`);
+    if (scene.trim_out_seconds !== undefined && scene.trim_in_seconds !== undefined && scene.trim_out_seconds <= scene.trim_in_seconds) errors.push(`Scene ${index + 1} trim end must be after trim start.`);
+  });
+  if (edit.voiceover_asset_id && !assetIDs.has(edit.voiceover_asset_id)) errors.push('Selected narration is missing.');
+  if (!edit.voiceover_asset_id) warnings.push('No narration selected.');
+  if (edit.music_asset_id && !assetIDs.has(edit.music_asset_id)) errors.push('Selected music is missing.');
+  if ((edit.scenes.reduce((sum, scene) => sum + scene.duration_seconds, 0)) > 180) warnings.push('Long edits may take more time to render.');
+  return { errors, warnings: warnings.length ? warnings : ['All required media is available.'] };
 }
 
 function friendlyMovieError(error: unknown, fallback: string): string {
