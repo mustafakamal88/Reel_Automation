@@ -8,6 +8,7 @@ import { AIToolPage } from './pages/Signals';
 import { ContentProjectsPage } from './pages/ContentProjects';
 import { ScriptStudioPage } from './pages/ScriptStudio';
 import { ClipStudioPage } from './pages/ClipStudio';
+import { AssetLibraryPage } from './pages/AssetLibrary';
 import { SocialConnectionsPage } from './pages/SocialConnections';
 import { SettingsPage } from './pages/Settings';
 import { DeveloperSystemStatusPage } from './pages/DeveloperSystemStatus';
@@ -170,11 +171,7 @@ export default function App() {
               />
             )}
             {view === 'assets' && (
-              <ComingSoonPage
-                eyebrow="Content"
-                title="Assets"
-                description="A workspace for uploaded brand assets, reusable media, and approved creative materials is planned."
-              />
+              <AssetLibraryPage onNavigate={navigate} />
             )}
             {view === 'connections' && <SocialConnectionsPage />}
             {view === 'calendar' && (

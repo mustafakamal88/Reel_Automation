@@ -83,6 +83,99 @@ export async function getHealth(): Promise<HealthResponse> {
   return apiFetch<HealthResponse>('/health');
 }
 
+// ── Asset Library ────────────────────────────────────────────────────────────
+
+export type MediaAssetType = 'source_video' | 'generated_video' | 'rendered_video' | 'ai_scene_video' | 'thumbnail' | 'package' | 'metadata';
+export type MediaAssetStatus = 'ready' | 'processing' | 'failed' | 'unavailable' | 'archived';
+export type MediaAssetWorkflow = 'clip_studio' | 'clip_generator' | 'project_output' | 'ai_scene';
+
+export interface MediaAsset {
+  id: string;
+  display_name: string;
+  original_filename?: string;
+  asset_type: MediaAssetType;
+  status: MediaAssetStatus;
+  source_workflow: MediaAssetWorkflow;
+  mime_type?: string;
+  size_bytes?: number;
+  duration_seconds?: number;
+  width?: number;
+  height?: number;
+  project?: { id: string; title: string };
+  scene?: { id: string; label: string };
+  checksum_sha256?: string;
+  created_at: string;
+  updated_at: string;
+  last_verified_at?: string;
+  archived_at?: string;
+  preview_url?: string;
+  download_url?: string;
+  storage_label: string;
+  capabilities: {
+    can_preview: boolean;
+    can_download: boolean;
+    can_reconcile: boolean;
+    can_archive: boolean;
+    can_restore: boolean;
+  };
+  failure?: { category?: string; message: string };
+}
+
+export interface AssetFacet {
+  value: string;
+  label: string;
+  count: number;
+}
+
+export interface AssetListResponse {
+  assets: MediaAsset[];
+  pagination: { limit: number; offset: number; total: number; has_more: boolean };
+  summary: Record<string, number>;
+  facets: Record<string, AssetFacet[]>;
+}
+
+export interface AssetListParams {
+  search?: string;
+  asset_type?: string;
+  status?: string;
+  project_id?: string;
+  source_workflow?: string;
+  sort?: string;
+  include_archived?: boolean;
+  limit?: number;
+  offset?: number;
+}
+
+function assetQuery(params: AssetListParams = {}): string {
+  const q = new URLSearchParams();
+  Object.entries(params).forEach(([key, value]) => {
+    if (value === undefined || value === null || value === '' || value === false) return;
+    q.set(key, String(value));
+  });
+  const query = q.toString();
+  return query ? `?${query}` : '';
+}
+
+export async function listAssets(params?: AssetListParams): Promise<AssetListResponse> {
+  return apiFetch<AssetListResponse>(`/api/assets${assetQuery(params)}`);
+}
+
+export async function getAsset(id: string): Promise<{ asset: MediaAsset }> {
+  return apiFetch<{ asset: MediaAsset }>(`/api/assets/${id}`);
+}
+
+export async function reconcileAsset(id: string): Promise<{ asset: MediaAsset }> {
+  return apiFetch<{ asset: MediaAsset }>(`/api/assets/${id}/reconcile`, { method: 'POST' });
+}
+
+export async function archiveAsset(id: string): Promise<{ asset: MediaAsset }> {
+  return apiFetch<{ asset: MediaAsset }>(`/api/assets/${id}`, { method: 'DELETE' });
+}
+
+export async function restoreAsset(id: string): Promise<{ asset: MediaAsset }> {
+  return apiFetch<{ asset: MediaAsset }>(`/api/assets/${id}/restore`, { method: 'POST' });
+}
+
 // ── Platform connections ──────────────────────────────────────────────────────
 
 export interface PlatformStatus {

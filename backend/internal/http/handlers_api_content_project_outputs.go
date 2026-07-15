@@ -412,7 +412,14 @@ func (s *Server) upsertContentProjectOutput(ctx context.Context, workspaceID, pr
 		nullableString(m.StorageReference), nullableString(m.StorageProvider), nullableString(m.StorageKey), nullableString(m.StorageETag), nullableString(m.StorageSHA256),
 		nullableString(m.FailureCategory), nullableString(m.FailureMessage), m.Retryable, nullableJSON(m.RequestPayloadJSON),
 	)
-	return scanContentProjectOutput(row, projectID)
+	out, err := scanContentProjectOutput(row, projectID)
+	if err != nil {
+		return projectOutputRecord{}, err
+	}
+	if err := s.syncProjectOutputAsset(ctx, workspaceID, projectID, sceneID, out, m); err != nil {
+		return projectOutputRecord{}, err
+	}
+	return out, nil
 }
 
 func (s *Server) updateContentProjectOutput(ctx context.Context, projectID, outputID string, m contentProjectOutputMutation) (projectOutputRecord, error) {
@@ -455,7 +462,70 @@ func (s *Server) updateContentProjectOutput(ctx context.Context, projectID, outp
 	if count == 0 {
 		return projectOutputRecord{}, sql.ErrNoRows
 	}
-	return s.getContentProjectOutput(ctx, projectID, outputID)
+	out, err := s.getContentProjectOutput(ctx, projectID, outputID)
+	if err != nil {
+		return projectOutputRecord{}, err
+	}
+	var workspaceID string
+	if err := s.db.QueryRowContext(ctx, `SELECT workspace_id FROM content_projects WHERE id = $1`, projectID).Scan(&workspaceID); err != nil {
+		return projectOutputRecord{}, err
+	}
+	if err := s.syncProjectOutputAsset(ctx, workspaceID, projectID, out.SceneID, out, m); err != nil {
+		return projectOutputRecord{}, err
+	}
+	return out, nil
+}
+
+func (s *Server) syncProjectOutputAsset(ctx context.Context, workspaceID, projectID string, sceneID *string, out projectOutputRecord, m contentProjectOutputMutation) error {
+	if strings.TrimSpace(out.StorageProvider) == "" || strings.TrimSpace(out.StorageKey) == "" {
+		return nil
+	}
+	status := mediaAssetStatusReady
+	switch out.Status {
+	case projectOutputStatusQueued, projectOutputStatusProcessing:
+		status = mediaAssetStatusProcessing
+	case projectOutputStatusFailed:
+		status = mediaAssetStatusFailed
+	case projectOutputStatusUnavailable:
+		status = mediaAssetStatusUnavailable
+	case projectOutputStatusArchived:
+		status = mediaAssetStatusArchived
+	}
+	assetType := "generated_video"
+	if out.OutputType == projectOutputTypeUploaded || out.OutputType == projectOutputTypeImported {
+		assetType = "source_video"
+	} else if out.OutputType == projectOutputTypeRendered {
+		assetType = "rendered_video"
+	} else if out.MimeType == "application/zip" {
+		assetType = "package"
+	}
+	assetID, err := s.upsertMediaAsset(ctx, mediaAssetUpsert{
+		WorkspaceID:     workspaceID,
+		ProjectID:       projectID,
+		SceneID:         sceneID,
+		AssetType:       assetType,
+		SourceWorkflow:  "clip_generator",
+		DisplayName:     out.DisplayName,
+		OriginalName:    out.OriginalFilename,
+		MimeType:        out.MimeType,
+		SizeBytes:       out.FileSizeBytes,
+		DurationSeconds: out.DurationSeconds,
+		Width:           out.Width,
+		Height:          out.Height,
+		StorageProvider: out.StorageProvider,
+		StorageKey:      out.StorageKey,
+		StorageETag:     out.StorageETag,
+		StorageSHA256:   out.StorageSHA256,
+		Status:          status,
+		FailureCategory: out.FailureCategory,
+		FailureMessage:  out.FailureMessage,
+	})
+	if err != nil || assetID == "" {
+		return err
+	}
+	_, err = s.db.ExecContext(ctx, `UPDATE content_project_outputs SET asset_id = $3, updated_at = NOW() WHERE project_id = $1 AND id = $2`, projectID, out.ID, assetID)
+	_ = m
+	return err
 }
 
 func (s *Server) listContentProjectOutputs(ctx context.Context, projectID string) ([]contentProjectOutput, error) {

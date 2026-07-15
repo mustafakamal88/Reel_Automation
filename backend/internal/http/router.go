@@ -151,6 +151,8 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /api/content-projects", s.handleContentProjects)
 	mux.HandleFunc("POST /api/content-projects/import-legacy", s.handleImportLegacyContentProject)
 	mux.HandleFunc("/api/content-projects/", s.handleContentProjectRoute)
+	mux.HandleFunc("GET /api/assets", s.handleAssets)
+	mux.HandleFunc("/api/assets/", s.handleAssetRoute)
 
 	mux.HandleFunc("POST /api/topics/score", s.handleScoreTopics)
 	mux.HandleFunc("GET /api/topics/scores", s.handleListTopicScores)

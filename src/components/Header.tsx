@@ -12,7 +12,7 @@ const VIEW_META: Record<View, { title: string; sub: string }> = {
   clipStudio:             { title: 'Clip Generator',           sub: 'Upload a video or provide a direct video URL, then download clips' },
   voiceStudio:            { title: 'Voice Studio',             sub: 'Planned narration and voice workflow' },
   thumbnailStudio:        { title: 'Thumbnail Studio',         sub: 'Planned thumbnail creation workflow' },
-  assets:                 { title: 'Assets',                   sub: 'Planned creative asset workspace' },
+  assets:                 { title: 'Asset Library',            sub: 'Durable uploaded and generated workspace media' },
   connections:            { title: 'Connections',              sub: 'Connect accounts to publish directly from Clip Generator' },
   calendar:               { title: 'Calendar',                 sub: 'Planned publishing schedule' },
   analytics:              { title: 'Analytics',                sub: 'Planned connected-platform performance reporting' },

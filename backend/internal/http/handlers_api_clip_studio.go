@@ -1440,12 +1440,41 @@ func (s *Server) recordClipStudioExport(ctx context.Context, workspaceID, filena
 	if s.db == nil || info.Key == "" {
 		return nil
 	}
-	_, err := s.db.ExecContext(ctx, `
+	assetType := "package"
+	workflow := "clip_studio"
+	if kind == "ai_scene_video" {
+		assetType = "ai_scene_video"
+		workflow = "ai_scene"
+	} else if kind == "ai_scene_thumbnail" {
+		assetType = "thumbnail"
+		workflow = "ai_scene"
+	} else if strings.HasPrefix(kind, "ai_scene_") {
+		workflow = "ai_scene"
+	}
+	size := info.Size
+	assetID, err := s.upsertMediaAsset(ctx, mediaAssetUpsert{
+		WorkspaceID:     workspaceID,
+		AssetType:       assetType,
+		SourceWorkflow:  workflow,
+		DisplayName:     filename,
+		OriginalName:    filename,
+		MimeType:        mimeType,
+		SizeBytes:       &size,
+		StorageProvider: info.Provider,
+		StorageKey:      info.Key,
+		StorageETag:     info.ETag,
+		StorageSHA256:   info.SHA256,
+		Status:          mediaAssetStatusReady,
+	})
+	if err != nil {
+		return err
+	}
+	_, err = s.db.ExecContext(ctx, `
 		INSERT INTO clip_studio_exports (
 			workspace_id, filename, export_kind, generation_id, storage_provider, storage_key,
-			storage_etag, storage_checksum_sha256, mime_type, size_bytes, updated_at
+			storage_etag, storage_checksum_sha256, mime_type, size_bytes, asset_id, updated_at
 		)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,NOW())
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,NOW())
 		ON CONFLICT (workspace_id, filename) DO UPDATE SET
 			export_kind = EXCLUDED.export_kind,
 			generation_id = EXCLUDED.generation_id,
@@ -1455,8 +1484,9 @@ func (s *Server) recordClipStudioExport(ctx context.Context, workspaceID, filena
 			storage_checksum_sha256 = EXCLUDED.storage_checksum_sha256,
 			mime_type = EXCLUDED.mime_type,
 			size_bytes = EXCLUDED.size_bytes,
+			asset_id = EXCLUDED.asset_id,
 			updated_at = NOW()`,
-		workspaceID, filename, kind, nullableString(generationID), info.Provider, info.Key, nullableString(info.ETag), nullableString(info.SHA256), mimeType, nullableInt64(info.Size))
+		workspaceID, filename, kind, nullableString(generationID), info.Provider, info.Key, nullableString(info.ETag), nullableString(info.SHA256), mimeType, nullableInt64(info.Size), nullableString(assetID))
 	return err
 }
 
@@ -1579,13 +1609,37 @@ func (s *Server) materializeClipStudioSource(ctx context.Context, workspaceID st
 func (s *Server) writeClipStudioSource(workspaceID string, meta clipStudioSourceMetadata) error {
 	if s.db != nil {
 		rights, _ := json.Marshal(meta.Rights)
+		assetID := ""
+		if meta.StorageProvider != "" && meta.StorageKey != "" {
+			size := meta.SizeBytes
+			var err error
+			assetID, err = s.upsertMediaAsset(context.Background(), mediaAssetUpsert{
+				WorkspaceID:     workspaceID,
+				AssetType:       "source_video",
+				SourceWorkflow:  "clip_studio",
+				DisplayName:     firstNonEmpty(meta.OriginalName, "Clip Studio source"),
+				OriginalName:    meta.OriginalName,
+				MimeType:        meta.ContentType,
+				SizeBytes:       &size,
+				StorageProvider: meta.StorageProvider,
+				StorageKey:      meta.StorageKey,
+				StorageETag:     meta.StorageETag,
+				StorageSHA256:   meta.StorageSHA256,
+				Status:          mapClipStudioSourceAssetStatus(meta.Status),
+				FailureCategory: mapClipStudioSourceFailureCategory(meta.Status),
+				FailureMessage:  meta.Message,
+			})
+			if err != nil {
+				return err
+			}
+		}
 		_, err := s.db.Exec(`
 			INSERT INTO clip_studio_sources (
 				id, workspace_id, source_kind, original_filename, original_url, storage_provider, storage_key,
 				storage_etag, storage_checksum_sha256, content_type, size_bytes, source_model, rights_metadata,
-				status, status_message, direct_video, supported_type, created_at, updated_at
+				status, status_message, direct_video, supported_type, asset_id, created_at, updated_at
 			)
-			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,NOW())
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,NOW())
 			ON CONFLICT (id) DO UPDATE SET
 				original_filename = EXCLUDED.original_filename,
 				original_url = EXCLUDED.original_url,
@@ -1601,11 +1655,12 @@ func (s *Server) writeClipStudioSource(workspaceID string, meta clipStudioSource
 				status_message = EXCLUDED.status_message,
 				direct_video = EXCLUDED.direct_video,
 				supported_type = EXCLUDED.supported_type,
+				asset_id = EXCLUDED.asset_id,
 				updated_at = NOW()`,
 			meta.SourceID, workspaceID, meta.Kind, nullableString(meta.OriginalName), nullableString(meta.URL),
 			nullableString(meta.StorageProvider), nullableString(meta.StorageKey), nullableString(meta.StorageETag),
 			nullableString(meta.StorageSHA256), nullableString(meta.ContentType), nullableInt64(meta.SizeBytes),
-			nullableString(meta.SourceModel), rights, meta.Status, nullableString(meta.Message), meta.DirectVideo, meta.SupportedType, meta.CreatedAt)
+			nullableString(meta.SourceModel), rights, meta.Status, nullableString(meta.Message), meta.DirectVideo, meta.SupportedType, nullableString(assetID), meta.CreatedAt)
 		if err != nil {
 			return err
 		}
@@ -2005,6 +2060,30 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func mapClipStudioSourceAssetStatus(status string) string {
+	switch status {
+	case "ready":
+		return mediaAssetStatusReady
+	case "failed":
+		return mediaAssetStatusFailed
+	case "unavailable":
+		return mediaAssetStatusUnavailable
+	default:
+		return mediaAssetStatusUnavailable
+	}
+}
+
+func mapClipStudioSourceFailureCategory(status string) string {
+	switch status {
+	case "failed":
+		return "source_failed"
+	case "unavailable":
+		return "source_unavailable"
+	default:
+		return ""
+	}
 }
 
 func optionalSceneID(value string) *string {

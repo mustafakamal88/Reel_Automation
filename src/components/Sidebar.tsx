@@ -53,7 +53,7 @@ const CONTENT_ITEMS: NavItem[] = [
   { id: 'clipStudio', label: 'Clip Generator' },
   { id: 'voiceStudio', label: 'Voice Studio', future: true },
   { id: 'thumbnailStudio', label: 'Thumbnail Studio', future: true },
-  { id: 'assets', label: 'Assets', future: true },
+  { id: 'assets', label: 'Assets' },
 ];
 
 const PUBLISHING_ITEMS: NavItem[] = [
