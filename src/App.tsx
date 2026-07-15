@@ -8,6 +8,8 @@ import { AIToolPage } from './pages/Signals';
 import { ContentProjectsPage } from './pages/ContentProjects';
 import { ScriptStudioPage } from './pages/ScriptStudio';
 import { ClipStudioPage } from './pages/ClipStudio';
+import { VoiceStudioPage } from './pages/VoiceStudio';
+import { MovieStudioPage } from './pages/MovieStudio';
 import { AssetLibraryPage } from './pages/AssetLibrary';
 import { SocialConnectionsPage } from './pages/SocialConnections';
 import { SettingsPage } from './pages/Settings';
@@ -26,6 +28,7 @@ const VIEW_ROUTES: Record<View, string> = {
   scriptStudio: '/script-studio',
   clipStudio: '/clip-generator',
   voiceStudio: '/voice-studio',
+  movieStudio: '/movie-studio',
   thumbnailStudio: '/thumbnail-studio',
   assets: '/assets',
   connections: '/connections',
@@ -50,6 +53,7 @@ const ROUTE_VIEWS: Record<string, View> = {
   '/script-studio': 'scriptStudio',
   '/clip-generator': 'clipStudio',
   '/voice-studio': 'voiceStudio',
+  '/movie-studio': 'movieStudio',
   '/thumbnail-studio': 'thumbnailStudio',
   '/assets': 'assets',
   '/connections': 'connections',
@@ -98,6 +102,12 @@ export default function App() {
     storage.setView(v);
     let nextPath = VIEW_ROUTES[v];
     if (v === 'scriptStudio' && projectID) {
+      nextPath = `${nextPath}?project_id=${encodeURIComponent(projectID)}`;
+    }
+    if (v === 'voiceStudio' && projectID) {
+      nextPath = `${nextPath}?project_id=${encodeURIComponent(projectID)}`;
+    }
+    if (v === 'movieStudio' && projectID) {
       nextPath = `${nextPath}?project_id=${encodeURIComponent(projectID)}`;
     }
     if (`${window.location.pathname}${window.location.search}` !== nextPath) {
@@ -156,13 +166,8 @@ export default function App() {
               />
             )}
             {view === 'clipStudio' && <ClipStudioPage onNavigate={navigate} />}
-            {view === 'voiceStudio' && (
-              <ComingSoonPage
-                eyebrow="Content"
-                title="Voice Studio"
-                description="Voice generation and narration controls will live here once real voice-provider support is available."
-              />
-            )}
+            {view === 'voiceStudio' && <VoiceStudioPage onNavigate={navigate} />}
+            {view === 'movieStudio' && <MovieStudioPage onNavigate={navigate} />}
             {view === 'thumbnailStudio' && (
               <ComingSoonPage
                 eyebrow="Content"

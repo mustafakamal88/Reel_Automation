@@ -85,9 +85,9 @@ export async function getHealth(): Promise<HealthResponse> {
 
 // ── Asset Library ────────────────────────────────────────────────────────────
 
-export type MediaAssetType = 'source_video' | 'generated_video' | 'rendered_video' | 'ai_scene_video' | 'thumbnail' | 'package' | 'metadata';
+export type MediaAssetType = 'source_video' | 'generated_video' | 'rendered_video' | 'ai_scene_video' | 'thumbnail' | 'package' | 'metadata' | 'audio' | 'voiceover';
 export type MediaAssetStatus = 'ready' | 'processing' | 'failed' | 'unavailable' | 'archived';
-export type MediaAssetWorkflow = 'clip_studio' | 'clip_generator' | 'project_output' | 'ai_scene';
+export type MediaAssetWorkflow = 'clip_studio' | 'clip_generator' | 'project_output' | 'ai_scene' | 'voice_studio' | 'movie_studio';
 
 export interface MediaAsset {
   id: string;
@@ -174,6 +174,246 @@ export async function archiveAsset(id: string): Promise<{ asset: MediaAsset }> {
 
 export async function restoreAsset(id: string): Promise<{ asset: MediaAsset }> {
   return apiFetch<{ asset: MediaAsset }>(`/api/assets/${id}/restore`, { method: 'POST' });
+}
+
+// ── Voice Studio ─────────────────────────────────────────────────────────────
+
+export interface VoiceOption {
+  id: string;
+  display_name: string;
+  character: string;
+  best_for: string[];
+  language_note: string;
+  recommended?: boolean;
+}
+
+export type VoiceGenerationStatus = 'queued' | 'preparing' | 'generating' | 'processing' | 'saving' | 'completed' | 'partially_completed' | 'failed';
+
+export interface VoiceGeneration {
+  id: string;
+  project_id?: string;
+  scene_id?: string;
+  asset_id?: string;
+  mode: 'full' | 'scene';
+  source_type: string;
+  voice_id: string;
+  voice_display_name: string;
+  speed: number;
+  delivery_preset: string;
+  output_format: string;
+  status: VoiceGenerationStatus;
+  failure_category?: string;
+  failure_message?: string;
+  input_characters: number;
+  estimated_duration_seconds?: number;
+  generated_duration_seconds?: number;
+  file_size_bytes?: number;
+  scene_count: number;
+  usage_kind: 'preview' | 'production' | 'upload';
+  asset?: MediaAsset;
+  children?: VoiceGeneration[];
+  created_at: string;
+  updated_at: string;
+  completed_at?: string;
+}
+
+export interface VoiceGenerationPayload {
+  project_id?: string;
+  scene_id?: string;
+  source_type?: 'blank' | 'project_script' | 'script_lab' | 'scene' | 'all_scenes';
+  source_script_id?: string;
+  text: string;
+  mode: 'full' | 'scene';
+  voice_id: string;
+  speed: number;
+  delivery_preset: string;
+  custom_instructions?: string;
+  output_format: string;
+  idempotency_key?: string;
+}
+
+export async function listVoices(): Promise<{ voices: VoiceOption[]; formats: string[] }> {
+  return apiFetch('/api/voice-studio/voices');
+}
+
+export async function createVoicePreview(body: VoiceGenerationPayload): Promise<{ generation: VoiceGeneration }> {
+  return apiFetch('/api/voice-studio/previews', { method: 'POST', body: JSON.stringify(body) });
+}
+
+export async function createVoiceGeneration(body: VoiceGenerationPayload): Promise<{ generation: VoiceGeneration; scene_generations?: VoiceGeneration[] }> {
+  return apiFetch('/api/voice-studio/generations', { method: 'POST', body: JSON.stringify(body) });
+}
+
+export async function getVoiceGeneration(id: string): Promise<{ generation: VoiceGeneration }> {
+  return apiFetch(`/api/voice-studio/generations/${encodeURIComponent(id)}`);
+}
+
+export async function uploadVoiceover(file: File, projectID?: string): Promise<{ generation: VoiceGeneration }> {
+  const body = new FormData();
+  body.set('file', file);
+  if (projectID) body.set('project_id', projectID);
+  let res: Response;
+  try {
+    res = await fetch(apiUrl('/api/voice-studio/upload'), { method: 'POST', credentials: 'include', body });
+  } catch {
+    throw new ApiError(0, 'network_error', 'Cannot reach the Go backend.');
+  }
+  if (!res.ok) {
+    const payload = await res.json().catch(() => ({})) as { code?: string; error?: string };
+    throw new ApiError(res.status, payload.code || 'upload_failed', payload.error || 'Upload failed.');
+  }
+  return res.json() as Promise<{ generation: VoiceGeneration }>;
+}
+
+export async function setActiveProjectVoiceover(projectID: string, assetID: string): Promise<{ active_voiceover_asset_id: string }> {
+  return apiFetch(`/api/content-projects/${encodeURIComponent(projectID)}/active-voiceover`, { method: 'POST', body: JSON.stringify({ asset_id: assetID }) });
+}
+
+// ── Movie Studio ─────────────────────────────────────────────────────────────
+
+export interface MovieScene {
+  id?: string;
+  movie_edit_id?: string;
+  source_project_scene_id?: string;
+  position: number;
+  title: string;
+  script_text: string;
+  voiceover_asset_id?: string;
+  visual_asset_id?: string;
+  secondary_asset_id?: string;
+  start_seconds?: number;
+  duration_seconds: number;
+  trim_in_seconds?: number;
+  trim_out_seconds?: number;
+  fit_mode: 'fill_crop' | 'fit_background' | 'original';
+  focal_x?: number;
+  focal_y?: number;
+  zoom?: number;
+  motion_preset: 'none' | 'slow_zoom_in' | 'slow_zoom_out' | 'pan_left' | 'pan_right' | 'pan_up' | 'pan_down';
+  transition_type: 'cut' | 'crossfade' | 'fade_black' | 'slide';
+  transition_duration_seconds?: number;
+  muted?: boolean;
+  volume?: number;
+  caption_text?: string;
+  match_reason?: string;
+  match_confidence?: number;
+}
+
+export interface MovieRender {
+  id: string;
+  movie_edit_id: string;
+  status: string;
+  current_stage: string;
+  completed_scene_count: number;
+  total_scene_count: number;
+  output_asset_id?: string;
+  output_duration_seconds?: number;
+  output_size_bytes?: number;
+  output_width?: number;
+  output_height?: number;
+  output_video_codec?: string;
+  output_audio_codec?: string;
+  quality_preset: string;
+  failure_message?: string;
+  started_at?: string;
+  completed_at?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface MovieEdit {
+  id: string;
+  workspace_id: string;
+  content_project_id?: string;
+  name: string;
+  status: string;
+  version: number;
+  timeline_schema_version: number;
+  aspect_ratio: '9:16';
+  output_width: number;
+  output_height: number;
+  frame_rate: number;
+  quality_preset: 'draft' | 'standard' | 'high';
+  voiceover_asset_id?: string;
+  music_asset_id?: string;
+  caption_settings: Record<string, unknown>;
+  transition_settings: Record<string, unknown>;
+  branding_settings: Record<string, unknown>;
+  duration_seconds?: number;
+  latest_successful_render_id?: string;
+  scenes: MovieScene[];
+  renders?: MovieRender[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface MovieEditPayload {
+  content_project_id?: string;
+  name?: string;
+  quality_preset?: 'draft' | 'standard' | 'high';
+  voiceover_asset_id?: string;
+  music_asset_id?: string;
+  caption_settings?: Record<string, unknown>;
+  branding_settings?: Record<string, unknown>;
+  scenes?: MovieScene[];
+}
+
+export async function listMovieEdits(projectID?: string): Promise<{ edits: MovieEdit[] }> {
+  const q = projectID ? `?project_id=${encodeURIComponent(projectID)}` : '';
+  return apiFetch(`/api/movie-studio/edits${q}`);
+}
+
+export async function createMovieEdit(body: MovieEditPayload): Promise<{ edit: MovieEdit }> {
+  return apiFetch('/api/movie-studio/edits', { method: 'POST', body: JSON.stringify(body) });
+}
+
+export async function getMovieEdit(id: string): Promise<{ edit: MovieEdit }> {
+  return apiFetch(`/api/movie-studio/edits/${encodeURIComponent(id)}`);
+}
+
+export async function updateMovieEdit(id: string, body: MovieEditPayload): Promise<{ edit: MovieEdit }> {
+  return apiFetch(`/api/movie-studio/edits/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(body) });
+}
+
+export async function autoDraftMovieEdit(id: string): Promise<{ edit: MovieEdit }> {
+  return apiFetch(`/api/movie-studio/edits/${encodeURIComponent(id)}/auto-draft`, { method: 'POST' });
+}
+
+export async function duplicateMovieEdit(id: string): Promise<{ edit: MovieEdit }> {
+  return apiFetch(`/api/movie-studio/edits/${encodeURIComponent(id)}/duplicate`, { method: 'POST' });
+}
+
+export async function renderMovieEdit(id: string, idempotencyKey: string): Promise<{ render: MovieRender }> {
+  return apiFetch(`/api/movie-studio/edits/${encodeURIComponent(id)}/render`, { method: 'POST', body: JSON.stringify({ idempotency_key: idempotencyKey }) });
+}
+
+export async function getMovieRender(id: string): Promise<{ render: MovieRender }> {
+  return apiFetch(`/api/movie-studio/renders/${encodeURIComponent(id)}`);
+}
+
+export async function uploadMovieMedia(file: File, projectID?: string): Promise<{ asset: MediaAsset }> {
+  const q = projectID ? `?project_id=${encodeURIComponent(projectID)}` : '';
+  const body = new FormData();
+  body.set('file', file);
+  let res: Response;
+  try {
+    res = await fetch(apiUrl(`/api/movie-studio/uploads${q}`), { method: 'POST', credentials: 'include', body });
+  } catch {
+    throw new ApiError(0, 'network_error', 'Cannot reach the Go backend.');
+  }
+  if (!res.ok) {
+    const payload = await res.json().catch(() => ({})) as { code?: string; error?: string };
+    throw new ApiError(res.status, payload.code || 'upload_failed', payload.error || 'Upload failed.');
+  }
+  return res.json() as Promise<{ asset: MediaAsset }>;
+}
+
+export async function setActiveMovieEdit(projectID: string, editID: string): Promise<{ active_movie_edit_id: string }> {
+  return apiFetch(`/api/content-projects/${encodeURIComponent(projectID)}/active-movie-edit`, { method: 'POST', body: JSON.stringify({ edit_id: editID }) });
+}
+
+export async function setActiveProjectVideo(projectID: string, assetID: string): Promise<{ active_rendered_video_asset_id: string }> {
+  return apiFetch(`/api/content-projects/${encodeURIComponent(projectID)}/active-video`, { method: 'POST', body: JSON.stringify({ asset_id: assetID }) });
 }
 
 // ── Platform connections ──────────────────────────────────────────────────────

@@ -581,8 +581,8 @@ CREATE TABLE IF NOT EXISTS media_assets (
     created_at               TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at               TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     last_verified_at         TIMESTAMPTZ,
-    CONSTRAINT media_assets_type_check CHECK (asset_type IN ('source_video', 'generated_video', 'rendered_video', 'ai_scene_video', 'thumbnail', 'package', 'metadata')),
-    CONSTRAINT media_assets_workflow_check CHECK (source_workflow IN ('clip_studio', 'clip_generator', 'project_output', 'ai_scene')),
+    CONSTRAINT media_assets_type_check CHECK (asset_type IN ('source_video', 'generated_video', 'rendered_video', 'ai_scene_video', 'thumbnail', 'package', 'metadata', 'audio', 'voiceover')),
+    CONSTRAINT media_assets_workflow_check CHECK (source_workflow IN ('clip_studio', 'clip_generator', 'project_output', 'ai_scene', 'voice_studio', 'movie_studio')),
     CONSTRAINT media_assets_status_check CHECK (status IN ('ready', 'processing', 'failed', 'unavailable', 'archived')),
     CONSTRAINT media_assets_storage_provider_check CHECK (storage_provider IN ('local', 's3')),
     CONSTRAINT media_assets_storage_key_check CHECK (length(storage_key) > 0 AND storage_key !~ '(^/|(^|/)\.\.(/|$)|\\\\|//)'),
@@ -609,6 +609,75 @@ CREATE INDEX IF NOT EXISTS idx_media_assets_workspace_status
 CREATE INDEX IF NOT EXISTS idx_media_assets_project
     ON media_assets(project_id)
     WHERE project_id IS NOT NULL;
+
+ALTER TABLE media_assets DROP CONSTRAINT IF EXISTS media_assets_type_check;
+ALTER TABLE media_assets
+    ADD CONSTRAINT media_assets_type_check CHECK (asset_type IN ('source_video', 'generated_video', 'rendered_video', 'ai_scene_video', 'thumbnail', 'package', 'metadata', 'audio', 'voiceover'));
+
+ALTER TABLE media_assets DROP CONSTRAINT IF EXISTS media_assets_workflow_check;
+ALTER TABLE media_assets
+    ADD CONSTRAINT media_assets_workflow_check CHECK (source_workflow IN ('clip_studio', 'clip_generator', 'project_output', 'ai_scene', 'voice_studio', 'movie_studio'));
+
+CREATE TABLE IF NOT EXISTS voice_generations (
+    id                         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    workspace_id               UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+    project_id                 UUID REFERENCES content_projects(id) ON DELETE SET NULL,
+    scene_id                   UUID REFERENCES content_project_scenes(id) ON DELETE SET NULL,
+    asset_id                   UUID REFERENCES media_assets(id) ON DELETE SET NULL,
+    parent_generation_id       UUID REFERENCES voice_generations(id) ON DELETE SET NULL,
+    mode                       TEXT NOT NULL,
+    source_type                TEXT NOT NULL,
+    source_script_id           TEXT,
+    voice_id                   TEXT NOT NULL,
+    voice_display_name         TEXT NOT NULL,
+    speed                      NUMERIC(4,2) NOT NULL DEFAULT 1.0,
+    delivery_preset            TEXT NOT NULL DEFAULT 'natural',
+    custom_instructions        TEXT,
+    output_format              TEXT NOT NULL DEFAULT 'mp3',
+    provider_name              TEXT NOT NULL,
+    provider_model             TEXT NOT NULL,
+    provider_reference         TEXT,
+    source_text_hash           TEXT NOT NULL,
+    input_characters           INT NOT NULL DEFAULT 0,
+    estimated_duration_seconds NUMERIC(10,3),
+    generated_duration_seconds NUMERIC(10,3),
+    file_size_bytes            BIGINT,
+    scene_count                INT NOT NULL DEFAULT 0,
+    usage_kind                 TEXT NOT NULL,
+    status                     TEXT NOT NULL,
+    failure_category           TEXT,
+    failure_message            TEXT,
+    idempotency_key            TEXT,
+    created_at                 TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at                 TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    completed_at               TIMESTAMPTZ,
+    CONSTRAINT voice_generations_mode_check CHECK (mode IN ('full', 'scene')),
+    CONSTRAINT voice_generations_source_type_check CHECK (source_type IN ('blank', 'project_script', 'script_lab', 'scene', 'all_scenes', 'upload')),
+    CONSTRAINT voice_generations_usage_kind_check CHECK (usage_kind IN ('preview', 'production', 'upload')),
+    CONSTRAINT voice_generations_status_check CHECK (status IN ('queued', 'preparing', 'generating', 'processing', 'saving', 'completed', 'partially_completed', 'failed')),
+    CONSTRAINT voice_generations_format_check CHECK (output_format IN ('mp3', 'opus', 'aac', 'flac', 'wav', 'pcm')),
+    CONSTRAINT voice_generations_hash_check CHECK (source_text_hash ~ '^[a-f0-9]{64}$'),
+    CONSTRAINT voice_generations_chars_check CHECK (input_characters >= 0),
+    CONSTRAINT voice_generations_file_size_check CHECK (file_size_bytes IS NULL OR file_size_bytes >= 0)
+);
+
+CREATE INDEX IF NOT EXISTS idx_voice_generations_workspace_created
+    ON voice_generations(workspace_id, created_at DESC, id DESC);
+
+CREATE INDEX IF NOT EXISTS idx_voice_generations_project
+    ON voice_generations(project_id, created_at DESC)
+    WHERE project_id IS NOT NULL;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_voice_generations_idempotency
+    ON voice_generations(workspace_id, idempotency_key)
+    WHERE idempotency_key IS NOT NULL AND idempotency_key <> '';
+
+ALTER TABLE content_projects
+    ADD COLUMN IF NOT EXISTS active_voiceover_asset_id UUID REFERENCES media_assets(id) ON DELETE SET NULL;
+
+CREATE INDEX IF NOT EXISTS idx_content_projects_active_voiceover
+    ON content_projects(active_voiceover_asset_id)
+    WHERE active_voiceover_asset_id IS NOT NULL;
 
 CREATE OR REPLACE FUNCTION media_assets_validate_owner()
 RETURNS trigger AS $$
@@ -771,6 +840,165 @@ WHERE p.id = o.project_id
   AND o.asset_id IS DISTINCT FROM a.id;
 `
 
+const SchemaMovieStudio = `
+ALTER TABLE media_assets DROP CONSTRAINT IF EXISTS media_assets_workflow_check;
+ALTER TABLE media_assets
+    ADD CONSTRAINT media_assets_workflow_check CHECK (source_workflow IN ('clip_studio', 'clip_generator', 'project_output', 'ai_scene', 'voice_studio', 'movie_studio'));
+
+ALTER TABLE content_projects
+    ADD COLUMN IF NOT EXISTS active_movie_edit_id UUID,
+    ADD COLUMN IF NOT EXISTS active_rendered_video_asset_id UUID REFERENCES media_assets(id) ON DELETE SET NULL;
+
+CREATE TABLE IF NOT EXISTS movie_edits (
+    id                         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    workspace_id               UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+    user_id                    UUID REFERENCES users(id) ON DELETE SET NULL,
+    content_project_id         UUID REFERENCES content_projects(id) ON DELETE SET NULL,
+    name                       TEXT NOT NULL,
+    status                     TEXT NOT NULL DEFAULT 'draft',
+    version                    INT NOT NULL DEFAULT 1,
+    timeline_schema_version    INT NOT NULL DEFAULT 1,
+    aspect_ratio               TEXT NOT NULL DEFAULT '9:16',
+    output_width               INT NOT NULL DEFAULT 1080,
+    output_height              INT NOT NULL DEFAULT 1920,
+    frame_rate                 INT NOT NULL DEFAULT 30,
+    quality_preset             TEXT NOT NULL DEFAULT 'standard',
+    voiceover_asset_id         UUID REFERENCES media_assets(id) ON DELETE SET NULL,
+    music_asset_id             UUID REFERENCES media_assets(id) ON DELETE SET NULL,
+    caption_settings           JSONB NOT NULL DEFAULT '{}',
+    transition_settings        JSONB NOT NULL DEFAULT '{}',
+    branding_settings          JSONB NOT NULL DEFAULT '{}',
+    duration_seconds           NUMERIC(10,3),
+    latest_successful_render_id UUID,
+    created_at                 TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at                 TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT movie_edits_status_check CHECK (status IN ('draft', 'rendering', 'rendered', 'archived')),
+    CONSTRAINT movie_edits_aspect_check CHECK (aspect_ratio IN ('9:16')),
+    CONSTRAINT movie_edits_quality_check CHECK (quality_preset IN ('draft', 'standard', 'high')),
+    CONSTRAINT movie_edits_dimensions_check CHECK (output_width > 0 AND output_height > 0 AND frame_rate > 0),
+    CONSTRAINT movie_edits_version_check CHECK (version > 0)
+);
+
+CREATE TABLE IF NOT EXISTS movie_scenes (
+    id                         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    movie_edit_id              UUID NOT NULL REFERENCES movie_edits(id) ON DELETE CASCADE,
+    source_project_scene_id    UUID REFERENCES content_project_scenes(id) ON DELETE SET NULL,
+    position                   INT NOT NULL,
+    title                      TEXT NOT NULL DEFAULT '',
+    script_text                TEXT NOT NULL DEFAULT '',
+    voiceover_asset_id         UUID REFERENCES media_assets(id) ON DELETE SET NULL,
+    visual_asset_id            UUID REFERENCES media_assets(id) ON DELETE SET NULL,
+    secondary_asset_id         UUID REFERENCES media_assets(id) ON DELETE SET NULL,
+    start_seconds              NUMERIC(10,3) NOT NULL DEFAULT 0,
+    duration_seconds           NUMERIC(10,3) NOT NULL DEFAULT 4,
+    trim_in_seconds            NUMERIC(10,3),
+    trim_out_seconds           NUMERIC(10,3),
+    fit_mode                   TEXT NOT NULL DEFAULT 'fill_crop',
+    focal_x                    NUMERIC(4,3) NOT NULL DEFAULT 0.5,
+    focal_y                    NUMERIC(4,3) NOT NULL DEFAULT 0.5,
+    zoom                       NUMERIC(5,3) NOT NULL DEFAULT 1.0,
+    motion_preset              TEXT NOT NULL DEFAULT 'none',
+    transition_type            TEXT NOT NULL DEFAULT 'cut',
+    transition_duration_seconds NUMERIC(10,3) NOT NULL DEFAULT 0.25,
+    muted                      BOOLEAN NOT NULL DEFAULT TRUE,
+    volume                     NUMERIC(4,3) NOT NULL DEFAULT 1.0,
+    caption_text               TEXT NOT NULL DEFAULT '',
+    match_reason               TEXT NOT NULL DEFAULT '',
+    match_confidence           NUMERIC(4,3),
+    settings                   JSONB NOT NULL DEFAULT '{}',
+    created_at                 TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at                 TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT movie_scenes_position_check CHECK (position > 0),
+    CONSTRAINT movie_scenes_duration_check CHECK (duration_seconds > 0 AND duration_seconds <= 120),
+    CONSTRAINT movie_scenes_trim_check CHECK (trim_in_seconds IS NULL OR trim_in_seconds >= 0),
+    CONSTRAINT movie_scenes_trim_order_check CHECK (trim_out_seconds IS NULL OR trim_in_seconds IS NULL OR trim_out_seconds > trim_in_seconds),
+    CONSTRAINT movie_scenes_fit_check CHECK (fit_mode IN ('fill_crop', 'fit_background', 'original')),
+    CONSTRAINT movie_scenes_motion_check CHECK (motion_preset IN ('none', 'slow_zoom_in', 'slow_zoom_out', 'pan_left', 'pan_right', 'pan_up', 'pan_down')),
+    CONSTRAINT movie_scenes_transition_check CHECK (transition_type IN ('cut', 'crossfade', 'fade_black', 'slide')),
+    CONSTRAINT movie_scenes_transition_duration_check CHECK (transition_duration_seconds >= 0 AND transition_duration_seconds <= 2),
+    CONSTRAINT movie_scenes_volume_check CHECK (volume >= 0 AND volume <= 2),
+    CONSTRAINT movie_scenes_focal_check CHECK (focal_x >= 0 AND focal_x <= 1 AND focal_y >= 0 AND focal_y <= 1),
+    CONSTRAINT movie_scenes_zoom_check CHECK (zoom >= 0.5 AND zoom <= 3)
+);
+
+CREATE TABLE IF NOT EXISTS movie_render_jobs (
+    id                         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    movie_edit_id              UUID NOT NULL REFERENCES movie_edits(id) ON DELETE CASCADE,
+    workspace_id               UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+    user_id                    UUID REFERENCES users(id) ON DELETE SET NULL,
+    status                     TEXT NOT NULL DEFAULT 'queued',
+    current_stage              TEXT NOT NULL DEFAULT 'queued',
+    completed_scene_count      INT NOT NULL DEFAULT 0,
+    total_scene_count          INT NOT NULL DEFAULT 0,
+    retry_of_render_job_id     UUID REFERENCES movie_render_jobs(id) ON DELETE SET NULL,
+    render_plan_version        INT NOT NULL DEFAULT 1,
+    output_asset_id            UUID REFERENCES media_assets(id) ON DELETE SET NULL,
+    output_duration_seconds    NUMERIC(10,3),
+    output_size_bytes          BIGINT,
+    output_width               INT,
+    output_height              INT,
+    output_video_codec         TEXT,
+    output_audio_codec         TEXT,
+    quality_preset             TEXT NOT NULL DEFAULT 'standard',
+    idempotency_key            TEXT,
+    error_code                 TEXT,
+    failure_message            TEXT,
+    diagnostics                JSONB NOT NULL DEFAULT '{}',
+    started_at                 TIMESTAMPTZ,
+    completed_at               TIMESTAMPTZ,
+    created_at                 TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at                 TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT movie_render_jobs_status_check CHECK (status IN ('queued', 'preparing_assets', 'probing_media', 'rendering_scenes', 'mixing_audio', 'encoding_final', 'uploading', 'completed', 'failed', 'cancelled')),
+    CONSTRAINT movie_render_jobs_scene_count_check CHECK (completed_scene_count >= 0 AND total_scene_count >= 0),
+    CONSTRAINT movie_render_jobs_size_check CHECK (output_size_bytes IS NULL OR output_size_bytes >= 0)
+);
+
+CREATE TABLE IF NOT EXISTS movie_render_usage (
+    id                         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    workspace_id               UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+    user_id                    UUID REFERENCES users(id) ON DELETE SET NULL,
+    movie_edit_id              UUID REFERENCES movie_edits(id) ON DELETE SET NULL,
+    render_job_id              UUID REFERENCES movie_render_jobs(id) ON DELETE SET NULL,
+    status                     TEXT NOT NULL,
+    output_duration_seconds    NUMERIC(10,3),
+    output_width               INT,
+    output_height              INT,
+    quality_preset             TEXT NOT NULL DEFAULT 'standard',
+    scene_count                INT NOT NULL DEFAULT 0,
+    captions_enabled           BOOLEAN NOT NULL DEFAULT FALSE,
+    music_enabled              BOOLEAN NOT NULL DEFAULT FALSE,
+    processing_duration_seconds NUMERIC(10,3),
+    storage_bytes_created      BIGINT,
+    retry_of_render_job_id     UUID,
+    created_at                 TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'content_projects_active_movie_edit_fk') THEN
+        ALTER TABLE content_projects ADD CONSTRAINT content_projects_active_movie_edit_fk
+            FOREIGN KEY (active_movie_edit_id) REFERENCES movie_edits(id) ON DELETE SET NULL;
+    END IF;
+END $$;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'movie_edits_latest_render_fk') THEN
+        ALTER TABLE movie_edits ADD CONSTRAINT movie_edits_latest_render_fk
+            FOREIGN KEY (latest_successful_render_id) REFERENCES movie_render_jobs(id) ON DELETE SET NULL;
+    END IF;
+END $$;
+
+CREATE INDEX IF NOT EXISTS idx_movie_edits_workspace_updated ON movie_edits(workspace_id, updated_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_movie_edits_project ON movie_edits(content_project_id, updated_at DESC) WHERE content_project_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_movie_scenes_edit_position ON movie_scenes(movie_edit_id, position, id);
+CREATE INDEX IF NOT EXISTS idx_movie_render_jobs_workspace_created ON movie_render_jobs(workspace_id, created_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_movie_render_jobs_edit ON movie_render_jobs(movie_edit_id, created_at DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_movie_render_jobs_idempotency ON movie_render_jobs(workspace_id, movie_edit_id, idempotency_key) WHERE idempotency_key IS NOT NULL AND idempotency_key <> '';
+CREATE INDEX IF NOT EXISTS idx_content_projects_active_movie_edit ON content_projects(active_movie_edit_id) WHERE active_movie_edit_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_content_projects_active_rendered_video ON content_projects(active_rendered_video_asset_id) WHERE active_rendered_video_asset_id IS NOT NULL;
+`
+
 // Migrate runs the schema DDL against the connected database.
 // Safe to run multiple times due to IF NOT EXISTS clauses.
 func (db *DB) Migrate() error {
@@ -798,6 +1026,9 @@ func (db *DB) Migrate() error {
 	if _, err := db.Exec(SchemaClipStudioExports); err != nil {
 		return err
 	}
-	_, err := db.Exec(SchemaMediaAssets)
+	if _, err := db.Exec(SchemaMediaAssets); err != nil {
+		return err
+	}
+	_, err := db.Exec(SchemaMovieStudio)
 	return err
 }

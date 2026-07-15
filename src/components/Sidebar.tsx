@@ -26,6 +26,7 @@ const CONTENT_VIEWS: View[] = [
   'scriptStudio',
   'clipStudio',
   'voiceStudio',
+  'movieStudio',
   'thumbnailStudio',
   'assets',
 ];
@@ -51,7 +52,8 @@ const CONTENT_ITEMS: NavItem[] = [
   { id: 'contentProjects', label: 'Projects' },
   { id: 'scriptStudio', label: 'Script Lab' },
   { id: 'clipStudio', label: 'Clip Generator' },
-  { id: 'voiceStudio', label: 'Voice Studio', future: true },
+  { id: 'voiceStudio', label: 'Voice Studio' },
+  { id: 'movieStudio', label: 'Movie Studio' },
   { id: 'thumbnailStudio', label: 'Thumbnail Studio', future: true },
   { id: 'assets', label: 'Assets' },
 ];

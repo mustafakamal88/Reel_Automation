@@ -395,7 +395,7 @@ func (s *Server) mediaAssetSummary(ctx context.Context, workspaceID string, incl
 		return nil, nil, err
 	}
 	defer rows.Close()
-	summary := map[string]int{"total": 0, "videos": 0, "thumbnails": 0, "packages": 0, "needs_attention": 0}
+	summary := map[string]int{"total": 0, "videos": 0, "audio": 0, "thumbnails": 0, "packages": 0, "needs_attention": 0}
 	typeCounts := map[string]int{}
 	statusCounts := map[string]int{}
 	for rows.Next() {
@@ -407,6 +407,9 @@ func (s *Server) mediaAssetSummary(ctx context.Context, workspaceID string, incl
 		summary["total"] += count
 		if strings.Contains(assetType, "video") {
 			summary["videos"] += count
+		}
+		if assetType == "audio" || assetType == "voiceover" {
+			summary["audio"] += count
 		}
 		if assetType == "thumbnail" {
 			summary["thumbnails"] += count
@@ -782,12 +785,15 @@ func supportsAssetPreview(assetType, mimeType string) bool {
 	if strings.HasPrefix(mimeType, "video/") {
 		return mimeType == "video/mp4" || mimeType == "video/quicktime" || mimeType == "video/webm"
 	}
+	if strings.HasPrefix(mimeType, "audio/") || assetType == "audio" || assetType == "voiceover" {
+		return true
+	}
 	return false
 }
 
 func normalizeAssetType(assetType, mimeType string) string {
 	switch assetType {
-	case "source_video", "generated_video", "rendered_video", "ai_scene_video", "thumbnail", "package", "metadata":
+	case "source_video", "generated_video", "rendered_video", "ai_scene_video", "thumbnail", "package", "metadata", "audio", "voiceover":
 		return assetType
 	}
 	if strings.HasPrefix(mimeType, "image/") {
@@ -795,6 +801,9 @@ func normalizeAssetType(assetType, mimeType string) string {
 	}
 	if strings.HasPrefix(mimeType, "video/") {
 		return "generated_video"
+	}
+	if strings.HasPrefix(mimeType, "audio/") {
+		return "audio"
 	}
 	if mimeType == "application/zip" {
 		return "package"
@@ -804,7 +813,7 @@ func normalizeAssetType(assetType, mimeType string) string {
 
 func normalizeAssetWorkflow(workflow string) string {
 	switch workflow {
-	case "clip_studio", "clip_generator", "project_output", "ai_scene":
+	case "clip_studio", "clip_generator", "project_output", "ai_scene", "voice_studio", "movie_studio":
 		return workflow
 	default:
 		return "clip_studio"
@@ -819,7 +828,7 @@ func normalizeAssetStatus(status string) string {
 }
 
 func validAssetType(value string) bool {
-	return map[string]bool{"source_video": true, "generated_video": true, "rendered_video": true, "ai_scene_video": true, "thumbnail": true, "package": true, "metadata": true}[value]
+	return map[string]bool{"source_video": true, "generated_video": true, "rendered_video": true, "ai_scene_video": true, "thumbnail": true, "package": true, "metadata": true, "audio": true, "voiceover": true}[value]
 }
 
 func validAssetStatus(value string) bool {
@@ -827,7 +836,7 @@ func validAssetStatus(value string) bool {
 }
 
 func validAssetWorkflow(value string) bool {
-	return map[string]bool{"clip_studio": true, "clip_generator": true, "project_output": true, "ai_scene": true}[value]
+	return map[string]bool{"clip_studio": true, "clip_generator": true, "project_output": true, "ai_scene": true, "voice_studio": true, "movie_studio": true}[value]
 }
 
 func readableAssetType(assetType string) string {
@@ -844,6 +853,10 @@ func readableAssetType(assetType string) string {
 		return "Thumbnail"
 	case "package":
 		return "Package"
+	case "audio":
+		return "Audio"
+	case "voiceover":
+		return "Voiceover"
 	default:
 		return "Media asset"
 	}

@@ -153,6 +153,8 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/api/content-projects/", s.handleContentProjectRoute)
 	mux.HandleFunc("GET /api/assets", s.handleAssets)
 	mux.HandleFunc("/api/assets/", s.handleAssetRoute)
+	mux.HandleFunc("/api/voice-studio/", s.handleVoiceStudioRoute)
+	mux.HandleFunc("/api/movie-studio/", s.handleMovieStudioRoute)
 
 	mux.HandleFunc("POST /api/topics/score", s.handleScoreTopics)
 	mux.HandleFunc("GET /api/topics/scores", s.handleListTopicScores)

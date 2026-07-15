@@ -257,6 +257,8 @@ function AssetCard({ asset, onOpen, onArchive }: { asset: MediaAsset; onOpen: ()
       <button className="asset-thumb" type="button" onClick={onOpen} aria-label={`Open ${asset.display_name}`}>
         {asset.preview_url && asset.asset_type === 'thumbnail'
           ? <img src={apiUrl(asset.preview_url)} alt="" loading="lazy" />
+          : asset.mime_type?.startsWith('audio/')
+            ? <span aria-hidden="true">AUD</span>
           : <span aria-hidden="true">{assetIcon(asset)}</span>}
       </button>
       <div className="asset-card-body">
@@ -324,6 +326,8 @@ function AssetDetailPanel({ asset, pending, error, onClose, onVerify, onArchive,
             ? <img src={apiUrl(asset.preview_url)} alt={asset.display_name} />
             : asset.preview_url && asset.mime_type?.startsWith('video/')
               ? <video src={apiUrl(asset.preview_url)} controls preload="metadata" />
+              : asset.preview_url && asset.mime_type?.startsWith('audio/')
+                ? <audio src={apiUrl(asset.preview_url)} controls preload="metadata" />
               : <span aria-hidden="true">{assetIcon(asset)}</span>}
         </div>
         {asset.failure && <div className="confirmation-error" role="alert">{asset.failure.message}</div>}
@@ -388,6 +392,7 @@ function assetFields(asset: MediaAsset): { label: string; value: string }[] {
 function assetIcon(asset: MediaAsset): string {
   if (asset.asset_type === 'package') return 'ZIP';
   if (asset.asset_type === 'thumbnail') return 'IMG';
+  if (asset.asset_type === 'audio' || asset.asset_type === 'voiceover' || asset.mime_type?.startsWith('audio/')) return 'AUD';
   if (asset.asset_type.includes('video')) return 'VID';
   return 'FILE';
 }

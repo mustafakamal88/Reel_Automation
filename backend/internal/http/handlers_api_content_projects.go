@@ -128,6 +128,30 @@ func (s *Server) handleContentProjectRoute(w http.ResponseWriter, r *http.Reques
 			s.handleContentProjectOutputRoute(w, r, id, parts[2:])
 			return
 		}
+		if parts[1] == "active-voiceover" && len(parts) == 2 {
+			if r.Method != http.MethodPost {
+				jsonError(w, "method not allowed", http.StatusMethodNotAllowed)
+				return
+			}
+			s.handleSetActiveVoiceover(w, r, id)
+			return
+		}
+		if parts[1] == "active-movie-edit" && len(parts) == 2 {
+			if r.Method != http.MethodPost {
+				jsonError(w, "method not allowed", http.StatusMethodNotAllowed)
+				return
+			}
+			s.handleSetActiveMovieEdit(w, r, id)
+			return
+		}
+		if parts[1] == "active-video" && len(parts) == 2 {
+			if r.Method != http.MethodPost {
+				jsonError(w, "method not allowed", http.StatusMethodNotAllowed)
+				return
+			}
+			s.handleSetActiveProjectVideo(w, r, id)
+			return
+		}
 		jsonErrorCode(w, "not_found", "content project route not found", http.StatusNotFound)
 		return
 	}

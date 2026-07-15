@@ -15,6 +15,7 @@ export type View =
   | 'scriptStudio'
   | 'clipStudio'
   | 'voiceStudio'
+  | 'movieStudio'
   | 'thumbnailStudio'
   | 'assets'
   | 'connections'
